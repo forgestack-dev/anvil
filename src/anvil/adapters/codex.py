@@ -15,6 +15,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
+from anvil.environment import managed_environment
 from anvil.processes import ProcessError, run_process
 
 
@@ -175,6 +176,7 @@ class CodexRunner:
             stdout_path=artifact_dir / "events.jsonl",
             stderr_path=artifact_dir / "stderr.log",
             timeout=timeout,
+            env=managed_environment(),
         )
         if outcome.timed_out:
             raise ProcessError(f"Codex execution timed out after {timeout} seconds; artifacts: {artifact_dir}")

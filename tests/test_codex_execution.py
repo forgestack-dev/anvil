@@ -3,9 +3,11 @@
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from anvil.adapters.codex import CodexRunner, build_invocation
 from anvil.processes import ProcessError
@@ -63,6 +65,74 @@ class CodexExecutionTests(unittest.TestCase):
     def test_read_only_is_explicit(self):
         self.fake("output.write_text(json.dumps({'sandbox': args[args.index('--sandbox')+1]}))")
         self.assertEqual(self.run_fake(read_only=True), {"sandbox": "read-only"})
+
+    def test_inherited_git_context_cannot_redirect_worker_or_review(self):
+        git_environment = {key: value for key, value in os.environ.items()
+                           if not key.startswith("GIT_")}
+
+        def git(*args, cwd=self.repo):
+            return subprocess.check_output(
+                ["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false",
+                 "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", *args],
+                cwd=cwd, env=git_environment, text=True, stderr=subprocess.PIPE,
+            ).strip()
+
+        git("init", "--initial-branch=main")
+        (self.repo / "tracked.txt").write_text("original revision\n", encoding="utf-8")
+        git("add", ".")
+        git("commit", "-m", "Original")
+        original_head = git("rev-parse", "HEAD")
+        managed = self.root / "managed worktree"
+        git("worktree", "add", "--detach", str(managed), "HEAD")
+        (managed / "tracked.txt").write_text("managed revision\n", encoding="utf-8")
+        git("add", ".", cwd=managed)
+        git("commit", "-m", "Managed", cwd=managed)
+        managed_head = git("rev-parse", "HEAD", cwd=managed)
+        (self.repo / "tracked.txt").write_text("original user edits\n", encoding="utf-8")
+        original_index = (self.repo / ".git" / "index").read_bytes()
+        inherited = {
+            "GIT_DIR": str(self.repo / ".git"),
+            "GIT_WORK_TREE": str(self.repo),
+            "GIT_COMMON_DIR": str(self.repo / ".git"),
+            "GIT_INDEX_FILE": str(self.repo / ".git" / "index"),
+            "GIT_OBJECT_DIRECTORY": str(self.repo / ".git" / "objects"),
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "anvil.inherited",
+            "GIT_CONFIG_VALUE_0": "original context",
+            "ANVIL_TEST_LITERAL": "$(touch bad)\n`literal` $HOME",
+        }
+        self.fake(
+            "import os,subprocess\n"
+            "def git(*argv):\n"
+            "    return subprocess.check_output(['git', *argv], text=True).strip()\n"
+            "result={'top': git('rev-parse', '--show-toplevel'), 'head': git('rev-parse', 'HEAD'),\n"
+            "        'tracked': git('show', 'HEAD:tracked.txt'),\n"
+            "        'git_environment': {k:v for k,v in os.environ.items() if k.startswith('GIT_')},\n"
+            "        'literal': os.environ['ANVIL_TEST_LITERAL']}\n"
+            "if args[args.index('--sandbox')+1] == 'workspace-write':\n"
+            "    pathlib.Path('tracked.txt').write_text('worker change\\n')\n"
+            "    git('add', '--', 'tracked.txt')\n"
+            "result['staged']=git('show', ':tracked.txt')\n"
+            "output.write_text(json.dumps(result))"
+        )
+        for read_only in (True, False):
+            with self.subTest(read_only=read_only), patch.dict(os.environ, inherited):
+                parent_environment = dict(os.environ)
+                result = self.run_fake(
+                    repo=managed, read_only=read_only,
+                    artifact_dir=self.root / f"git-environment-{read_only}",
+                )
+                self.assertEqual(dict(os.environ), parent_environment)
+                self.assertEqual(result["top"], str(managed))
+                self.assertEqual(result["head"], managed_head)
+                self.assertEqual(result["tracked"], "managed revision")
+                self.assertEqual(result["staged"], "managed revision" if read_only else "worker change")
+                self.assertEqual(result["git_environment"], {})
+                self.assertEqual(result["literal"], inherited["ANVIL_TEST_LITERAL"])
+                self.assertEqual((self.repo / ".git" / "index").read_bytes(), original_index)
+                self.assertEqual((self.repo / "tracked.txt").read_text(), "original user edits\n")
+                self.assertEqual(git("rev-parse", "HEAD"), original_head)
+                self.assertFalse((managed / "bad").exists())
 
     def test_timeout_and_nonzero_exit_reject_even_a_valid_result(self):
         for name, tail, expected in (("timeout", "time.sleep(30)", "timed out"),

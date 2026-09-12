@@ -52,6 +52,8 @@ Paths resolve relative to the configuration file. Use verification commands appr
 
 **Run configurations are trusted executable input.** Each verification entry is an argument array executed directly on the host in the managed worktree. Anvil does not wrap these commands in Codex's sandbox or interpret shell syntax. Inspect the commands and any scripts they invoke before running a configuration. Codex implementation turns use `workspace-write`; review turns use `read-only`. Anvil supplies no model override or permission bypass.
 
+Managed Git, Codex, and verification commands discard inherited `GIT_*` environment variables so Git uses the managed worktree. Other environment settings are preserved.
+
 `agent_timeout` applies separately to each implementation and review turn; `check_timeout` applies to each verification command. Both must be greater than zero and at most 3,600 seconds. Optional `codex_binary` selects a trusted local executable. Optional `state_dir` must be outside the target checkout and its Git directory; its default is `~/.local/state/anvil`.
 
 ```sh

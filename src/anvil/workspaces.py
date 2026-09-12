@@ -10,11 +10,11 @@ from __future__ import annotations
 
 from contextlib import AbstractContextManager
 import fcntl
-import os
 from pathlib import Path
 import tempfile
 from typing import IO
 
+from .environment import managed_environment
 from .processes import ProcessError, run_process
 
 
@@ -48,10 +48,7 @@ class Repository:
 
     def git(self, *args: str, cwd: Path | None = None) -> str:
         """Run literal, noninteractive Git and stop any filter/helper descendants."""
-        environment = {
-            key: value for key, value in os.environ.items()
-            if not key.startswith("GIT_")
-        }
+        environment = managed_environment()
         environment.update({
             "GIT_TERMINAL_PROMPT": "0", "GIT_EDITOR": "true",
             "GIT_SEQUENCE_EDITOR": "true", "GIT_MERGE_AUTOEDIT": "no",

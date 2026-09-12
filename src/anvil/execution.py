@@ -10,6 +10,7 @@ import uuid
 from .adapters.codex import CodexRunner
 from .config import RunConfig
 from .contracts import ContractError, Task
+from .environment import managed_environment
 from .evidence import REVIEW_SCHEMA, WORKER_SCHEMA, validate_result
 from .planning import TaskGraph
 from .processes import ProcessError, run_process
@@ -29,7 +30,8 @@ def verify(config: RunConfig, workspace: Path, artifacts: Path) -> list[dict]:
     for number, command in enumerate(config.verification, start=1):
         stdout, stderr = artifacts / f"{number}.stdout.log", artifacts / f"{number}.stderr.log"
         outcome = run_process(command, cwd=workspace, stdin=None, stdout_path=stdout,
-                              stderr_path=stderr, timeout=config.check_timeout)
+                              stderr_path=stderr, timeout=config.check_timeout,
+                              env=managed_environment())
         records.append({"argv": list(command), "returncode": outcome.returncode,
                         "timed_out": outcome.timed_out, "stdout": str(stdout), "stderr": str(stderr)})
         if outcome.returncode != 0 or outcome.timed_out:
@@ -93,16 +95,17 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
         integration = run_dir / "integration"
         current_task, attempt_id = None, None
         with RunStore(run_dir / "state.sqlite") as store:
-            store.initialize(run_id=run_id, repo=str(repo.path), branch=branch, base_sha=base,
-                             tasks=graph.tasks, config=config.to_dict())
-            store.set_run("running")
-
-            def record_stop(status: str, error: str, details: dict) -> None:
+            def record_stop(status: str, error: str, details: dict) -> bool:
                 # An interrupt can arrive after a transaction commits but before
                 # local bookkeeping catches up. Persisted terminal states win.
-                snapshot = store.snapshot()
-                if snapshot["status"] != "running":
-                    return
+                try:
+                    snapshot = store.snapshot()
+                except StoreError:
+                    # Initialization may have rolled back before a run existed.
+                    # Preserve the original setup exception when no report can be read.
+                    return False
+                if snapshot["status"] not in {"created", "running"}:
+                    return True
                 if current_task:
                     task_state = next(task for task in snapshot["tasks"]
                                       if task["id"] == current_task.id)
@@ -110,8 +113,12 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
                         store.transition(current_task.id, status,
                                          attempt_id=task_state["attempt_id"], details=details)
                 store.set_run(status, error=error)
+                return True
 
             try:
+                store.initialize(run_id=run_id, repo=str(repo.path), branch=branch, base_sha=base,
+                                 tasks=graph.tasks, config=config.to_dict())
+                store.set_run("running")
                 notify(f"Run {run_id}: verifying the baseline")
                 repo.create_worktree(integration, base)
                 repo.create_branch(branch, base)
@@ -172,13 +179,15 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
                 if store.snapshot()["status"] == "running":
                     store.set_run("success")
             except KeyboardInterrupt:
-                record_stop("interrupted", "interrupted by user", {"error": "interrupted by user"})
+                if not record_stop("interrupted", "interrupted by user", {"error": "interrupted by user"}):
+                    raise
             except (ContractError, ProcessError, WorkspaceError, StoreError,
                     VerificationFailure, OSError, sqlite3.Error) as exc:
                 details = {"error": str(exc)}
                 if isinstance(exc, VerificationFailure):
                     details["verification"] = exc.records
-                record_stop("failed", str(exc), details)
+                if not record_stop("failed", str(exc), details):
+                    raise
             result = store.snapshot()
             result["run_dir"] = str(run_dir)
             report = run_dir / "report.json"

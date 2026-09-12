@@ -1,5 +1,7 @@
 import json
+import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
@@ -134,6 +136,88 @@ class SerialExecutionTests(unittest.TestCase):
         self.assertEqual(result["status"], "interrupted")
         self.assertEqual(result["tasks"][0]["status"], "interrupted")
 
+    def test_startup_stops_are_persisted_before_any_work_is_launched(self):
+        initialize, set_run = RunStore.initialize, RunStore.set_run
+        for stage in ("after-initialize", "before-running", "after-running"):
+            for cause, status in (("sigint", "interrupted"), ("oserror", "failed")):
+                with self.subTest(stage=stage, cause=cause):
+                    def stop():
+                        if cause == "sigint":
+                            os.kill(os.getpid(), signal.SIGINT)
+                        else:
+                            raise OSError("startup failed")
+
+                    def initialize_and_stop(store, **kwargs):
+                        initialize(store, **kwargs)
+                        if stage == "after-initialize":
+                            stop()
+
+                    def set_run_and_stop(store, next_status, **kwargs):
+                        if next_status == "running" and stage == "before-running":
+                            stop()
+                        set_run(store, next_status, **kwargs)
+                        if next_status == "running" and stage == "after-running":
+                            stop()
+
+                    runner = FakeRunner()
+                    original_handler = signal.signal(signal.SIGINT, signal.default_int_handler)
+                    try:
+                        with patch.object(RunStore, "initialize", initialize_and_stop), \
+                                patch.object(RunStore, "set_run", set_run_and_stop):
+                            try:
+                                result = run_serial(self.config, runner=runner)
+                            except KeyboardInterrupt:
+                                self.fail("startup SIGINT escaped without a persisted interrupted report")
+                    finally:
+                        signal.signal(signal.SIGINT, original_handler)
+
+                    self.assertEqual(result["status"], status)
+                    self.assertTrue(result["error"])
+                    self.assertEqual([task["status"] for task in result["tasks"]], ["pending", "pending"])
+                    self.assertTrue(all(task["attempt_id"] is None for task in result["tasks"]))
+                    self.assertEqual(result["attempts"], [])
+                    self.assertEqual(runner.workers, [])
+                    self.assertEqual(runner.reviews, [])
+                    run_dir = Path(result["run_dir"])
+                    self.assertFalse((run_dir / "integration").exists())
+                    self.assertFalse((run_dir / "workers").exists())
+                    self.assertEqual(git(self.repo, "for-each-ref", "--format=%(refname)", "refs/heads/anvil/"), "")
+                    self.assertEqual(RunStore.read(run_dir / "state.sqlite"),
+                                     {key: value for key, value in result.items() if key != "run_dir"})
+                    self.assertEqual(json.loads((run_dir / "report.json").read_text()), result)
+                    run_events = [event for event in result["events"] if event["kind"] == "run"]
+                    expected_states = ["created", "running", status] if stage == "after-running" else ["created", status]
+                    self.assertEqual([event["to_status"] for event in run_events], expected_states)
+                    self.assertEqual(git(self.repo, "rev-parse", "HEAD"), self.base)
+                    self.assertEqual(git(self.repo, "status", "--porcelain"), "")
+                    self.assertEqual((self.repo / "README.md").read_text(), "Fixture")
+                    self.assertFalse((self.repo / "value.txt").exists())
+                    with RepositoryLock(Repository(self.repo)):
+                        pass
+
+    def test_failure_before_initialization_preserves_original_exception(self):
+        for error in (KeyboardInterrupt(), OSError("cannot initialize the ledger")):
+            with self.subTest(error=type(error).__name__):
+                previous_runs = set(self.config.state_dir.glob("*"))
+                runner = FakeRunner()
+                with patch.object(RunStore, "initialize", side_effect=error):
+                    with self.assertRaises(type(error)) as raised:
+                        run_serial(self.config, runner=runner)
+                self.assertIs(raised.exception, error)
+                self.assertEqual(runner.workers, [])
+                self.assertEqual(runner.reviews, [])
+                new_runs = set(self.config.state_dir.glob("*")) - previous_runs
+                self.assertEqual(len(new_runs), 1)
+                run_dir = new_runs.pop()
+                self.assertFalse((run_dir / "report.json").exists())
+                self.assertFalse((run_dir / "integration").exists())
+                self.assertFalse((run_dir / "workers").exists())
+                self.assertEqual(git(self.repo, "for-each-ref", "--format=%(refname)", "refs/heads/anvil/"), "")
+                self.assertEqual(git(self.repo, "rev-parse", "HEAD"), self.base)
+                self.assertEqual(git(self.repo, "status", "--porcelain"), "")
+                with RepositoryLock(Repository(self.repo)):
+                    pass
+
     def test_stop_after_attempt_start_uses_persisted_owner_before_return(self):
         start_attempt = RunStore.start_attempt
         for exception, status in ((KeyboardInterrupt(), "interrupted"), (OSError("start failed"), "failed")):
@@ -265,6 +349,45 @@ class SerialExecutionTests(unittest.TestCase):
         result = run_serial(config, runner=runner)
         self.assertEqual(result["status"], "failed")
         self.assertEqual(runner.workers, [])
+
+    def test_git_root_verification_ignores_inherited_checkout_overrides(self):
+        document = json.loads(self.tickets.read_text())
+        document["tasks"] = document["tasks"][:1]
+        self.tickets.write_text(json.dumps(document))
+        command = (
+            "import os, subprocess; from pathlib import Path; "
+            "assert os.environ['ANVIL_TEST_PROJECT_SETTING'] == 'preserved'; "
+            "root = Path(subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], text=True).strip()); "
+            "print(root, flush=True); "
+            "value = root / 'value.txt'; "
+            "assert not value.exists() or value.read_text() == '1'"
+        )
+        config = RunConfig(self.repo, self.tickets, ((sys.executable, "-c", command),),
+                           self.root / "git-context", agent_timeout=10, check_timeout=10)
+        inherited = {"GIT_DIR": str(self.repo / ".git"), "GIT_WORK_TREE": str(self.repo),
+                     "ANVIL_TEST_PROJECT_SETTING": "preserved"}
+        for mode, status in (("bad-check", "failed"), ("success", "success")):
+            with self.subTest(mode=mode):
+                runner = FakeRunner(mode)
+                with patch.dict(os.environ, inherited):
+                    result = run_serial(config, runner=runner)
+                self.assertEqual(result["status"], status)
+                self.assertEqual(len(runner.workers), 1)
+                self.assertEqual(len(runner.reviews), 1)
+                run_dir = Path(result["run_dir"])
+                check_dir = run_dir / "artifacts" / result["attempts"][0]["id"] / "verification"
+                self.assertEqual(Path((check_dir / "1.stdout.log").read_text().strip()),
+                                 run_dir / "integration")
+                if mode == "bad-check":
+                    self.assertEqual(result["tasks"][0]["status"], "failed")
+                    self.assertEqual(git(self.repo, "rev-parse", result["branch"]), self.base)
+                    self.assertEqual((run_dir / "integration" / "value.txt").read_text(), "invalid")
+                else:
+                    self.assertEqual(result["tasks"][0]["status"], "done")
+                    self.assertEqual(git(self.repo, "show", f"{result['branch']}:value.txt"), "1")
+                self.assertEqual(git(self.repo, "rev-parse", "HEAD"), self.base)
+                self.assertEqual(git(self.repo, "status", "--porcelain"), "")
+                self.assertFalse((self.repo / "value.txt").exists())
 
     def test_verification_cannot_change_the_reviewed_tree(self):
         command = "from pathlib import Path; p=Path('value.txt'); p.exists() and Path('README.md').write_text('mutated')"

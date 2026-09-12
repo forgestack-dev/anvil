@@ -144,6 +144,27 @@ class StoreTests(unittest.TestCase):
                     store.transition("a", "failed", attempt_id=attempt)
                 self.assertEqual(store.snapshot()["status"], "failed")
 
+    def test_stopped_initialization_preserves_pending_tasks_and_is_terminal(self):
+        for status in ("failed", "blocked", "interrupted"):
+            path = self.path.parent / f"startup-{status}.db"
+            with self.subTest(status=status):
+                with RunStore(path) as store:
+                    self.initialize(store)
+                    with self.assertRaisesRegex(StoreError, "invalid run transition"):
+                        store.set_run("success")
+                    store.set_run(status, "stopped before execution")
+                    snapshot = store.snapshot()
+                    self.assertEqual(snapshot["status"], status)
+                    self.assertEqual(snapshot["tasks"][0]["status"], "pending")
+                    self.assertEqual(snapshot["attempts"], [])
+                    self.assertEqual(snapshot["events"][-1]["from_status"], "created")
+                    with self.assertRaisesRegex(StoreError, "invalid run transition"):
+                        store.set_run("running")
+                    with self.assertRaisesRegex(StoreError, "running run"):
+                        store.start_attempt("a", "base", "/workspace")
+                    self.assertEqual(store.snapshot(), snapshot)
+                self.assertEqual(RunStore.read(path), snapshot)
+
     def test_reopen_retains_evidence_and_immutable_input_snapshot(self):
         config = {"verification_commands": [["check"]]}
         with RunStore(self.path) as store:
