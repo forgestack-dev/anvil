@@ -2,55 +2,104 @@
 
 **Turn a spec into coordinated engineering work.**
 
-Anvil is ForgeStack's engineering harness for working through specifications and tickets with AI Hero skills. The design combines a discoverable entry skill, a persistent local runner, and adapters for coding agents. Codex is the first agent target.
+Anvil is ForgeStack's engineering harness for working through specifications and tickets with coding agents. It combines an entry skill, a local runner, and agent adapters. Codex is the first agent target; integration with the full AI Hero skill catalog is planned.
 
 ## Current status
 
-This is the initial scaffold. It can validate a JSON ticket graph, preview dependency waves, check the local Codex CLI, and prepare a structured Codex invocation. Preparing an invocation does not launch it.
+Anvil executes a JSON ticket graph **serially**. It launches Codex in isolated Git worktrees, records results in SQLite, reviews the complete integration revision with a separate read-only Codex turn, runs required checks, and advances a managed local branch only after acceptance evidence, review, and verification pass.
 
-Worker execution, SQLite persistence, parallel scheduling, review/integration, recovery, and upstream skill installation are planned. There is no `anvil run` command yet. A dry-run plan is not evidence that any ticket has been implemented.
+It also validates ticket graphs, previews dependency waves, checks local prerequisites, and reads saved run state. Parallel workers, retries, pause/resume, crash recovery, upstream skill loading, Markdown intake, and issue-tracker closeout remain planned. Requests for skills in an execution ticket are rejected rather than silently ignored. Nothing installs Anvil into an application repository automatically.
 
-## Quick start
+## Install and plan
 
-Requires Python 3.11 or later. The runtime has no third-party Python dependencies. Installation uses the build tools declared in `pyproject.toml`.
+Requires Python 3.11 or later. Serial execution requires macOS or Linux, Git, and an installed Codex CLI with working account access. The runtime has no third-party Python dependencies; installation uses the build tools declared in `pyproject.toml`.
 
 ```sh
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e .
 anvil validate examples/tickets.json
-anvil plan examples/tickets.json
 anvil plan examples/tickets.json --json
 anvil doctor
 ```
 
-Validation and planning work without Codex installed. `doctor` checks Git and the Codex executable and its advertised flags. It does not authenticate, make a model request, or verify account access. Exit codes are 0 for success, 1 for missing/incompatible runtime prerequisites, and 2 for invalid input or usage.
+Validation and planning work without Codex. `doctor` checks Git and the default `codex` executable's advertised flags; it does not authenticate, make a model request, or validate a custom `codex_binary` from a run configuration. The planner's dependency waves describe possible parallelism, but this version executes one ticket at a time.
 
-To try the planner directly from a source checkout:
+To use the CLI directly from a source checkout:
 
 ```sh
 PYTHONPATH=src python3 -m anvil plan examples/tickets.json
 ```
 
-## Tickets
+## Run tickets
 
-The current input is JSON with `version: 1` and a nonempty `tasks` array. Every task has an `id`, `title`, `objective`, `depends_on`, and nonempty `acceptance_criteria`; `skills` is optional. See the [example](examples/tickets.json) and [schema](schemas/tickets.schema.json).
+Start from a clean repository root with at least one commit. Include untracked files when checking cleanliness. Anvil reads that committed revision as its baseline and creates separate worktrees plus an `anvil/<run-id>` branch; it does not switch or merge into your current branch. Only one Anvil supervisor can hold the repository lock at a time.
 
-The planner rejects duplicate IDs, missing prerequisites, self-dependencies, cycles, and malformed fields. Its waves describe possible parallelism from dependencies, not an execution schedule or resource reservation. Skill names in tickets are requests only; this scaffold does not resolve or invoke them.
+Create a run configuration using [examples/run.json](examples/run.json) and the [configuration schema](schemas/run.schema.json):
 
-Markdown intake and spec-to-ticket generation are planned.
+```json
+{
+  "version": 1,
+  "repo": "/path/to/project",
+  "tickets": "tickets.json",
+  "verification": [["python3", "-m", "unittest", "discover", "-s", "tests", "-v"]],
+  "agent_timeout": 900,
+  "check_timeout": 300
+}
+```
 
-## Entry skill
+Paths resolve relative to the configuration file. Use verification commands appropriate to the project: they run once on the baseline and again on every reviewed integration revision. The baseline must pass, and checks must leave tracked files and untracked files unchanged; ignored test output is allowed.
 
-The Codex skill lives at [skills/anvil/SKILL.md](skills/anvil/SKILL.md). It supports preparing and inspecting plans with the capabilities available in this version. Install the CLI first, then copy the complete `skills/anvil` directory into your agent's skill directory. Do not replace an existing skill without inspecting it.
+**Run configurations are trusted executable input.** Each verification entry is an argument array executed directly on the host in the managed worktree. Anvil does not wrap these commands in Codex's sandbox or interpret shell syntax. Inspect the commands and any scripts they invoke before running a configuration. Codex implementation turns use `workspace-write`; review turns use `read-only`. Anvil supplies no model override or permission bypass.
 
-Python distributions also include the skill under `share/anvil/skills/anvil` in the installation prefix. Installing this package does not automatically register the skill with an agent.
+`agent_timeout` applies separately to each implementation and review turn; `check_timeout` applies to each verification command. Both must be greater than zero and at most 3,600 seconds. Optional `codex_binary` selects a trusted local executable. Optional `state_dir` must be outside the target checkout and its Git directory; its default is `~/.local/state/anvil`.
 
-## Design
+```sh
+anvil run /path/to/run.json
+anvil status /path/to/saved/run-directory --json
+```
 
-The intended runtime has a scheduler, isolated workers, and one integration lane. One worker gives sequential execution; multiple workers share a dependency graph and durable coordination state. A task becomes done only after acceptance evidence and verification of its integrated changes.
+`run` prints progress and the saved run directory; add `--json` for a machine-readable final report. Running the same configuration again starts a new run. `status` reads existing state and **does not resume execution**.
 
-See the [build plan](docs/PLAN.md), [implementation milestones](docs/ROADMAP.md), and [upstream integration notes](docs/UPSTREAM.md).
+For each ticket, Anvil:
+
+1. Implements the ticket in a new worktree based on completed prerequisites.
+2. Validates structured acceptance evidence and commits a complete candidate.
+3. Prepares the integration revision and independently reviews that exact revision in read-only mode.
+4. Runs the configured checks, rejects changes after review, and advances the managed branch only to the verified revision.
+5. Records completion before starting a dependent ticket.
+
+A worker's success message alone cannot complete a ticket. A blocker, requested review changes, failing check, process timeout, or other terminal failure stops the entire serial run, including independent tickets. Completed work remains on the managed branch; failed candidates, worktrees, logs, and state are preserved for inspection. Ctrl-C terminates the active process group and records interruption. Process groups clean up ordinary child processes; they are not a security boundary against deliberately detached programs.
+
+The saved run directory contains `state.sqlite`, `report.json`, worktrees, and per-ticket artifacts: structured worker/review results, event streams, stderr logs, verification outputs, and associated commit IDs. A hard crash may leave state recorded as running; automatic reconciliation and resume are not implemented. Inspect preserved work before deciding how to proceed.
+
+`run` exits with 0 for success, 1 for failure, 2 for invalid input/setup, 3 for blocked work, or 130 for Ctrl-C. `status` exits with 0 when the saved state was read successfully, regardless of the run's recorded outcome. Anvil does not push, open a pull request, merge into a user branch, or close external tickets.
+
+## Small serial example
+
+The [serial tickets](examples/serial-tickets.json) add a tested Python greeting function, then a command-line interface. They contain no skill requests. From a source checkout, prepare a new sibling repository:
+
+```sh
+mkdir -p ../anvil-demo/tests
+touch ../anvil-demo/tests/__init__.py
+printf '__pycache__/\n' > ../anvil-demo/.gitignore
+git -C ../anvil-demo init
+git -C ../anvil-demo add .gitignore tests/__init__.py
+git -C ../anvil-demo commit -m "Initialize Anvil demo"
+anvil validate examples/serial-tickets.json
+anvil plan examples/serial-tickets.json
+anvil run examples/run.json
+```
+
+Use a new `anvil-demo` directory and your existing Git identity. The example configuration targets that sibling repository and runs Python's unittest discovery. Its initial empty test suite provides a passing baseline; the tickets require tests for the new behavior. The final command launches real Codex turns and uses your configured model/account. The larger [planning example](examples/tickets.json) includes future skill requests and is for planning only.
+
+## Tickets and entry skill
+
+The input is JSON with `version: 1` and a nonempty `tasks` array. Each task has an `id`, `title`, `objective`, `depends_on`, and nonempty `acceptance_criteria`; see the [ticket schema](schemas/tickets.schema.json). The planner rejects duplicate IDs, missing prerequisites, self-dependencies, cycles, and malformed fields. Optional `skills` names can be planned, but nonempty skill requests cannot yet execute.
+
+The Codex entry skill lives at [skills/anvil/SKILL.md](skills/anvil/SKILL.md). Install the CLI first, then copy the complete `skills/anvil` directory into your chosen agent skill directory, inspecting any existing skill before replacing it. Python distributions include it under `share/anvil/skills/anvil` in the installation prefix. Package installation does not register the skill automatically.
+
+See the [build plan](docs/PLAN.md), [implementation milestones](docs/ROADMAP.md), and [upstream integration notes](docs/UPSTREAM.md) for the broader design.
 
 ## Development
 
@@ -59,10 +108,10 @@ python -m pip install -e .
 python -m unittest discover -s tests -v
 ```
 
-CI tests Python 3.11 and 3.12, runs the example planner, and checks distribution packaging. Tests use local fixtures and fake command probes; they do not spend model tokens or publish external changes.
+CI tests Python 3.11 and 3.12, runs the example planner, and checks distribution packaging. Tests use real temporary Git repositories and local fake agent executables to exercise execution and failures without model turns or external publication. See [validation evidence](docs/VALIDATION.md) for the separate live Codex exercise and its reproduction instructions.
 
 ## Attribution
 
-Anvil is an independent ForgeStack project. Its engineering workflow builds on [Matt Pocock's AI Hero skills](https://www.aihero.dev/skills), including the experimental [`implement-spec` design](https://github.com/mattpocock/skills/blob/main/skills/in-progress/implement-spec/SKILL.md). The source revision is recorded in [upstream/aihero.lock.json](upstream/aihero.lock.json). No upstream skill code is vendored in this scaffold.
+Anvil is an independent ForgeStack project. Its design builds on [Matt Pocock's AI Hero skills](https://www.aihero.dev/skills), including the experimental [`implement-spec` workflow](https://github.com/mattpocock/skills/blob/main/skills/in-progress/implement-spec/SKILL.md). The source revision is recorded in [upstream/aihero.lock.json](upstream/aihero.lock.json). No upstream skill code is currently vendored or loaded.
 
 Anvil is MIT licensed. Future upstream imports must preserve their original license and attribution.

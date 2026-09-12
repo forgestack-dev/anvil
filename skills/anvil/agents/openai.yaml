@@ -1,4 +1,4 @@
 interface:
   display_name: "Anvil"
-  short_description: "Plan coordinated engineering work from tickets"
-  default_prompt: "Use $anvil to validate my tickets and preview their dependency waves."
+  short_description: "Run and inspect supervised serial ticket work"
+  default_prompt: "Use $anvil to inspect my tickets and run configuration, execute the authorized work serially, and report the verified local branch and saved run state."

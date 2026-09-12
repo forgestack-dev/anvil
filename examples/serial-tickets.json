@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "id": "greeting-function",
+      "title": "Add a tested greeting function",
+      "objective": "Create a dependency-free greeting.py module exposing greet(name: str) -> str for a small Python command-line example. Use Python's unittest library for tests under tests/.",
+      "depends_on": [],
+      "acceptance_criteria": [
+        "greeting.greet('Ada') returns exactly 'Hello, Ada!', and leading or trailing whitespace in the name is removed.",
+        "An empty or whitespace-only name raises ValueError with a helpful message.",
+        "Discoverable unittest tests exercise normal names, surrounding whitespace, and empty or whitespace-only names through the public greet function."
+      ]
+    },
+    {
+      "id": "greeting-cli",
+      "title": "Expose the greeting as a command-line tool",
+      "objective": "Extend greeting.py so python3 -m greeting NAME invokes the existing greet function. Keep it dependency-free and add public command-line tests using unittest and subprocess.",
+      "depends_on": ["greeting-function"],
+      "acceptance_criteria": [
+        "Running python3 -m greeting Ada prints exactly 'Hello, Ada!' followed by a newline and exits with code 0.",
+        "A missing name or a whitespace-only name exits with code 2, emits a helpful error on stderr, and does not print a traceback.",
+        "Discoverable unittest tests cover successful invocation, a missing name, and a whitespace-only name through the command-line entry point; the greeting function tests continue to pass."
+      ]
+    }
+  ]
+}

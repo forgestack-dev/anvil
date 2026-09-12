@@ -1,6 +1,8 @@
 # Anvil — build plan
 
-Status: initial scaffold. JSON validation, dependency planning, and Codex command preparation are implemented. The execution runtime and upstream installation remain planned. See ROADMAP.md for milestones.
+Status: serial execution is implemented and accepted through a live two-ticket exercise. JSON tickets now run through isolated Codex implementation, read-only review of the exact integration revision, required checks, a managed local branch, and a SQLite evidence ledger. `anvil status` reads saved runs; it does not resume them. See [ROADMAP.md](ROADMAP.md) for milestone progress, [VALIDATION.md](VALIDATION.md) for evidence, and [README.md](../README.md) for supported commands and configuration.
+
+The remainder describes the full target design. Current execution is one attempt per ticket on macOS/Linux; a blocker or terminal failure stops the whole serial run. Parallelism, retries, pause/resume, crash recovery, wide-refactor groups, Markdown intake, and upstream skill loading remain planned. Nonempty skill requests are rejected. Verification commands are trusted configuration executed directly on the host. An application-repository pilot follows acceptance of the serial milestone.
 
 ## Recommendation
 

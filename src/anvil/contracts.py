@@ -52,8 +52,8 @@ def _object_fields(value: Any, required: set[str], optional: set[str], label: st
 
 
 def _text(value: Any, label: str) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise ContractError(f"{label} must be a nonempty string")
+    if not isinstance(value, str) or not value.strip() or "\0" in value:
+        raise ContractError(f"{label} must be a nonempty string without NUL characters")
     return value
 
 

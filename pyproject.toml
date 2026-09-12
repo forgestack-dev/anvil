@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "forgestack-anvil"
-version = "0.1.0.dev0"
+version = "0.1.0.dev1"
 description = "A skills-driven engineering harness for coordinated ticket and spec execution."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -34,6 +34,6 @@ namespaces = false
 "share/anvil/skills/anvil" = ["skills/anvil/SKILL.md"]
 "share/anvil/skills/anvil/agents" = ["skills/anvil/agents/openai.yaml"]
 "share/anvil/skills/anvil/references" = ["skills/anvil/references/workflow.md"]
-"share/anvil/schemas" = ["schemas/tickets.schema.json"]
-"share/anvil/examples" = ["examples/tickets.json"]
+"share/anvil/schemas" = ["schemas/tickets.schema.json", "schemas/run.schema.json"]
+"share/anvil/examples" = ["examples/tickets.json", "examples/serial-tickets.json", "examples/run.json"]
 "share/anvil/upstream" = ["upstream/aihero.lock.json"]
