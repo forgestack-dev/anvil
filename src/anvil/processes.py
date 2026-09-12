@@ -8,7 +8,7 @@ control, not a security boundary against a program deliberately escaping them.
 
 from __future__ import annotations
 
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from collections.abc import Mapping
 from dataclasses import dataclass
 import math
@@ -17,6 +17,7 @@ from pathlib import Path
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 from typing import Sequence
 
@@ -29,6 +30,35 @@ class ProcessError(RuntimeError):
 class ProcessOutcome:
     returncode: int
     timed_out: bool
+
+
+@contextmanager
+def _defer_sigint():
+    """Deliver Ctrl-C at checkpoints or after cleanup, never inside ownership changes."""
+    handler = signal.getsignal(signal.SIGINT)
+    pending = None
+
+    def remember(signum, frame):
+        nonlocal pending
+        pending = (signum, frame)
+
+    def checkpoint():
+        nonlocal pending
+        if pending is not None:
+            received, pending = pending, None
+            handler(*received)
+
+    # Python dispatches signal handlers only on the main thread. Preserve callers'
+    # explicit ignored/default dispositions, including their inheritance by exec.
+    if threading.current_thread() is not threading.main_thread() or not callable(handler):
+        yield checkpoint
+        return
+    signal.signal(signal.SIGINT, remember)
+    try:
+        yield checkpoint
+    finally:
+        signal.signal(signal.SIGINT, handler)
+        checkpoint()
 
 
 def _signal_group(group: int, sig: int) -> bool:
@@ -124,26 +154,41 @@ def run_process(
                 input_file = files.enter_context(tempfile.TemporaryFile(mode="w+b"))
                 input_file.write(stdin.encode("utf-8"))
                 input_file.seek(0)
-            process = subprocess.Popen(
-                list(argv),
-                cwd=cwd,
-                stdin=input_file,
-                stdout=stdout_file,
-                stderr=stderr_file,
-                shell=False,
-                start_new_session=True,
-                env=env,
-            )
         except (OSError, ValueError, UnicodeError) as exc:
             raise ProcessError(f"could not start command or create output artifacts: {exc}") from exc
-        timed_out = False
-        try:
+        # Keep the guard installed across spawn, waiting, and all of cleanup.
+        # A guard installed only inside finally would itself have an interrupt
+        # window before entry, and children must not inherit a blocked SIGINT mask.
+        with _defer_sigint() as check_interrupt:
+            process = None
+            timed_out = False
             try:
-                process.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                timed_out = True
-        finally:
-            # This runs on success, failure, timeout, and KeyboardInterrupt. A
-            # successful leader can leave background children, so always clean up.
-            _stop_group(process)
+                try:
+                    process = subprocess.Popen(
+                        list(argv),
+                        cwd=cwd,
+                        stdin=input_file,
+                        stdout=stdout_file,
+                        stderr=stderr_file,
+                        shell=False,
+                        start_new_session=True,
+                        env=env,
+                    )
+                except (OSError, ValueError, UnicodeError) as exc:
+                    raise ProcessError(f"could not start command or create output artifacts: {exc}") from exc
+                deadline = time.monotonic() + timeout
+                while True:
+                    check_interrupt()
+                    try:
+                        process.wait(timeout=min(0.1, max(0, deadline - time.monotonic())))
+                        break
+                    except subprocess.TimeoutExpired:
+                        if time.monotonic() >= deadline:
+                            timed_out = True
+                            break
+            finally:
+                # A successful leader can leave descendants; always stop its
+                # group before propagating any interrupts received during cleanup.
+                if process is not None:
+                    _stop_group(process)
         return ProcessOutcome(returncode=process.returncode, timed_out=timed_out)

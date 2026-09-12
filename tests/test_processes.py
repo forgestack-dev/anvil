@@ -1,10 +1,12 @@
 """Exercise real local processes without using model workers or the network."""
 
 import os
+import signal
 from pathlib import Path
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import time
 import unittest
 from unittest.mock import patch
@@ -18,6 +20,8 @@ class ProcessTests(unittest.TestCase):
         self.temp = TemporaryDirectory(prefix="anvil process ")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        self.original_sigint = signal.getsignal(signal.SIGINT)
+        self.addCleanup(signal.signal, signal.SIGINT, self.original_sigint)
 
     def run_command(self, code, *, stdin=None, timeout=3, args=()):
         return run_process(
@@ -117,6 +121,142 @@ class ProcessTests(unittest.TestCase):
             with self.assertRaises(KeyboardInterrupt):
                 self.run_command(self.background_code(leader_exits=False))
         self.assert_children_stopped()
+
+    def await_file(self, path):
+        deadline = time.monotonic() + 3
+        while not path.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(path.exists(), f"child did not create {path.name}")
+
+    def clean_process_group(self, process):
+        # Reap even on a regression, so a failed lifecycle assertion cannot leave
+        # real fixture children running after the temporary directory disappears.
+        process.poll()
+        try:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        finally:
+            process.wait(timeout=3)
+
+    def waiting_child_code(self):
+        return (
+            "import signal,time,pathlib; "
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            "pathlib.Path('child.ready').write_text('ready'); "
+            "exec(\"while not pathlib.Path('child.release').exists(): time.sleep(0.01)\"); "
+            "time.sleep(0.1); pathlib.Path('late-mutation').write_text('bad')"
+        )
+
+    def assert_waiting_child_stopped(self, process):
+        (self.root / "child.release").write_text("release")
+        time.sleep(0.3)
+        self.assertFalse((self.root / "late-mutation").exists())
+        with self.assertRaises(ChildProcessError):
+            os.waitpid(process.pid, os.WNOHANG)
+
+    def test_sigint_during_creation_stops_child_before_propagating(self):
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        original_execute = subprocess.Popen._execute_child
+        processes = []
+
+        def interrupt_after_spawn(process, *args, **kwargs):
+            original_execute(process, *args, **kwargs)
+            processes.append(process)
+            self.addCleanup(self.clean_process_group, process)
+            self.await_file(self.root / "child.ready")
+            # The OS child exists, but Popen has not returned its handle yet.
+            os.kill(os.getpid(), signal.SIGINT)
+
+        with patch.object(subprocess.Popen, "_execute_child", interrupt_after_spawn):
+            with self.assertRaises(KeyboardInterrupt):
+                self.run_command(self.waiting_child_code())
+        self.assertEqual(signal.getsignal(signal.SIGINT), signal.default_int_handler)
+        self.assert_waiting_child_stopped(processes[0])
+
+    def test_repeated_sigint_during_cleanup_still_kills_orphaned_descendant(self):
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        original_execute = subprocess.Popen._execute_child
+        processes = []
+        interrupts = 0
+
+        def capture_spawn(process, *args, **kwargs):
+            original_execute(process, *args, **kwargs)
+            processes.append(process)
+            self.addCleanup(self.clean_process_group, process)
+
+        def interrupt_grace_period(duration):
+            nonlocal interrupts
+            for _ in range(2):
+                interrupts += 1
+                os.kill(os.getpid(), signal.SIGINT)
+            time.sleep(duration)
+
+        leader = (
+            "import subprocess,sys,pathlib,time; "
+            f"subprocess.Popen([sys.executable, '-c', {self.waiting_child_code()!r}]); "
+            "exec(\"while not pathlib.Path('child.ready').exists(): time.sleep(0.01)\"); "
+            "sys.exit(0)"
+        )
+        # Replace the module reference rather than the global time.sleep, so
+        # synchronization and subprocess internals retain their real clock.
+        clock = SimpleNamespace(monotonic=time.monotonic, sleep=interrupt_grace_period)
+        with patch.object(subprocess.Popen, "_execute_child", capture_spawn), patch("anvil.processes.time", clock):
+            with self.assertRaises(KeyboardInterrupt):
+                self.run_command(leader)
+        self.assertEqual(signal.getsignal(signal.SIGINT), signal.default_int_handler)
+        self.assert_waiting_child_stopped(processes[0])
+        self.assertEqual(interrupts, 2)
+
+    def test_custom_sigint_handler_can_return_and_allow_command_to_complete(self):
+        received = []
+        processes = []
+        original_execute = subprocess.Popen._execute_child
+
+        def custom_handler(signum, frame):
+            received.append(signum)
+            (self.root / "child.release").write_text("release")
+
+        def interrupt_after_spawn(process, *args, **kwargs):
+            original_execute(process, *args, **kwargs)
+            processes.append(process)
+            self.addCleanup(self.clean_process_group, process)
+            self.await_file(self.root / "child.ready")
+            os.kill(os.getpid(), signal.SIGINT)
+
+        signal.signal(signal.SIGINT, custom_handler)
+        code = self.waiting_child_code().replace("'late-mutation'", "'completed'")
+        with patch.object(subprocess.Popen, "_execute_child", interrupt_after_spawn):
+            outcome = self.run_command(code)
+        self.assertEqual(received, [signal.SIGINT])
+        self.assertEqual(outcome.returncode, 0)
+        self.assertFalse(outcome.timed_out)
+        self.assertTrue((self.root / "completed").exists())
+        self.assertEqual(signal.getsignal(signal.SIGINT), custom_handler)
+        with self.assertRaises(ChildProcessError):
+            os.waitpid(processes[0].pid, os.WNOHANG)
+
+    def test_sigint_disposition_is_restored_on_success_and_creation_failure(self):
+        def custom_handler(signum, frame):
+            pass
+
+        for index, disposition in enumerate((signal.default_int_handler, signal.SIG_IGN, custom_handler)):
+            for succeeds in (True, False):
+                with self.subTest(disposition=disposition, succeeds=succeeds):
+                    signal.signal(signal.SIGINT, disposition)
+                    argv = [sys.executable, "-c", "pass"] if succeeds else [str(self.root / "missing")]
+                    kwargs = dict(
+                        cwd=self.root, stdin=None, timeout=3,
+                        stdout_path=self.root / f"stdout-{index}-{succeeds}",
+                        stderr_path=self.root / f"stderr-{index}-{succeeds}",
+                    )
+                    if succeeds:
+                        self.assertEqual(run_process(argv, **kwargs).returncode, 0)
+                    else:
+                        with self.assertRaises(ProcessError):
+                            run_process(argv, **kwargs)
+                    self.assertEqual(signal.getsignal(signal.SIGINT), disposition)
 
     def test_creation_failure_is_descriptive(self):
         with self.assertRaisesRegex(ProcessError, "could not start command"):
