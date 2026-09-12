@@ -10,7 +10,9 @@
     "repo": {"$ref": "#/$defs/text"},
     "tickets": {"$ref": "#/$defs/text"},
     "state_dir": {"$ref": "#/$defs/text"},
-    "codex_binary": {"$ref": "#/$defs/text"},
+    "agent": {"type": "string", "enum": ["codex", "claude-code"], "default": "codex"},
+    "agent_binary": {"$ref": "#/$defs/text", "description": "Trusted executable override. Defaults to codex or claude for the selected agent."},
+    "codex_binary": {"$ref": "#/$defs/text", "description": "Legacy Codex executable override. Cannot be used with agent_binary or the claude-code agent."},
     "agent_timeout": {"type": "number", "exclusiveMinimum": 0, "maximum": 3600},
     "check_timeout": {"type": "number", "exclusiveMinimum": 0, "maximum": 3600},
     "verification": {
@@ -18,5 +20,10 @@
       "items": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1, "not": {"pattern": "\u0000"}}}
     }
   },
+  "allOf": [
+    {"not": {"required": ["codex_binary", "agent_binary"]}},
+    {"if": {"required": ["agent"], "properties": {"agent": {"const": "claude-code"}}},
+     "then": {"not": {"required": ["codex_binary"]}}}
+  ],
   "$defs": {"text": {"type": "string", "minLength": 1, "pattern": "\\S", "not": {"pattern": "\u0000"}}}
 }

@@ -11,7 +11,7 @@ import shutil
 import sys
 
 from anvil import __version__
-from anvil.adapters.codex import doctor
+from anvil.adapters import AGENT_NAMES, probe_agent
 from anvil.contracts import ContractError
 from anvil.planning import TaskGraph
 
@@ -29,7 +29,9 @@ def parser() -> argparse.ArgumentParser:
         subcommand = subcommands.add_parser(name, help=help_text)
         subcommand.add_argument("tickets", type=Path)
         subcommand.add_argument("--json", action="store_true", help="Print JSON output.")
-    check = subcommands.add_parser("doctor", help="Check Git and Codex CLI availability.")
+    check = subcommands.add_parser("doctor", help="Check Git and the selected agent CLI.")
+    check.add_argument("--agent", choices=AGENT_NAMES, default="codex")
+    check.add_argument("--agent-binary", help="Trusted agent executable name or path.")
     check.add_argument("--json", action="store_true", help="Print JSON output.")
     run = subcommands.add_parser("run", help="Execute a trusted run configuration serially.")
     run.add_argument("config", type=Path)
@@ -43,26 +45,35 @@ def parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     arguments = parser().parse_args(argv)
     if arguments.command == "doctor":
-        codex = doctor(probe=True)
+        try:
+            agent = probe_agent(arguments.agent, arguments.agent_binary)
+        except (ContractError, ValueError, OSError) as exc:
+            if arguments.json:
+                print(json.dumps({"error": str(exc)}))
+            else:
+                print(f"anvil: {exc}", file=sys.stderr)
+            return 2
         git = shutil.which("git")
         result = {
             "version": __version__,
             "stage": "serial-execution",
             "ticket_execution_available": os.name == "posix",
             "git": git,
-            "codex": asdict(codex),
+            "agent": arguments.agent,
+            arguments.agent: asdict(agent),
         }
         if arguments.json:
             print(json.dumps(result, indent=2))
         else:
             print(f"Anvil {__version__} — serial execution")
             print(f"Git: {git or 'not found'}")
-            print(f"Codex: {codex.executable or 'not found'}")
-            print(f"Codex flags: {'compatible' if codex.compatible else 'unavailable/incompatible'}")
-            if codex.error:
-                print(f"Codex detail: {codex.error}")
+            label = "Codex" if arguments.agent == "codex" else "Claude Code"
+            print(f"{label}: {agent.executable or 'not found'}")
+            print(f"{label} compatibility: {'compatible' if agent.compatible else 'unavailable/incompatible'}")
+            if agent.error:
+                print(f"{label} detail: {agent.error}")
             print("Serial execution requires macOS or Linux. Skill loading and recovery are planned.")
-        return 0 if git and codex.compatible else 1
+        return 0 if git and agent.compatible and os.name == "posix" else 1
 
     if arguments.command in ("run", "status"):
         from .config import RunConfig

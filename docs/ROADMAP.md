@@ -21,6 +21,16 @@
 
 This version attempts each ticket once and stops the whole run on a blocker or failure. It does not resolve upstream skills, resume saved runs, or reconcile hard crashes. Verification commands are trusted argument arrays executed directly on the host. Completion means a verified local branch, not publication or tracker closeout.
 
+## 1a. Claude Code adapter — implemented
+
+- Select Codex or Claude Code per run, preserving Codex as the default and reading legacy Codex configurations.
+- Probe the selected CLI and custom executable with `anvil doctor`.
+- Run Claude Code with structured output, finite turns, file tools, and separate review; the supervisor provides the diff and runs checks.
+- Preserve the same evidence, process lifecycle, and Git integration gates for both agents.
+- Document Claude's customization and permission boundaries in [agent behavior](AGENT_ADAPTERS.md).
+
+This adapter does not add parallel execution, upstream skill loading, or recovery. The serial milestone's live Codex exercise does not establish live Claude acceptance; consult [validation evidence](VALIDATION.md) for the recorded scope.
+
 ## 2. Parallel execution
 
 - Atomic claims, ownership tokens, heartbeat handling, and global process limits.
@@ -47,5 +57,5 @@ This version attempts each ticket once and stops the whole run on a blocker or f
 
 - Pilot Anvil in an application repository after the serial milestone is accepted.
 - Add the preferred live issue tracker and external closeout semantics.
-- Add another coding-agent adapter.
+- Add further coding-agent adapters based on usage.
 - Evaluate plugin distribution and remote execution based on usage.

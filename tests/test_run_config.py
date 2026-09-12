@@ -61,6 +61,7 @@ class RunConfigTests(unittest.TestCase):
         self.assertEqual(config.state_dir, (Path.home() / ".local/state/anvil").resolve())
         self.assertEqual((config.agent_timeout, config.check_timeout), (900.0, 300.0))
         self.assertEqual(config.codex_binary, "codex")
+        self.assertEqual((config.agent, config.executable), ("codex", "codex"))
         for binary, expected in (
             ("codex-nightly", "codex-nightly"),
             (str(self.root / "absolute tool"), str(self.root / "absolute tool")),
@@ -68,6 +69,69 @@ class RunConfigTests(unittest.TestCase):
         ):
             with self.subTest(binary=binary):
                 self.assertEqual(self.parse(document | {"codex_binary": binary}).codex_binary, expected)
+
+    def test_agent_selection_defaults_and_custom_executables_round_trip(self):
+        for agent, default_binary in (("codex", "codex"), ("claude-code", "claude")):
+            with self.subTest(agent=agent, default=True):
+                config = self.parse(configuration() | {"agent": agent})
+                self.assertEqual((config.agent, config.executable), (agent, default_binary))
+                self.assertEqual(config.agent_binary, default_binary)
+                self.assertEqual(self.parse(config.to_dict()), config)
+            for binary, expected in (
+                ("custom agent", "custom agent"),
+                ("./bin/custom agent", str(self.root / "bin/custom agent")),
+                ("~/bin/custom-agent", str((Path.home() / "bin/custom-agent").resolve())),
+                (str(self.root / "absolute agent"), str(self.root / "absolute agent")),
+            ):
+                with self.subTest(agent=agent, binary=binary):
+                    config = self.parse(configuration() | {"agent": agent, "agent_binary": binary})
+                    self.assertEqual(config.executable, expected)
+                    self.assertEqual(config.to_dict()["agent_binary"], expected)
+                    self.assertNotIn("codex_binary", config.to_dict())
+                    self.assertEqual(RunConfig.from_document(config.to_dict(), base=Path("/elsewhere")), config)
+                    if agent == "codex":
+                        self.assertEqual(config.codex_binary, expected)
+
+    def test_legacy_json_and_positional_constructors_preserve_codex_executable(self):
+        parsed = self.parse(configuration() | {"codex_binary": "codex-nightly"})
+        direct = RunConfig(parsed.repo, parsed.tickets, parsed.verification, parsed.state_dir,
+                           "codex-nightly", 900, 300)
+        self.assertEqual(direct, parsed)
+        self.assertEqual((direct.agent, direct.executable, direct.codex_binary),
+                         ("codex", "codex-nightly", "codex-nightly"))
+        self.assertEqual(direct.to_dict()["agent_binary"], "codex-nightly")
+        self.assertNotIn("codex_binary", direct.to_dict())
+        self.assertEqual(self.parse(direct.to_dict()), direct)
+
+    def test_direct_constructors_support_agent_selection_and_generic_override(self):
+        paths = (self.root / "repo", self.root / "tickets.json", (("check",),), self.root / "state")
+        claude = RunConfig(*paths, agent="claude-code")
+        self.assertEqual((claude.executable, claude.agent_binary), ("claude", "claude"))
+        self.assertEqual(self.parse(claude.to_dict()), claude)
+        codex = RunConfig(*paths, agent_binary="custom-codex")
+        self.assertEqual(codex.codex_binary, "custom-codex")
+        self.assertEqual(self.parse(codex.to_dict()), codex)
+        with self.assertRaises(ContractError):
+            RunConfig(*paths, codex_binary="custom-codex", agent="claude-code")
+        with self.assertRaises(ContractError):
+            RunConfig(*paths, codex_binary="old-codex", agent_binary="new-codex")
+
+    def test_agent_names_reject_unsupported_and_nonstring_values(self):
+        for agent in ("claude", "Codex", "", " ", None, True, 1, [], {}):
+            with self.subTest(agent=agent), self.assertRaisesRegex(ContractError, "agent must be"):
+                self.parse(configuration() | {"agent": agent})
+
+    def test_legacy_binary_is_rejected_for_claude_and_aliases_cannot_be_combined(self):
+        for legacy_binary in ("codex", "custom-codex"):
+            with self.subTest(legacy_binary=legacy_binary), self.assertRaisesRegex(ContractError, "only supported"):
+                self.parse(configuration() | {"agent": "claude-code", "codex_binary": legacy_binary})
+        for agent_selection in ({}, {"agent": "codex"}, {"agent": "claude-code"}):
+            for generic_binary in ("codex", "custom-agent"):
+                with self.subTest(agent_selection=agent_selection, binary=generic_binary):
+                    with self.assertRaisesRegex(ContractError, "not both"):
+                        self.parse(configuration() | agent_selection | {
+                            "codex_binary": "codex", "agent_binary": generic_binary,
+                        })
 
     def test_malformed_shapes_missing_fields_and_unknown_options_are_rejected(self):
         documents = [None, [], "run", {}, configuration() | {"untrusted_option": True}]
@@ -83,7 +147,7 @@ class RunConfigTests(unittest.TestCase):
                 self.parse(configuration() | {"version": version})
 
     def test_path_and_binary_values_must_be_nonblank_strings_without_nul(self):
-        for field in ("repo", "tickets", "state_dir", "codex_binary"):
+        for field in ("repo", "tickets", "state_dir", "codex_binary", "agent_binary"):
             for value in (None, 1, True, [], "", " \n", "invalid\0path"):
                 with self.subTest(field=field, value=value), self.assertRaises(ContractError):
                     self.parse(configuration() | {field: value})

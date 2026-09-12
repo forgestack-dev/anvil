@@ -15,7 +15,7 @@ WORKER_SCHEMA = _schema({
     "summary": _TEXT,
     "acceptance": {"type": "array", "items": _schema({
         "criterion": {"type": "integer", "minimum": 1}, "evidence": _TEXT})},
-    "blockers": _STRINGS,
+    "blockers": {**_STRINGS, "description": "Unresolved blockers. Must be [] when status is completed; otherwise explain what is needed."},
 })
 REVIEW_SCHEMA = _schema({
     "verdict": {"type": "string", "enum": ["approve", "request_changes"]},
@@ -23,7 +23,7 @@ REVIEW_SCHEMA = _schema({
     "acceptance": {"type": "array", "items": _schema({
         "criterion": {"type": "integer", "minimum": 1},
         "satisfied": {"type": "boolean"}, "evidence": _TEXT})},
-    "findings": _STRINGS,
+    "findings": {**_STRINGS, "description": "Actionable changes only. Must be [] when verdict is approve; do not include no-findings statements or optional style notes."},
 })
 
 

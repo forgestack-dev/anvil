@@ -1,11 +1,11 @@
 ---
 name: anvil
-description: Prepare ticket graphs, run supervised serial Codex implementation, and inspect saved runs with the ForgeStack Anvil engineering harness. Use for specification or ticket burndown and Anvil operation; check installed capabilities before execution.
+description: Prepare ticket graphs, run supervised serial implementation with Codex or Claude Code, and inspect saved runs with the ForgeStack Anvil engineering harness. Use for specification or ticket burndown and Anvil operation; check installed capabilities before execution.
 ---
 
 # Anvil
 
-Use Anvil to turn a defined engineering objective into verifiable tickets and execute them serially. The current runtime supports JSON validation, dependency planning, bounded Codex implementation and independent review, verification, local integration, and saved status. It does not load AI Hero skills, run parallel workers, retry, pause/resume, or close external tickets.
+Use Anvil to turn a defined engineering objective into verifiable tickets and execute them serially. The current runtime supports JSON validation, dependency planning, bounded implementation and independent review using Codex or Claude Code, verification, local integration, and saved status. It does not load AI Hero skills, run parallel workers, retry, pause/resume, or close external tickets.
 
 ## Prepare or inspect work
 
@@ -17,9 +17,9 @@ If Anvil is unavailable, inspect the checkout or installation instructions suppl
 
 ## Execute authorized work
 
-Read [references/workflow.md](references/workflow.md) before preparing or running a configuration. Verify a clean, committed repository root and inspect its instructions, the ticket scope, the configuration, and every verification command or referenced script. Verification commands execute directly on the host; the worker's Codex sandbox does not contain them. Choose meaningful project checks and keep execution within the user's existing authorization. If a necessary action is outside that authorization, first prepare the concrete configuration for review and explain the specific missing permission; do not ask again for work already authorized.
+Read [references/workflow.md](references/workflow.md) before preparing or running a configuration. Verify a clean, committed repository root and inspect its instructions, the ticket scope, the configuration, and every verification command or referenced script. Verification commands execute directly on the host. Choose meaningful project checks and keep execution within the user's existing authorization. If a necessary action is outside that authorization, first prepare the concrete configuration for review and explain the specific missing permission; do not ask again for work already authorized.
 
-Confirm the installed CLI exposes `run` and inspect prerequisites with `anvil doctor`. The supported entry point is `anvil run <run.json>`. Nonempty ticket `skills` requests are rejected by this version; report the unavailable capability rather than silently removing an explicit request. Missing decisions, review findings, and terminal failures stop the entire serial run.
+Confirm the installed CLI exposes `run`. Preserve the user's agent choice; an omitted `agent` defaults to Codex. Inspect prerequisites with `anvil doctor --agent <agent>`, passing `--agent-binary` when the configuration selects a custom executable. The supported entry point is `anvil run <run.json>`. Nonempty ticket `skills` requests are rejected by this version; report the unavailable capability rather than silently removing an explicit request. Missing decisions, review findings, and terminal failures stop the entire serial run.
 
 Report the saved run directory and managed integration branch. Distinguish implemented, blocked, failed, interrupted, and still-pending work using recorded state. A worker claim is not acceptance: completion requires criterion evidence, approval for the exact integration revision, and passing checks. Local completion does not imply publication, merging into the user's branch, or external ticket closure.
 

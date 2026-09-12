@@ -2,17 +2,17 @@
 
 **Turn a spec into coordinated engineering work.**
 
-Anvil is ForgeStack's engineering harness for working through specifications and tickets with coding agents. It combines an entry skill, a local runner, and agent adapters. Codex is the first agent target; integration with the full AI Hero skill catalog is planned.
+Anvil is ForgeStack's engineering harness for working through specifications and tickets with coding agents. It combines an entry skill, a local runner, and adapters for Codex and Claude Code. Integration with the full AI Hero skill catalog is planned.
 
 ## Current status
 
-Anvil executes a JSON ticket graph **serially**. It launches Codex in isolated Git worktrees, records results in SQLite, reviews the complete integration revision with a separate read-only Codex turn, runs required checks, and advances a managed local branch only after acceptance evidence, review, and verification pass.
+Anvil executes a JSON ticket graph **serially** using Codex or Claude Code. It launches the selected agent in isolated Git worktrees, records results in SQLite, reviews the complete integration revision with a separate turn that has read-only tools, runs required checks, and advances a managed local branch only after acceptance evidence, review, and verification pass. Each run uses one agent for both implementation and review.
 
 It also validates ticket graphs, previews dependency waves, checks local prerequisites, and reads saved run state. Parallel workers, retries, pause/resume, crash recovery, upstream skill loading, Markdown intake, and issue-tracker closeout remain planned. Requests for skills in an execution ticket are rejected rather than silently ignored. Nothing installs Anvil into an application repository automatically.
 
 ## Install and plan
 
-Requires Python 3.11 or later. Serial execution requires macOS or Linux, Git, and an installed Codex CLI with working account access. The runtime has no third-party Python dependencies; installation uses the build tools declared in `pyproject.toml`.
+Requires Python 3.11 or later. Serial execution requires macOS or Linux, Git, and an installed Codex CLI or Claude Code CLI with working account access. Claude Code support targets version 2.1.260 or later with the required flags advertised by `doctor`. The runtime has no third-party Python dependencies; installation uses the build tools declared in `pyproject.toml`.
 
 ```sh
 python3 -m venv .venv
@@ -21,9 +21,10 @@ python -m pip install -e .
 anvil validate examples/tickets.json
 anvil plan examples/tickets.json --json
 anvil doctor
+anvil doctor --agent claude-code
 ```
 
-Validation and planning work without Codex. `doctor` checks Git and the default `codex` executable's advertised flags; it does not authenticate, make a model request, or validate a custom `codex_binary` from a run configuration. The planner's dependency waves describe possible parallelism, but this version executes one ticket at a time.
+Validation and planning work without an agent CLI. `doctor` checks Git and the selected executable's version and advertised flags; it does not authenticate or make a model request. It defaults to Codex. To probe a custom executable, supply `--agent-binary /path/to/executable`; `doctor` does not read run configurations. The planner's dependency waves describe possible parallelism, but this version executes one ticket at a time.
 
 To use the CLI directly from a source checkout:
 
@@ -35,13 +36,14 @@ PYTHONPATH=src python3 -m anvil plan examples/tickets.json
 
 Start from a clean repository root with at least one commit. Include untracked files when checking cleanliness. Anvil reads that committed revision as its baseline and creates separate worktrees plus an `anvil/<run-id>` branch; it does not switch or merge into your current branch. Only one Anvil supervisor can hold the repository lock at a time.
 
-Create a run configuration using [examples/run.json](examples/run.json) and the [configuration schema](schemas/run.schema.json):
+Create a run configuration using [examples/run.json](examples/run.json), [examples/claude-run.json](examples/claude-run.json), and the [configuration schema](schemas/run.schema.json):
 
 ```json
 {
   "version": 1,
   "repo": "/path/to/project",
   "tickets": "tickets.json",
+  "agent": "codex",
   "verification": [["python3", "-m", "unittest", "discover", "-s", "tests", "-v"]],
   "agent_timeout": 900,
   "check_timeout": 300
@@ -50,11 +52,13 @@ Create a run configuration using [examples/run.json](examples/run.json) and the 
 
 Paths resolve relative to the configuration file. Use verification commands appropriate to the project: they run once on the baseline and again on every reviewed integration revision. The baseline must pass, and checks must leave tracked files and untracked files unchanged; ignored test output is allowed.
 
-**Run configurations are trusted executable input.** Each verification entry is an argument array executed directly on the host in the managed worktree. Anvil does not wrap these commands in Codex's sandbox or interpret shell syntax. Inspect the commands and any scripts they invoke before running a configuration. Codex implementation turns use `workspace-write`; review turns use `read-only`. Anvil supplies no model override or permission bypass.
+Set `agent` to `"claude-code"` to use Claude Code; omitting it preserves the Codex default. Optional `agent_binary` selects a trusted local executable, defaulting to `codex` or `claude` for the selected agent. Executable paths containing a slash resolve relative to the configuration file. Legacy `codex_binary` remains accepted for Codex configurations, but cannot be combined with `agent_binary` or used with Claude Code.
 
-Managed Git, Codex, and verification commands discard inherited `GIT_*` environment variables so Git uses the managed worktree. Other environment settings are preserved.
+**Run configurations are trusted executable input.** Each verification entry is an argument array executed directly on the host in the managed worktree. Anvil does not sandbox these commands or interpret shell syntax. Inspect the commands and any scripts they invoke before running a configuration. Codex implementation turns use `workspace-write`; review turns use `read-only`. Claude implementation turns can read and edit files, while review turns have only file-reading and search tools. Claude turns have no Bash tool; the supervisor supplies the review diff and runs the trusted checks. Claude's tool restrictions do not provide an operating-system sandbox. See [agent behavior](docs/AGENT_ADAPTERS.md) for configuration and permission details. Anvil supplies no model override or permission bypass.
 
-`agent_timeout` applies separately to each implementation and review turn; `check_timeout` applies to each verification command. Both must be greater than zero and at most 3,600 seconds. Optional `codex_binary` selects a trusted local executable. Optional `state_dir` must be outside the target checkout and its Git directory; its default is `~/.local/state/anvil`.
+Managed Git, agent, and verification commands discard inherited `GIT_*` environment variables so Git uses the managed worktree. Other environment settings are preserved.
+
+`agent_timeout` applies separately to each implementation and review turn; `check_timeout` applies to each verification command. Both must be greater than zero and at most 3,600 seconds. Claude Code also has a limit of 32 agentic turns per invocation. Optional `state_dir` must be outside the target checkout and its Git directory; its default is `~/.local/state/anvil`.
 
 ```sh
 anvil run /path/to/run.json
@@ -93,7 +97,7 @@ anvil plan examples/serial-tickets.json
 anvil run examples/run.json
 ```
 
-Use a new `anvil-demo` directory and your existing Git identity. The example configuration targets that sibling repository and runs Python's unittest discovery. Its initial empty test suite provides a passing baseline; the tickets require tests for the new behavior. The final command launches real Codex turns and uses your configured model/account. The larger [planning example](examples/tickets.json) includes future skill requests and is for planning only.
+Use a new `anvil-demo` directory and your existing Git identity. The example configuration targets that sibling repository and runs Python's unittest discovery. Its initial empty test suite provides a passing baseline; the tickets require tests for the new behavior. The final command launches real Codex turns and uses your configured model/account. To run this example with Claude Code instead, use `anvil run examples/claude-run.json` as the final command. The larger [planning example](examples/tickets.json) includes future skill requests and is for planning only.
 
 ## Tickets and entry skill
 
