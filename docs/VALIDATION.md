@@ -4,7 +4,7 @@ Validated on 2026-09-12 using Python 3.11 on macOS and Codex CLI 0.153.4.
 
 ## Automated checks
 
-The standard unittest suite passes **150 tests** without live model calls, including the Claude Code adapter additions tested on Python 3.11. It covers dependency planning, strict input and result contracts, SQLite transactions and evidence gates, Git ownership and compare-and-swap integration, real subprocess lifecycle handling, and CLI run/status/doctor behavior.
+The standard unittest suite passes **155 tests** without live model calls, including the Claude Code adapter additions tested on Python 3.11. It covers dependency planning, strict input and result contracts, SQLite transactions and evidence gates, Git ownership and compare-and-swap integration, real subprocess lifecycle handling, and CLI run/status/doctor behavior.
 
 Execution tests use temporary real Git repositories. One runs through the real Codex adapter with a local fake executable, including its schema files, output artifacts, and subprocess boundary. Other scenarios cover rejected review, missing acceptance evidence, failed verification, modified candidates, worker-created commits, stale attempts, repository locks, and interruptions immediately after persisted completion. Regressions also cover Git filters surviving timeout or interruption, case-distinct ticket IDs sharing a filesystem, and interruption immediately after an attempt is recorded. Real SIGINT regressions verify cleanup when interruption arrives before process creation returns or repeatedly during shutdown, along with restoration and delivery of the caller's signal handlers. Failed work cannot release dependent tickets or advance the accepted branch.
 
@@ -13,6 +13,8 @@ Both example graphs validate and plan. The entry skill passes the skill-creator 
 Additional regressions use real Git subprocesses to prove inherited repository overrides cannot redirect worker, reviewer, or verification commands to the original checkout. Startup coverage sends real SIGINT before and after the transition to running, checks persisted reports and lock release, and verifies startup errors preserve pending tasks and the original exception when no ledger was initialized.
 
 Claude-specific tests exercise configuration selection through a real fake executable, two dependent tickets, supervisor-supplied review diffs, and the exact reviewed/verified/integrated commit gate. Invalid or contradictory approval, permission denial, reviewer mutation, requested changes, and failed checks preserve the accepted branch and leave dependents pending. Adapter tests reject malformed or ambiguous JSON streams, error envelopes, oversized output, replaced artifact files, timeouts, and nonzero exits. Doctor coverage includes relative executable paths and relative PATH entries. The installed Claude Code 2.1.260 passes the version/help compatibility probe.
+
+Executable-resolution regressions exercise relative PATH lookup before worktree execution, retain the selected entrypoint through subsequent directory/PATH changes, and run basename-dispatching symlink wrappers through both doctor and execution. Configuration loading preserves Claude aliases and symlinked parent traversal. A two-ticket serial fixture verifies the same alias handles every worker and reviewer even after PATH changes between tickets.
 
 ## Live Codex exercise
 

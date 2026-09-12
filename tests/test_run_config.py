@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -102,6 +103,39 @@ class RunConfigTests(unittest.TestCase):
         self.assertEqual(direct.to_dict()["agent_binary"], "codex-nightly")
         self.assertNotIn("codex_binary", direct.to_dict())
         self.assertEqual(self.parse(direct.to_dict()), direct)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX executable symlinks")
+    def test_claude_executable_alias_survives_loading_and_serialization(self):
+        shim = self.root / "dispatch-shim"
+        shim.write_text("shared executable")
+        alias = self.root / "claude-wrapper"
+        alias.symlink_to(shim.name)
+        config_path = self.root / "run.json"
+        for binary in ("./claude-wrapper", str(alias)):
+            with self.subTest(binary=binary):
+                config_path.write_text(json.dumps(configuration() | {
+                    "agent": "claude-code", "agent_binary": binary,
+                }))
+                config = RunConfig.load(config_path)
+                self.assertEqual(config.executable, str(alias))
+                self.assertEqual(Path(config.executable).read_text(), shim.read_text())
+                self.assertEqual(RunConfig.from_document(config.to_dict(), base=Path("/elsewhere")), config)
+        # Preserve the existing Codex path contract.
+        codex = self.parse(configuration() | {"codex_binary": str(alias)})
+        self.assertEqual(codex.executable, str(shim))
+
+    @unittest.skipUnless(os.name == "posix", "POSIX executable symlinks")
+    def test_claude_executable_parent_traversal_keeps_filesystem_meaning(self):
+        target = self.root / "tools" / "nested"
+        target.mkdir(parents=True)
+        (target.parent / "claude").write_text("intended executable")
+        (self.root / "claude").write_text("different executable")
+        (self.root / "linked-tools").symlink_to(target, target_is_directory=True)
+        config = self.parse(configuration() | {
+            "agent": "claude-code", "agent_binary": "./linked-tools/../claude",
+        })
+        self.assertEqual(Path(config.executable).read_text(), "intended executable")
+        self.assertEqual(RunConfig.from_document(config.to_dict(), base=Path("/elsewhere")), config)
 
     def test_direct_constructors_support_agent_selection_and_generic_override(self):
         paths = (self.root / "repo", self.root / "tickets.json", (("check",),), self.root / "state")

@@ -13,6 +13,13 @@ from anvil.adapters.claude import ClaudeRunner, doctor
 from anvil.processes import ProcessError
 
 
+CLAUDE_HELP = (
+    "--print --input-format --output-format --verbose --json-schema "
+    "--no-session-persistence --safe-mode --strict-mcp-config --mcp-config "
+    "--disable-slash-commands --no-chrome --permission-prompts --permission-mode --tools --disallowedTools"
+)
+
+
 @unittest.skipUnless(os.name == "posix", "POSIX process execution")
 class ClaudeExecutionTests(unittest.TestCase):
     def setUp(self):
@@ -187,6 +194,60 @@ class ClaudeExecutionTests(unittest.TestCase):
                 report = doctor(binary, probe=True)
                 self.assertTrue(report.compatible, report.error)
                 self.assertEqual(report.executable, str(self.binary))
+
+    def test_relative_path_selection_is_retained_across_worktree_and_environment_changes(self):
+        self.fake(
+            "if args == ['--version']: print('2.1.260 (Claude Code)')\n"
+            f"elif args == ['--help']: print({CLAUDE_HELP!r})\n"
+            "else: emit({'entrypoint':sys.argv[0], 'cwd':str(pathlib.Path.cwd()),"
+            " 'tools':args[args.index('--tools')+1]})")
+        later_directory = self.root / "later supervisor"
+        later_directory.mkdir()
+        shadow_directory = self.root / "shadow bin"
+        shadow_directory.mkdir()
+        for directory in (self.repo, shadow_directory):
+            shadow = directory / self.binary.name
+            shadow.write_text(f"#!{sys.executable}\nraise SystemExit('wrong executable selected')\n")
+            shadow.chmod(0o755)
+        with chdir(self.root), patch.dict(os.environ, {"PATH": "."}):
+            report = doctor(self.binary.name, probe=True)
+            self.assertTrue(report.compatible, report.error)
+            runner = ClaudeRunner(self.binary.name)
+
+        for read_only in (False, True):
+            with self.subTest(read_only=read_only):
+                directory = later_directory if read_only else self.root
+                search_path = str(shadow_directory) if read_only else "."
+                with chdir(directory), patch.dict(os.environ, {"PATH": search_path}):
+                    result = runner.run(
+                        repo=self.repo, prompt="Inspect this fixture", schema=self.schema,
+                        artifact_dir=self.root / f"selected-{read_only}", timeout=3, read_only=read_only)
+                self.assertEqual(result["entrypoint"], report.executable)
+                self.assertEqual(result["cwd"], str(self.repo))
+                self.assertEqual(result["tools"], "Read,Glob,Grep" if read_only else "Read,Glob,Grep,Edit,Write")
+
+    def test_doctor_and_runner_preserve_basename_dispatch_through_symlink_aliases(self):
+        self.fake(
+            f"assert pathlib.Path(sys.argv[0]).name == {self.binary.name!r}, 'dispatcher requires its alias'\n"
+            "if args == ['--version']: print('2.1.260 (Claude Code)')\n"
+            f"elif args == ['--help']: print({CLAUDE_HELP!r})\n"
+            "else: emit({'entrypoint':sys.argv[0]})")
+        target = self.root / "shared dispatcher"
+        self.binary.rename(target)
+        self.binary.symlink_to(target.name)
+        for path_index, search_path in enumerate((str(self.root), ".")):
+            for binary_index, binary in enumerate((str(self.binary), f"./{self.binary.name}", self.binary.name)):
+                with self.subTest(search_path=search_path, binary=binary), chdir(self.root), \
+                        patch.dict(os.environ, {"PATH": search_path}):
+                    report = doctor(binary, probe=True)
+                    self.assertTrue(report.compatible, report.error)
+                    self.assertEqual(report.executable, str(self.binary))
+                    runner = ClaudeRunner(binary)
+                    for read_only in (False, True):
+                        artifacts = self.root / f"alias-{path_index}-{binary_index}-{read_only}"
+                        result = runner.run(repo=self.repo, prompt="Inspect this fixture", schema=self.schema,
+                                            artifact_dir=artifacts, timeout=3, read_only=read_only)
+                        self.assertEqual(result["entrypoint"], str(self.binary))
 
 
 if __name__ == "__main__":

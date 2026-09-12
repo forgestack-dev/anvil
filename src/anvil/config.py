@@ -99,7 +99,9 @@ class RunConfig:
         binary_field = "codex_binary" if "codex_binary" in value else "agent_binary"
         binary = text(binary_field, "codex" if agent == "codex" else "claude")
         if "/" in binary or "\\" in binary:
-            binary = str((base / Path(binary).expanduser()).resolve())
+            binary_path = base / Path(binary).expanduser()
+            # Claude wrappers can dispatch on their invoked symlink name.
+            binary = str(binary_path.absolute() if agent == "claude-code" else binary_path.resolve())
         return cls(
             repo=resolve("repo"), tickets=resolve("tickets"),
             verification=tuple(tuple(command) for command in commands),

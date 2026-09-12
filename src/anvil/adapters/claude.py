@@ -57,6 +57,14 @@ def _validate_binary(claude_binary: str) -> None:
         raise ValueError("claude_binary must be a nonempty executable name or path")
 
 
+def _locate_executable(claude_binary: str) -> str | None:
+    """Locate from the caller's directory while preserving the invoked alias."""
+    executable = shutil.which(claude_binary)
+    # absolute() anchors relative PATH entries without dereferencing symlinks
+    # or collapsing '..' across a symlinked directory.
+    return str(Path(executable).absolute()) if executable is not None else None
+
+
 def _unique_object(pairs: list[tuple[str, object]]) -> dict:
     result = {}
     for key, value in pairs:
@@ -167,6 +175,9 @@ class ClaudeRunner:
     def __init__(self, claude_binary: str = "claude") -> None:
         _validate_binary(claude_binary)
         self.claude_binary = claude_binary
+        # Select once in the supervisor's directory, before any worktree runs.
+        # Later cwd/PATH changes must not select a different worker or reviewer.
+        self.executable = _locate_executable(claude_binary)
 
     def run(
         self,
@@ -178,9 +189,11 @@ class ClaudeRunner:
         timeout: float,
         read_only: bool = False,
     ) -> dict:
+        if self.executable is None:
+            raise ProcessError(f"could not start command: Claude Code executable was not found: {self.claude_binary}")
         try:
             repo = Path(repo).expanduser().resolve()
-            invocation = build_invocation(repo, prompt, schema, self.claude_binary, read_only=read_only)
+            invocation = build_invocation(repo, prompt, schema, self.executable, read_only=read_only)
             artifact_dir = Path(artifact_dir).expanduser()
             artifact_dir.mkdir(parents=True, exist_ok=False)
             artifact_dir = artifact_dir.resolve()
@@ -221,10 +234,9 @@ def doctor(
     _validate_binary(claude_binary)
     if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or not 0 < timeout <= 30:
         raise ValueError("timeout must be greater than zero and at most 30 seconds")
-    executable = shutil.which(claude_binary)
+    executable = _locate_executable(claude_binary)
     if executable is None:
         return ClaudeDoctor(None, error="Claude Code executable was not found")
-    executable = str(Path(executable).resolve())
     if not probe:
         return ClaudeDoctor(executable)
     version = None

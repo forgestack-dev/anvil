@@ -1,7 +1,9 @@
+from contextlib import chdir
 import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -338,7 +340,7 @@ class SerialExecutionTests(unittest.TestCase):
                 with Path(TRACE).open('a') as stream:
                     stream.write(json.dumps({'argv': args, 'prompt': prompt, 'schema': schema,
                                              'read_only': read_only, 'head': head,
-                                             'cwd': str(Path.cwd())}) + '\\n')
+                                             'cwd': str(Path.cwd()), 'entrypoint': sys.argv[0]}) + '\\n')
                 value = Path('value.txt')
                 if read_only:
                     result = {'verdict': 'approve', 'summary': 'Inspected candidate files',
@@ -436,6 +438,51 @@ class SerialExecutionTests(unittest.TestCase):
         self.assertFalse((self.repo / "value.txt").exists())
         self.assertEqual(RunStore.read(Path(result["run_dir"]) / "state.sqlite"),
                          {key: value for key, value in result.items() if key != "run_dir"})
+
+    def test_claude_configuration_preserves_selected_alias_across_dependent_tickets(self):
+        config, trace_path = self.claude_configuration("selected-alias")
+        alias = self.root / "anvil-test-claude"
+        alias.symlink_to(Path(config.executable).name)
+        shadow_directory = self.root / "shadow bin"
+        shadow_directory.mkdir()
+        shadow = shadow_directory / alias.name
+        shadow.write_text(f"#!{sys.executable}\nraise SystemExit('wrong executable selected')\n")
+        shadow.chmod(0o755)
+        git_directory = self.root / "git bin"
+        git_directory.mkdir()
+        (git_directory / "git").symlink_to(Path(shutil.which("git")).absolute())
+
+        for binary in (alias.name, f"./{alias.name}"):
+            with self.subTest(binary=binary):
+                trace_path.write_text("")
+                config_path = self.root / "selected-alias-run.json"
+                config_path.write_text(json.dumps(config.to_dict() | {"agent_binary": binary}))
+                selected_config = RunConfig.load(config_path)
+
+                def replace_search_path_after_first_ticket(message):
+                    if message == "t1: done":
+                        os.environ["PATH"] = str(shadow_directory) + os.pathsep + str(git_directory)
+
+                with chdir(self.root), patch.dict(os.environ, {"PATH": "." + os.pathsep + str(git_directory)}):
+                    result = run_serial(selected_config, progress=replace_search_path_after_first_ticket)
+                    final_search_path = os.environ["PATH"]
+
+                self.assertEqual(result["status"], "success", result["error"])
+                self.assertEqual(final_search_path, str(shadow_directory) + os.pathsep + str(git_directory))
+                self.assertEqual([task["status"] for task in result["tasks"]], ["done", "done"])
+                calls = [json.loads(line) for line in trace_path.read_text().splitlines()]
+                self.assertEqual([call["read_only"] for call in calls], [False, True, False, True])
+                self.assertEqual({call["entrypoint"] for call in calls}, {str(alias.parent.resolve() / alias.name)})
+                self.assertEqual(calls[0]["head"], self.base)
+                self.assertEqual(calls[2]["head"], result["tasks"][0]["details"]["integrated_sha"])
+                for task, review in zip(result["tasks"], calls[1::2]):
+                    details = task["details"]
+                    self.assertEqual(details["integrated_sha"], review["head"])
+                    self.assertEqual(details["reviewed_sha"], review["head"])
+                    self.assertEqual(details["verified_sha"], review["head"])
+                self.assertEqual(git(self.repo, "show", f"{result['branch']}:value.txt"), "2")
+                self.assertEqual(git(self.repo, "rev-parse", "HEAD"), self.base)
+                self.assertEqual(git(self.repo, "status", "--porcelain"), "")
 
     def test_claude_review_and_verification_failures_preserve_branch_and_pending_dependency(self):
         for mode in ("invalid-review", "contradictory-approve", "denied-review", "review-mutates",

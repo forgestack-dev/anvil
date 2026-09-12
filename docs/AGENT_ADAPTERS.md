@@ -12,6 +12,8 @@ The Codex adapter uses noninteractive `codex exec`, sends the prompt through std
 
 Support targets Claude Code 2.1.260 or later with the flags checked by `doctor`. Each invocation uses print mode, stdin prompts, a JSON schema, and verbose JSON event streaming. A turn is limited to 32 agentic turns and the configured `agent_timeout`. Claude documents these output and limit options in its [programmatic usage guide](https://code.claude.com/docs/en/headless) and [CLI reference](https://code.claude.com/docs/en/cli-reference).
 
+Anvil locates Claude once before worktree execution. Relative `PATH` entries use the supervisor's starting directory, and all implementation and review turns use that selected absolute entrypoint. Probes and Claude run configurations preserve symlink names so wrappers that dispatch by their invoked name continue to work.
+
 | Role | Available file tools | Responsibility |
 |---|---|---|
 | Implementation | `Read`, `Glob`, `Grep`, `Edit`, `Write` | Implement the ticket, add tests, and cite evidence from the files. |
