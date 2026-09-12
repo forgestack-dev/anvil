@@ -20,8 +20,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/forgestack/anvil"
-Repository = "https://github.com/forgestack/anvil"
+Homepage = "https://github.com/forgestack-dev/anvil"
+Repository = "https://github.com/forgestack-dev/anvil"
 
 [project.scripts]
 anvil = "anvil.cli:main"
