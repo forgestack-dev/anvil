@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "id": "define-contract",
+      "title": "Define the project health contract",
+      "objective": "Specify the response shape shared by the health endpoint and its status page.",
+      "depends_on": [],
+      "acceptance_criteria": [
+        "The contract defines status, service name and a UTC observation timestamp.",
+        "Example healthy and unavailable responses are documented."
+      ]
+    },
+    {
+      "id": "health-endpoint",
+      "title": "Implement the health endpoint",
+      "objective": "Expose the agreed health contract through an HTTP endpoint.",
+      "depends_on": ["define-contract"],
+      "acceptance_criteria": [
+        "The endpoint returns a response matching the agreed contract.",
+        "Tests cover healthy and unavailable service responses."
+      ],
+      "skills": ["tdd"]
+    },
+    {
+      "id": "status-page",
+      "title": "Implement the status page",
+      "objective": "Display the agreed health contract with clear loading and unavailable states.",
+      "depends_on": ["define-contract"],
+      "acceptance_criteria": [
+        "The page renders healthy and unavailable contract examples.",
+        "Loading and failed requests have distinct visible states."
+      ],
+      "skills": ["tdd"]
+    },
+    {
+      "id": "verify-integration",
+      "title": "Verify the connected health experience",
+      "objective": "Connect the page to the endpoint and verify the combined user experience.",
+      "depends_on": ["health-endpoint", "status-page"],
+      "acceptance_criteria": [
+        "An integration check verifies the page displays the endpoint's service status.",
+        "The combined changes pass the project's required verification checks."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "forgestack-anvil"
+version = "0.1.0.dev0"
+description = "A skills-driven engineering harness for coordinated ticket and spec execution."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{name = "ForgeStack"}]
+dependencies = []
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/forgestack/anvil"
+Repository = "https://github.com/forgestack/anvil"
+
+[project.scripts]
+anvil = "anvil.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+namespaces = false
+
+[tool.setuptools.data-files]
+"share/anvil/skills/anvil" = ["skills/anvil/SKILL.md"]
+"share/anvil/skills/anvil/agents" = ["skills/anvil/agents/openai.yaml"]
+"share/anvil/skills/anvil/references" = ["skills/anvil/references/workflow.md"]
+"share/anvil/schemas" = ["schemas/tickets.schema.json"]
+"share/anvil/examples" = ["examples/tickets.json"]
+"share/anvil/upstream" = ["upstream/aihero.lock.json"]

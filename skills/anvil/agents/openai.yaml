@@ -1,0 +1,4 @@
+interface:
+  display_name: "Anvil"
+  short_description: "Plan coordinated engineering work from tickets"
+  default_prompt: "Use $anvil to validate my tickets and preview their dependency waves."
