@@ -12,8 +12,21 @@ from contextlib import AbstractContextManager
 import fcntl
 import os
 from pathlib import Path
-import subprocess
+import tempfile
 from typing import IO
+
+from .processes import ProcessError, run_process
+
+
+_GIT_TIMEOUT = 120
+_MAX_GIT_OUTPUT = 32 * 1024 * 1024
+
+
+def _output_tail(path: Path) -> str:
+    with path.open("rb") as stream:
+        stream.seek(0, 2)
+        stream.seek(max(0, stream.tell() - 4000))
+        return stream.read().decode("utf-8", errors="replace").strip()
 
 
 class WorkspaceError(RuntimeError):
@@ -34,7 +47,7 @@ class Repository:
         self.head()  # Reject unborn branches before creating any run artifacts.
 
     def git(self, *args: str, cwd: Path | None = None) -> str:
-        """Run noninteractive Git with a bounded wait and literal argv values."""
+        """Run literal, noninteractive Git and stop any filter/helper descendants."""
         environment = {
             key: value for key, value in os.environ.items()
             if not key.startswith("GIT_")
@@ -51,17 +64,24 @@ class Repository:
             *args,
         ]
         try:
-            result = subprocess.run(
-                command, cwd=cwd or self.path, env=environment, stdin=subprocess.DEVNULL,
-                capture_output=True, text=True, encoding="utf-8", errors="replace",
-                timeout=120, check=False,
-            )
-        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+            with tempfile.TemporaryDirectory(prefix="anvil-git-") as temporary:
+                stdout, stderr = Path(temporary) / "stdout", Path(temporary) / "stderr"
+                result = run_process(
+                    command, cwd=cwd or self.path, env=environment, stdin=None,
+                    stdout_path=stdout, stderr_path=stderr, timeout=_GIT_TIMEOUT,
+                )
+                if result.timed_out:
+                    raise WorkspaceError(f"cannot run Git: timed out after {_GIT_TIMEOUT} seconds")
+                if result.returncode:
+                    detail = _output_tail(stderr) or _output_tail(stdout)
+                    raise WorkspaceError(f"Git {args[0] if args else ''} failed: {detail}")
+                with stdout.open("rb") as stream:
+                    output = stream.read(_MAX_GIT_OUTPUT + 1)
+                if len(output) > _MAX_GIT_OUTPUT:
+                    raise WorkspaceError("Git output exceeded the 32 MiB capture limit")
+                return output.decode("utf-8", errors="replace").strip()
+        except (OSError, ValueError, ProcessError) as exc:
             raise WorkspaceError(f"cannot run Git: {exc}") from exc
-        if result.returncode:
-            detail = (result.stderr or result.stdout).strip()[-4000:]
-            raise WorkspaceError(f"Git {args[0] if args else ''} failed: {detail}")
-        return result.stdout.strip()
 
     def _commit(self, revision: str, *, cwd: Path | None = None) -> str:
         return self.git("rev-parse", "--verify", "--end-of-options",

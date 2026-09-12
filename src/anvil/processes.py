@@ -9,6 +9,7 @@ control, not a security boundary against a program deliberately escaping them.
 from __future__ import annotations
 
 from contextlib import ExitStack
+from collections.abc import Mapping
 from dataclasses import dataclass
 import math
 import os
@@ -77,6 +78,7 @@ def run_process(
     stdout_path: Path,
     stderr_path: Path,
     timeout: float,
+    env: Mapping[str, str] | None = None,
 ) -> ProcessOutcome:
     """Run a literal argv with an elapsed-time limit and exclusive output files.
 
@@ -84,6 +86,7 @@ def run_process(
     directly to disk; stdin uses a temporary file so neither a full output pipe
     nor a child that ignores stdin can block supervision. A timeout returns an
     outcome; interrupts are propagated after terminating the process group.
+    An explicit env replaces the inherited environment without merging it.
     """
     if os.name != "posix":
         raise ProcessError("process execution currently requires macOS or Linux (POSIX)")
@@ -98,6 +101,12 @@ def run_process(
         raise ProcessError("command timeout must be a finite number greater than zero")
     if stdin is not None and not isinstance(stdin, str):
         raise ProcessError("command stdin must be text or None")
+    if env is not None and (
+        not isinstance(env, Mapping)
+        or any(not isinstance(key, str) or not key or "=" in key or "\0" in key
+               or not isinstance(value, str) or "\0" in value for key, value in env.items())
+    ):
+        raise ProcessError("command environment must map valid variable names to text without NUL")
     cwd = Path(cwd).expanduser().resolve()
     if not cwd.is_dir():
         raise ProcessError(f"command working directory does not exist: {cwd}")
@@ -123,6 +132,7 @@ def run_process(
                 stderr=stderr_file,
                 shell=False,
                 start_new_session=True,
+                env=env,
             )
         except (OSError, ValueError, UnicodeError) as exc:
             raise ProcessError(f"could not start command or create output artifacts: {exc}") from exc

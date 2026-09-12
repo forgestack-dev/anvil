@@ -4,9 +4,9 @@ Validated on 2026-09-12 using Python 3.11 on macOS and Codex CLI 0.153.4.
 
 ## Automated checks
 
-The standard unittest suite passes **106 tests** without live model calls. It covers dependency planning, strict input and result contracts, SQLite transactions and evidence gates, Git ownership and compare-and-swap integration, real subprocess lifecycle handling, and CLI run/status behavior.
+The standard unittest suite passes **112 tests** without live model calls. It covers dependency planning, strict input and result contracts, SQLite transactions and evidence gates, Git ownership and compare-and-swap integration, real subprocess lifecycle handling, and CLI run/status behavior.
 
-Execution tests use temporary real Git repositories. One runs through the real Codex adapter with a local fake executable, including its schema files, output artifacts, and subprocess boundary. Other scenarios cover rejected review, missing acceptance evidence, failed verification, modified candidates, worker-created commits, stale attempts, repository locks, and interruptions immediately after persisted completion. Failed work cannot release dependent tickets or advance the accepted branch.
+Execution tests use temporary real Git repositories. One runs through the real Codex adapter with a local fake executable, including its schema files, output artifacts, and subprocess boundary. Other scenarios cover rejected review, missing acceptance evidence, failed verification, modified candidates, worker-created commits, stale attempts, repository locks, and interruptions immediately after persisted completion. Regressions also cover Git filters surviving timeout or interruption, case-distinct ticket IDs sharing a filesystem, and interruption immediately after an attempt is recorded. Failed work cannot release dependent tickets or advance the accepted branch.
 
 Both example graphs validate and plan. The entry skill passes the skill-creator structural validator. An independent instruction review checked planning, authorized serial execution, explicit upstream skill requests, failed-run inspection, and unsupported parallel execution/closeout; those routes match the CLI. This instruction review is distinct from the live runtime exercise below and does not establish full AI Hero skill compatibility.
 

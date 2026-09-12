@@ -134,6 +134,26 @@ class SerialExecutionTests(unittest.TestCase):
         self.assertEqual(result["status"], "interrupted")
         self.assertEqual(result["tasks"][0]["status"], "interrupted")
 
+    def test_stop_after_attempt_start_uses_persisted_owner_before_return(self):
+        start_attempt = RunStore.start_attempt
+        for exception, status in ((KeyboardInterrupt(), "interrupted"), (OSError("start failed"), "failed")):
+            with self.subTest(status=status):
+                def stop_after_commit(store, *args, **kwargs):
+                    start_attempt(store, *args, **kwargs)
+                    raise exception
+
+                runner = FakeRunner()
+                with patch.object(RunStore, "start_attempt", stop_after_commit):
+                    result = run_serial(self.config, runner=runner)
+                self.assertEqual(result["status"], status)
+                self.assertEqual([task["status"] for task in result["tasks"]], [status, "pending"])
+                self.assertEqual(result["attempts"][0]["status"], status)
+                self.assertIsNotNone(result["attempts"][0]["finished_at"])
+                self.assertEqual(runner.workers, [])
+                self.assertEqual(git(self.repo, "rev-parse", result["branch"]), self.base)
+                report = json.loads((Path(result["run_dir"]) / "report.json").read_text())
+                self.assertEqual(report, result)
+
     def test_stop_after_done_notification_preserves_integrated_task(self):
         for exception, status in ((KeyboardInterrupt(), "interrupted"), (OSError("progress failed"), "failed")):
             with self.subTest(status=status):
@@ -205,12 +225,38 @@ class SerialExecutionTests(unittest.TestCase):
         self.assertEqual(result["status"], "success")
         self.assertEqual(git(self.repo, "show", f"{result['branch']}:value.txt"), "2")
         self.assertEqual(git(self.repo, "rev-parse", "HEAD"), self.base)
-        for task_id in ("t1", "t2"):
+        for attempt in result["attempts"]:
             for role in ("worker", "review"):
-                artifact_dir = Path(result["run_dir"]) / "artifacts" / task_id / role
+                artifact_dir = Path(result["run_dir"]) / "artifacts" / attempt["id"] / role
                 self.assertTrue((artifact_dir / "result.json").is_file())
                 self.assertTrue((artifact_dir / "schema.json").is_file())
                 self.assertTrue((artifact_dir / "events.jsonl").is_file())
+
+    def test_case_distinct_ticket_ids_use_distinct_workspaces_and_evidence(self):
+        document = json.loads(self.tickets.read_text())
+        document["tasks"][0]["id"] = "Ticket"
+        document["tasks"][1]["id"] = "ticket"
+        document["tasks"][1]["depends_on"] = ["Ticket"]
+        self.tickets.write_text(json.dumps(document))
+        result, runner = self.run_mode("success")
+        self.assertEqual(result["status"], "success")
+        self.assertEqual([(t["id"], t["status"]) for t in result["tasks"]],
+                         [("Ticket", "done"), ("ticket", "done")])
+        self.assertEqual(git(self.repo, "show", f"{result['branch']}:value.txt"), "2")
+        self.assertEqual(runner.workers[1], result["tasks"][0]["details"]["integrated_sha"])
+        workers, artifacts = [], []
+        for attempt in result["attempts"]:
+            workspace = Path(attempt["workspace"])
+            evidence = Path(result["run_dir"]) / "artifacts" / attempt["id"]
+            self.assertEqual(workspace.name, attempt["id"])
+            self.assertTrue(workspace.is_dir())
+            for role in ("worker", "review", "verification"):
+                self.assertTrue((evidence / role).is_dir())
+            self.assertTrue((evidence / "verification" / "1.stdout.log").is_file())
+            workers.append(str(workspace).casefold())
+            artifacts.append(str(evidence).casefold())
+        self.assertEqual(len(set(workers)), 2)
+        self.assertEqual(len(set(artifacts)), 2)
 
     def test_baseline_failure_never_launches_worker(self):
         config = RunConfig(self.repo, self.tickets, ((sys.executable, "-c", "raise SystemExit(1)"),),

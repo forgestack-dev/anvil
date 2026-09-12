@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shlex
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
 from anvil.workspaces import Repository, RepositoryLock, WorkspaceError
+from anvil.processes import ProcessError, ProcessOutcome
 
 
 class WorkspaceTests(unittest.TestCase):
@@ -221,13 +225,71 @@ class WorkspaceTests(unittest.TestCase):
             self.assertEqual(Repository(self.path).head(), self.base)
 
     def test_git_errors_and_timeouts_are_workspace_errors(self):
-        with patch("anvil.workspaces.subprocess.run", side_effect=subprocess.TimeoutExpired("git", 120)):
+        with patch("anvil.workspaces.run_process", side_effect=ProcessError("creation failed")):
             with self.assertRaisesRegex(WorkspaceError, "cannot run Git"):
+                self.repo.head()
+        with patch("anvil.workspaces.run_process", return_value=ProcessOutcome(-9, True)):
+            with self.assertRaisesRegex(WorkspaceError, "timed out after 120 seconds"):
                 self.repo.head()
         with self.assertRaises(WorkspaceError):
             self.repo.git("rev-parse", "--verify", "a-ref-that-does-not-exist")
         with self.assertRaisesRegex(WorkspaceError, "cannot run Git"):
             self.repo.git("show", "bad\0revision")
+
+    def git_filter_fixture(self):
+        ready, release = self.root / "filter-ready", self.root / "filter-release"
+        mutation = self.root / "late-filter-write"
+        script = self.root / "filter child.py"
+        script.write_text(
+            "import pathlib,signal,sys,time\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "data=sys.stdin.buffer.read()\n"
+            f"pathlib.Path({str(ready)!r}).write_text('ready')\n"
+            "deadline=time.monotonic()+3\n"
+            f"while not pathlib.Path({str(release)!r}).exists() and time.monotonic()<deadline:\n"
+            "    time.sleep(0.01)\n"
+            f"pathlib.Path({str(mutation)!r}).write_text('write after Git returned')\n"
+            "sys.stdout.buffer.write(data)\n",
+            encoding="utf-8",
+        )
+        self.raw_git("config", "filter.anvil-lifecycle.clean", shlex.join([sys.executable, str(script)]))
+        self.raw_git("config", "filter.anvil-lifecycle.required", "true")
+        (self.path / ".gitattributes").write_text("tracked.txt filter=anvil-lifecycle\n")
+        (self.path / "tracked.txt").write_text("requires filtering\n")
+        return ready, release, mutation
+
+    def assert_git_filter_stopped(self, *, interrupt):
+        ready, release, mutation = self.git_filter_fixture()
+        original_wait = subprocess.Popen.wait
+        supervised = False
+
+        def wait_for_filter(process, *args, **kwargs):
+            nonlocal supervised
+            if not supervised:
+                supervised = True
+                # Synchronize with the real filter before shortening the wait,
+                # avoiding assumptions about Git/Python startup speed on CI.
+                deadline = time.monotonic() + 5
+                while not ready.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(ready.exists(), "Git did not start its filter")
+                if interrupt:
+                    raise KeyboardInterrupt
+            return original_wait(process, *args, **kwargs)
+
+        with patch("anvil.workspaces._GIT_TIMEOUT", 0.1), patch.object(subprocess.Popen, "wait", wait_for_filter):
+            with self.assertRaises(KeyboardInterrupt if interrupt else WorkspaceError):
+                self.repo.git("add", "--", "tracked.txt")
+        self.assertFalse(mutation.exists(), "filter wrote before the supervisor finished cleanup")
+        release.write_text("run now if still alive")
+        time.sleep(0.35)
+        self.assertFalse(mutation.exists(), "Git filter survived process cleanup and wrote afterward")
+
+    def test_git_timeout_terminates_filter_descendants_before_returning(self):
+        self.assert_git_filter_stopped(interrupt=False)
+
+    def test_git_interrupt_terminates_filter_descendants_before_propagating(self):
+        self.assert_git_filter_stopped(interrupt=True)
 
 
 if __name__ == "__main__":

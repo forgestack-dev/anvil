@@ -185,9 +185,14 @@ class RunStore:
             self._event(connection, timestamp, "run", None, None,
                         run["status"], status, {"error": error})
 
-    def start_attempt(self, task_id: str, base_sha: str, workspace: str) -> str:
+    def start_attempt(
+        self, task_id: str, base_sha: str, workspace: str, *, attempt_id: str | None = None,
+    ) -> str:
+        """Start atomically; callers may reserve an ID to name its workspace."""
         _text(base_sha, "base_sha")
         _text(workspace, "workspace")
+        attempt_id = str(uuid4()) if attempt_id is None else attempt_id
+        _text(attempt_id, "attempt_id")
         with self._transaction() as connection:
             if self._run(connection)["status"] != "running":
                 raise StoreError("starting an attempt requires a running run")
@@ -201,7 +206,6 @@ class RunStore:
             blocked = [dependency for dependency in dependencies if states.get(dependency) != "done"]
             if blocked:
                 raise StoreError(f"task {task_id} has unfinished dependencies: {', '.join(blocked)}")
-            attempt_id = str(uuid4())
             timestamp = _now()
             connection.execute(
                 "INSERT INTO attempts VALUES (?, ?, ?, ?, 'running', '{}', ?, ?, NULL)",

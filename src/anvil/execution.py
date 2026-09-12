@@ -103,11 +103,12 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
                 snapshot = store.snapshot()
                 if snapshot["status"] != "running":
                     return
-                if current_task and attempt_id:
+                if current_task:
                     task_state = next(task for task in snapshot["tasks"]
                                       if task["id"] == current_task.id)
                     if task_state["status"] in {"running", "candidate", "reviewed", "verified", "integrating"}:
-                        store.transition(current_task.id, status, attempt_id=attempt_id, details=details)
+                        store.transition(current_task.id, status,
+                                         attempt_id=task_state["attempt_id"], details=details)
                 store.set_run(status, error=error)
 
             try:
@@ -119,12 +120,15 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
                 for wave in graph.waves:
                     for task in wave:
                         current_task = task
-                        workspace = run_dir / "workers" / task.id
-                        attempt_id = store.start_attempt(task.id, base, str(workspace))
+                        reserved_id = str(uuid.uuid4())
+                        workspace = run_dir / "workers" / reserved_id
+                        artifacts = run_dir / "artifacts" / reserved_id
+                        attempt_id = store.start_attempt(task.id, base, str(workspace),
+                                                         attempt_id=reserved_id)
                         repo.create_worktree(workspace, base)
                         notify(f"{task.id}: implementing")
                         claims = runner.run(repo=workspace, prompt=_worker_prompt(task, base),
-                                            schema=WORKER_SCHEMA, artifact_dir=run_dir / "artifacts" / task.id / "worker",
+                                            schema=WORKER_SCHEMA, artifact_dir=artifacts / "worker",
                                             timeout=config.agent_timeout)
                         validate_result(claims, task)
                         if claims["status"] == "blocked":
@@ -139,7 +143,7 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
                         notify(f"{task.id}: reviewing {integrated[:12]}")
                         review = runner.run(repo=integration,
                                             prompt=_review_prompt(task, base, integrated, claims),
-                                            schema=REVIEW_SCHEMA, artifact_dir=run_dir / "artifacts" / task.id / "review",
+                                            schema=REVIEW_SCHEMA, artifact_dir=artifacts / "review",
                                             timeout=config.agent_timeout, read_only=True)
                         validate_result(review, task, review=True)
                         repo.assert_revision(integration, integrated)
@@ -151,7 +155,7 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
                         store.transition(task.id, "reviewed", attempt_id=attempt_id,
                                          details={"review": review, "reviewed_sha": integrated})
                         notify(f"{task.id}: verifying integrated changes")
-                        records = verify(config, integration, run_dir / "artifacts" / task.id / "verification")
+                        records = verify(config, integration, artifacts / "verification")
                         repo.assert_revision(integration, integrated)
                         store.transition(task.id, "verified", attempt_id=attempt_id,
                                          details={"verification": records, "verified_sha": integrated})

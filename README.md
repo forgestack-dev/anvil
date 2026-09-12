@@ -71,7 +71,7 @@ For each ticket, Anvil:
 
 A worker's success message alone cannot complete a ticket. A blocker, requested review changes, failing check, process timeout, or other terminal failure stops the entire serial run, including independent tickets. Completed work remains on the managed branch; failed candidates, worktrees, logs, and state are preserved for inspection. Ctrl-C terminates the active process group and records interruption. Process groups clean up ordinary child processes; they are not a security boundary against deliberately detached programs.
 
-The saved run directory contains `state.sqlite`, `report.json`, worktrees, and per-ticket artifacts: structured worker/review results, event streams, stderr logs, verification outputs, and associated commit IDs. A hard crash may leave state recorded as running; automatic reconciliation and resume are not implemented. Inspect preserved work before deciding how to proceed.
+The saved run directory contains `state.sqlite`, `report.json`, worktrees, and per-ticket artifacts: structured worker/review results, event streams, stderr logs, verification outputs, and associated commit IDs. Workspace and artifact directories use unique attempt IDs; saved attempts map them to the original ticket IDs. A hard crash may leave state recorded as running; automatic reconciliation and resume are not implemented. Inspect preserved work before deciding how to proceed.
 
 `run` exits with 0 for success, 1 for failure, 2 for invalid input/setup, 3 for blocked work, or 130 for Ctrl-C. `status` exits with 0 when the saved state was read successfully, regardless of the run's recorded outcome. Anvil does not push, open a pull request, merge into a user branch, or close external tickets.
 

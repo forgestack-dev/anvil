@@ -46,6 +46,20 @@ class ProcessTests(unittest.TestCase):
         self.assertEqual(outcome.returncode, 7)
         self.assertFalse(outcome.timed_out)
 
+    def test_explicit_environment_is_literal_and_does_not_merge_parent_values(self):
+        literal = 'spaces; $(touch injected)\n"quoted"'
+        with patch.dict(os.environ, {"ANVIL_SHOULD_NOT_LEAK": "parent"}):
+            outcome = run_process(
+                [sys.executable, "-c", "import os; print(os.environ['ANVIL_LITERAL_VALUE']); "
+                 "assert 'ANVIL_SHOULD_NOT_LEAK' not in os.environ"],
+                cwd=self.root, stdin=None, stdout_path=self.root / "stdout.log",
+                stderr_path=self.root / "stderr.log", timeout=3,
+                env={"ANVIL_LITERAL_VALUE": literal},
+            )
+        self.assertEqual(outcome.returncode, 0)
+        self.assertEqual((self.root / "stdout.log").read_text(), literal + "\n")
+        self.assertFalse((self.root / "injected").exists())
+
     def test_timeout_also_bounds_a_child_that_never_reads_stdin(self):
         started = time.monotonic()
         outcome = self.run_command("import time; time.sleep(30)", stdin="x" * 2000000, timeout=0.1)

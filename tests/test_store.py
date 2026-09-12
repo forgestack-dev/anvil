@@ -67,6 +67,19 @@ class StoreTests(unittest.TestCase):
                                  details={"candidate_sha": "candidate"})
             self.assertEqual(store.snapshot(), before)
 
+    def test_reserved_attempt_id_collision_rolls_back_without_claiming_task(self):
+        with RunStore(self.path) as store:
+            self.initialize(store, ticket("a"), ticket("b"))
+            store.set_run("running")
+            first = store.start_attempt("a", "base", "/workspace/a", attempt_id="reserved-first")
+            self.assertEqual(first, "reserved-first")
+            before = store.snapshot()
+            with self.assertRaises(StoreError):
+                store.start_attempt("b", "base", "/workspace/b", attempt_id=first)
+            self.assertEqual(store.snapshot(), before)
+            second = store.start_attempt("b", "base", "/workspace/b")
+            self.assertNotEqual(first, second)
+
     def test_false_completion_and_skipped_phases_are_rejected(self):
         with RunStore(self.path) as store:
             self.initialize(store)
