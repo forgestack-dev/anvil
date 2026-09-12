@@ -98,6 +98,8 @@ class PlanningTests(unittest.TestCase):
             {"skills": [""]}, {"skills": ["tdd", "tdd"]},
             {"id": "../escape"}, {"id": "-flag"}, {"id": "a\n"},
             {"id": "a" * 81}, {"depends_on": ["../escape"]},
+            {"title": "bad\0title"}, {"objective": "bad\0objective"},
+            {"acceptance_criteria": ["bad\0criterion"]}, {"skills": ["tdd\0"]},
         ]
         for changeset in changes:
             value = ticket("valid") | changeset

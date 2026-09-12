@@ -1,19 +1,25 @@
 # Implementation milestones
 
-## 0. Scaffold — current
+## 0. Scaffold — implemented
 
 - Python package, CLI, entry skill, and CI.
 - Strict JSON ticket contracts and dependency-wave preview.
 - Codex command preparation and local capability checks.
-- Design plan and verified upstream source reference.
+- Design plan and pinned upstream source reference.
 
-## 1. Serial execution
+## 1. Serial execution — accepted
 
-- Persist a run and attempts in SQLite.
-- Create an isolated attempt workspace and launch Codex.
-- Capture structured results and acceptance evidence.
-- Review a complete candidate revision and verify integration.
-- Exercise one small specification end to end.
+- Persist immutable inputs, attempts, state transitions, and evidence in SQLite.
+- Launch bounded Codex processes in isolated Git worktrees on macOS/Linux.
+- Validate structured acceptance evidence and commit complete candidates.
+- Review the exact integration revision with a separate read-only Codex turn.
+- Require passing baseline and integration checks before advancing a managed local branch.
+- Preserve failed work and logs; record interruption after terminating the active process group.
+- Read saved state with `anvil status`; emit a JSON run report.
+- Deterministic tests exercise successful dependency execution, false success, failed checks, review rejection, interruptions, and Git ownership/integration boundaries.
+- A bounded live two-ticket exercise completed with independent reviews, six accepted criteria, and passing integrated checks; see [validation evidence](VALIDATION.md).
+
+This version attempts each ticket once and stops the whole run on a blocker or failure. It does not resolve upstream skills, resume saved runs, or reconcile hard crashes. Verification commands are trusted argument arrays executed directly on the host. Completion means a verified local branch, not publication or tracker closeout.
 
 ## 2. Parallel execution
 
@@ -24,7 +30,7 @@
 
 ## 3. Recovery
 
-- Pause/resume/stop, attempt limits, timeouts, and backoff.
+- Pause/resume/stop commands, bounded retries, and backoff.
 - Recover interrupted workers and reject stale results.
 - Reconcile interrupted Git integration with persisted state.
 - Test worker and supervisor failures at each state transition.
@@ -39,6 +45,7 @@
 
 ## 5. Integrations
 
+- Pilot Anvil in an application repository after the serial milestone is accepted.
 - Add the preferred live issue tracker and external closeout semantics.
 - Add another coding-agent adapter.
 - Evaluate plugin distribution and remote execution based on usage.

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Anvil serial run configuration",
+  "description": "Paths are relative to this file. Verification commands are trusted argv arrays executed without an implicit shell.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "repo", "tickets", "verification"],
+  "properties": {
+    "version": {"type": "integer", "const": 1},
+    "repo": {"$ref": "#/$defs/text"},
+    "tickets": {"$ref": "#/$defs/text"},
+    "state_dir": {"$ref": "#/$defs/text"},
+    "codex_binary": {"$ref": "#/$defs/text"},
+    "agent_timeout": {"type": "number", "exclusiveMinimum": 0, "maximum": 3600},
+    "check_timeout": {"type": "number", "exclusiveMinimum": 0, "maximum": 3600},
+    "verification": {
+      "type": "array", "minItems": 1,
+      "items": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1, "not": {"pattern": "\u0000"}}}
+    }
+  },
+  "$defs": {"text": {"type": "string", "minLength": 1, "pattern": "\\S", "not": {"pattern": "\u0000"}}}
+}

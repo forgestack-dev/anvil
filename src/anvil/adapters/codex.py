@@ -1,9 +1,9 @@
-"""Prepare Codex commands and inspect local CLI capabilities without agent runs.
+"""Prepare and execute Codex commands without granting extra permissions.
 
 Flag contract: https://learn.chatgpt.com/docs/non-interactive-mode
-The invocation builder never launches a process or creates output files. A future
-executor must recheck paths, enforce time limits, capture events, and validate the
-result independently before accepting a worker's claim of completion.
+The invocation builder remains side-effect free. CodexRunner bounds execution
+and records output, but its JSON result still requires independent verification
+before accepting a worker's claim of completion.
 """
 
 from __future__ import annotations
@@ -14,6 +14,22 @@ import math
 from pathlib import Path
 import shutil
 import subprocess
+
+from anvil.environment import managed_environment
+from anvil.processes import ProcessError, run_process
+
+
+def _unique_object(pairs: list[tuple[str, object]]) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON object key: {key}")
+        result[key] = value
+    return result
+
+
+def _invalid_constant(value: str) -> None:
+    raise ValueError(f"invalid JSON constant: {value}")
 
 
 @dataclass(frozen=True)
@@ -49,8 +65,9 @@ def build_invocation(
     result_schema: Path,
     result_file: Path,
     codex_binary: str = "codex",
+    sandbox: str = "workspace-write",
 ) -> CodexInvocation:
-    """Build a workspace-write command without running Codex.
+    """Build a workspace-write or read-only command without running Codex.
 
     Relative paths use the caller's current directory. The repository must have a
     .git directory or worktree file, the schema must be a JSON object, and the
@@ -59,6 +76,8 @@ def build_invocation(
     runtime writability, or protect against paths changing before later execution.
     """
     _validate_binary(codex_binary)
+    if sandbox not in ("workspace-write", "read-only"):
+        raise ValueError("sandbox must be workspace-write or read-only")
     if not isinstance(prompt, str) or not prompt.strip() or "\0" in prompt:
         raise ValueError("prompt must be nonempty text without NUL characters")
 
@@ -91,7 +110,7 @@ def build_invocation(
             codex_binary,
             "exec",
             "--sandbox",
-            "workspace-write",
+            sandbox,
             "-C",
             str(repo),
             "--json",
@@ -103,6 +122,79 @@ def build_invocation(
         ),
         stdin=prompt,
     )
+
+
+class CodexRunner:
+    """Launch Codex with fresh artifacts; return an unverified JSON object.
+
+    The caller owns result-schema validation and acceptance decisions. The
+    adapter never selects a model, enables network access, or bypasses sandbox
+    or approval policy. Its executable must come from trusted configuration.
+    """
+
+    def __init__(self, codex_binary: str = "codex") -> None:
+        _validate_binary(codex_binary)
+        self.codex_binary = codex_binary
+
+    def run(
+        self,
+        *,
+        repo: Path,
+        prompt: str,
+        schema: dict,
+        artifact_dir: Path,
+        timeout: float,
+        read_only: bool = False,
+    ) -> dict:
+        if not isinstance(schema, dict):
+            raise ProcessError("Codex result schema must be a JSON object")
+        if not isinstance(read_only, bool):
+            raise ProcessError("read_only must be a boolean")
+        artifact_dir = Path(artifact_dir).expanduser()
+        try:
+            schema_text = json.dumps(schema, indent=2, allow_nan=False) + "\n"
+            artifact_dir.mkdir(parents=True, exist_ok=False)
+            artifact_dir = artifact_dir.resolve()
+            schema_path = artifact_dir / "schema.json"
+            with schema_path.open("x", encoding="utf-8") as stream:
+                stream.write(schema_text)
+            result_path = artifact_dir / "result.json"
+            invocation = build_invocation(
+                repo=repo,
+                prompt=prompt,
+                result_schema=schema_path,
+                result_file=result_path,
+                codex_binary=self.codex_binary,
+                sandbox="read-only" if read_only else "workspace-write",
+            )
+        except (OSError, ValueError, TypeError, UnicodeError) as exc:
+            raise ProcessError(f"could not prepare Codex execution: {exc}") from exc
+        outcome = run_process(
+            invocation.argv,
+            cwd=repo,
+            stdin=invocation.stdin,
+            stdout_path=artifact_dir / "events.jsonl",
+            stderr_path=artifact_dir / "stderr.log",
+            timeout=timeout,
+            env=managed_environment(),
+        )
+        if outcome.timed_out:
+            raise ProcessError(f"Codex execution timed out after {timeout} seconds; artifacts: {artifact_dir}")
+        if outcome.returncode:
+            raise ProcessError(f"Codex execution exited with code {outcome.returncode}; artifacts: {artifact_dir}")
+        try:
+            if result_path.is_symlink() or not result_path.is_file():
+                raise ValueError("result.json must be an existing regular file, not a symlink")
+            with result_path.open("rb") as stream:
+                data = stream.read(4 * 1024 * 1024 + 1)
+            if len(data) > 4 * 1024 * 1024:
+                raise ValueError("result.json exceeds the 4 MiB limit")
+            result = json.loads(data, object_pairs_hook=_unique_object, parse_constant=_invalid_constant)
+            if not isinstance(result, dict):
+                raise ValueError("result.json must contain a JSON object")
+        except (OSError, ValueError, UnicodeError, RecursionError) as exc:
+            raise ProcessError(f"Codex returned an invalid result: {exc}; artifacts: {artifact_dir}") from exc
+        return result
 
 
 def doctor(
