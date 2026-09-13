@@ -31,12 +31,14 @@ This version attempts each ticket once and stops the whole run on a blocker or f
 
 This adapter does not add parallel execution, upstream skill loading, or recovery. The serial milestone's live Codex exercise does not establish live Claude acceptance; consult [validation evidence](VALIDATION.md) for the recorded scope.
 
-## 2. Parallel execution
+## 2. Parallel execution — implemented, live acceptance pending
 
-- Atomic claims, ownership tokens, heartbeat handling, and global process limits.
-- Dependency-driven dispatch and durable worker messages.
-- Single integration owner and explicit wide-refactor groups.
-- Prove overlapping workers cannot corrupt task state or each other's workspaces.
+- Named Codex/Claude worker pools, atomic claims, ownership tokens, recorded heartbeats, and shared managed-command limits.
+- Dependency-driven dispatch and durable coordinator messages with accepted dependency handoffs.
+- Single integration owner, declared resource reservations, and exclusive tickets.
+- Deterministic real-process/Git tests for overlapping workers, stale-base integration, failures, and interruption.
+
+The implemented contract is in [PARALLEL_EXECUTION.md](PARALLEL_EXECUTION.md). This milestone does not provide live conversational messaging, lease reassignment, multi-ticket atomic staging groups, or hard-crash recovery. A real mixed-agent acceptance exercise remains pending.
 
 ## 3. Recovery
 

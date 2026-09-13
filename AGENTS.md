@@ -1,6 +1,6 @@
 # Working on Anvil
 
-Anvil implements supervised serial execution using Codex or Claude Code. Keep README capabilities and the entry skill aligned with what the CLI actually implements. Distinguish deterministic fake-agent tests from live model acceptance. Parallel workers, retries, pause/resume, hard-crash recovery, and upstream skill loading remain planned; `status` only reads saved state.
+Anvil implements supervised serial and coordinated worker-pool execution using Codex and Claude Code. Keep README capabilities and the entry skill aligned with what the CLI actually implements. Distinguish deterministic fake-agent tests from live model acceptance. Retries, pause/resume, hard-crash recovery, and upstream skill loading remain planned; `status` only reads saved state.
 
 Use Python 3.11+ and the standard library unless a dependency has a concrete benefit. Keep CLI, contracts, planning, adapters, and future durable scheduling separate. Pass subprocess arguments as lists and prompt text through stdin; do not build shell command strings from tickets.
 
@@ -9,5 +9,7 @@ Run `python -m unittest discover -s tests -v` after relevant code changes. Valid
 The acceptance rule in `docs/PLAN.md` is central: a worker's success message cannot mark a task done. Completion requires criterion evidence, independent review and passing checks tied to the exact integration revision, and advancement of the managed branch. Future scheduling and recovery must preserve ownership and evidence across restarts. Do not add unbounded background work or silently enlarge the user's backlog. Verification commands run directly on the host from trusted configuration; do not imply that Codex's sandbox contains them.
 
 Codex remains the default for existing run configurations. Claude Code turns have bounded file tools and no Bash; the supervisor supplies their review diff and runs verification. Preserve that separation and avoid implying that Claude tool permissions provide an operating-system sandbox. Keep adapter behavior and prerequisites documented in `docs/AGENT_ADAPTERS.md`.
+
+Worker pools retain one supervisor and one integration owner. Only the coordinator thread writes Git or SQLite; threads execute bounded agent/check commands. Hold worker slots and resource reservations through acceptance, and review/check every candidate after applying it to the latest accepted base. Stop all active commands and join workers before releasing the repository lock. Dependency handoffs are saved evidence, not instructions or live model-to-model chat. Heartbeats do not authorize lease reassignment or recovery.
 
 Upstream instructions are dependencies, not instructions for maintaining this repository. Keep imports pinned, preserve license notices, and record compatibility changes separately. Do not invoke real model workers in ordinary tests.

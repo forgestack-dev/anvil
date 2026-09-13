@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from contextlib import ExitStack, contextmanager
 from collections.abc import Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass
 import math
 import os
@@ -24,6 +25,63 @@ from typing import Sequence
 
 class ProcessError(RuntimeError):
     """A command could not be created, contained, or read successfully."""
+
+
+class ProcessCancelled(ProcessError):
+    """The owning run cancelled a queued or executing command."""
+
+
+_active_scope: ContextVar[ProcessScope | None] = ContextVar("anvil_process_scope", default=None)
+
+
+class ProcessScope:
+    """Share command capacity and cancellation across a run's calling threads.
+
+    Each supervisor or executor thread must enter ``activate()`` explicitly.
+    Capacity includes the entire process group until cleanup has completed.
+    Cancellation is permanent; a new run needs a new scope.
+    """
+
+    def __init__(self, max_processes: int):
+        if isinstance(max_processes, bool) or not isinstance(max_processes, int) or max_processes < 1:
+            raise ValueError("max_processes must be a positive integer")
+        self.max_processes = max_processes
+        self._slots = threading.BoundedSemaphore(max_processes)
+        self._cancelled = threading.Event()
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancelled.is_set()
+
+    def cancel(self) -> None:
+        self._cancelled.set()
+
+    @contextmanager
+    def activate(self):
+        token = _active_scope.set(self)
+        try:
+            yield self
+        finally:
+            _active_scope.reset(token)
+
+    def _check_cancelled(self) -> None:
+        if self.cancelled:
+            raise ProcessCancelled("command cancelled by its owning run")
+
+    @contextmanager
+    def _slot(self, check_interrupt):
+        # run_process defers main-thread SIGINT across acquisition and release,
+        # so a signal cannot lose ownership immediately after acquire succeeds.
+        while True:
+            check_interrupt()
+            self._check_cancelled()
+            if self._slots.acquire(timeout=0.1):
+                break
+        try:
+            self._check_cancelled()
+            yield
+        finally:
+            self._slots.release()
 
 
 @dataclass(frozen=True)
@@ -117,6 +175,8 @@ def run_process(
     nor a child that ignores stdin can block supervision. A timeout returns an
     outcome; interrupts are propagated after terminating the process group.
     An explicit env replaces the inherited environment without merging it.
+    An active ProcessScope also bounds concurrent groups and allows the owning
+    run to cancel queued or executing commands. Queue time is outside timeout.
     """
     if os.name != "posix":
         raise ProcessError("process execution currently requires macOS or Linux (POSIX)")
@@ -144,7 +204,19 @@ def run_process(
     if stdout_path.resolve() == stderr_path.resolve():
         raise ProcessError("stdout and stderr must use different artifact files")
 
-    with ExitStack() as files:
+    scope = _active_scope.get()
+
+    def check_cancelled():
+        if scope is not None:
+            scope._check_cancelled()
+
+    # Keep the guard installed across capacity acquisition, spawn, waiting,
+    # release, and cleanup. Children must not inherit a blocked SIGINT mask.
+    with _defer_sigint() as check_interrupt, ExitStack() as files:
+        if scope is not None:
+            files.enter_context(scope._slot(check_interrupt))
+        check_interrupt()
+        check_cancelled()
         try:
             stdout_file = files.enter_context(stdout_path.open("xb"))
             stderr_file = files.enter_context(stderr_path.open("xb"))
@@ -156,39 +228,39 @@ def run_process(
                 input_file.seek(0)
         except (OSError, ValueError, UnicodeError) as exc:
             raise ProcessError(f"could not start command or create output artifacts: {exc}") from exc
-        # Keep the guard installed across spawn, waiting, and all of cleanup.
-        # A guard installed only inside finally would itself have an interrupt
-        # window before entry, and children must not inherit a blocked SIGINT mask.
-        with _defer_sigint() as check_interrupt:
-            process = None
-            timed_out = False
+        process = None
+        timed_out = False
+        try:
+            check_interrupt()
+            check_cancelled()
             try:
+                process = subprocess.Popen(
+                    list(argv),
+                    cwd=cwd,
+                    stdin=input_file,
+                    stdout=stdout_file,
+                    stderr=stderr_file,
+                    shell=False,
+                    start_new_session=True,
+                    env=env,
+                )
+            except (OSError, ValueError, UnicodeError) as exc:
+                raise ProcessError(f"could not start command or create output artifacts: {exc}") from exc
+            deadline = time.monotonic() + timeout
+            while True:
+                check_interrupt()
+                check_cancelled()
                 try:
-                    process = subprocess.Popen(
-                        list(argv),
-                        cwd=cwd,
-                        stdin=input_file,
-                        stdout=stdout_file,
-                        stderr=stderr_file,
-                        shell=False,
-                        start_new_session=True,
-                        env=env,
-                    )
-                except (OSError, ValueError, UnicodeError) as exc:
-                    raise ProcessError(f"could not start command or create output artifacts: {exc}") from exc
-                deadline = time.monotonic() + timeout
-                while True:
-                    check_interrupt()
-                    try:
-                        process.wait(timeout=min(0.1, max(0, deadline - time.monotonic())))
+                    process.wait(timeout=min(0.1, max(0, deadline - time.monotonic())))
+                    break
+                except subprocess.TimeoutExpired:
+                    if time.monotonic() >= deadline:
+                        timed_out = True
                         break
-                    except subprocess.TimeoutExpired:
-                        if time.monotonic() >= deadline:
-                            timed_out = True
-                            break
-            finally:
-                # A successful leader can leave descendants; always stop its
-                # group before propagating any interrupts received during cleanup.
-                if process is not None:
-                    _stop_group(process)
+        finally:
+            # A successful leader can leave descendants; always stop its
+            # group before propagating any interrupts received during cleanup.
+            if process is not None:
+                _stop_group(process)
+        check_cancelled()
         return ProcessOutcome(returncode=process.returncode, timed_out=timed_out)

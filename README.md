@@ -6,9 +6,9 @@ Anvil is ForgeStack's engineering harness for working through specifications and
 
 ## Current status
 
-Anvil executes a JSON ticket graph **serially** using Codex or Claude Code. It launches the selected agent in isolated Git worktrees, records results in SQLite, reviews the complete integration revision with a separate turn that has read-only tools, runs required checks, and advances a managed local branch only after acceptance evidence, review, and verification pass. Each run uses one agent for both implementation and review.
+Anvil executes a JSON ticket graph serially or with a **coordinated pool of Codex and Claude Code workers**. Workers implement ready tickets in isolated Git worktrees. One supervisor owns the SQLite ledger and integration queue, reviews each change on top of the latest accepted branch, runs required checks, and advances that branch only after acceptance evidence, independent review, and verification pass.
 
-It also validates ticket graphs, previews dependency waves, checks local prerequisites, and reads saved run state. Parallel workers, retries, pause/resume, crash recovery, upstream skill loading, Markdown intake, and issue-tracker closeout remain planned. Requests for skills in an execution ticket are rejected rather than silently ignored. Nothing installs Anvil into an application repository automatically.
+It also validates ticket graphs, previews dependency waves, checks local prerequisites, and reads saved run state. Retries, pause/resume, crash recovery, upstream skill loading, Markdown intake, and issue-tracker closeout remain planned. Requests for skills in an execution ticket are rejected rather than silently ignored. Nothing installs Anvil into an application repository automatically.
 
 ## Install and plan
 
@@ -24,7 +24,7 @@ anvil doctor
 anvil doctor --agent claude-code
 ```
 
-Validation and planning work without an agent CLI. `doctor` checks Git and the selected executable's version and advertised flags; it does not authenticate or make a model request. It defaults to Codex. To probe a custom executable, supply `--agent-binary /path/to/executable`; `doctor` does not read run configurations. The planner's dependency waves describe possible parallelism, but this version executes one ticket at a time.
+Validation and planning work without an agent CLI. `doctor` checks Git and the selected executable's version and advertised flags; it does not authenticate or make a model request. It defaults to Codex. To probe a custom executable, supply `--agent-binary /path/to/executable`; `doctor` does not read run configurations. The planner's dependency waves describe possible parallelism; actual dispatch also respects available workers and declared shared resources.
 
 To use the CLI directly from a source checkout:
 
@@ -81,6 +81,64 @@ The saved run directory contains `state.sqlite`, `report.json`, worktrees, and p
 
 `run` exits with 0 for success, 1 for failure, 2 for invalid input/setup, 3 for blocked work, or 130 for Ctrl-C. `status` exits with 0 when the saved state was read successfully, regardless of the run's recorded outcome. Anvil does not push, open a pull request, merge into a user branch, or close external tickets.
 
+## Coordinated Codex and Claude workers
+
+Add a `workers` pool to a run configuration. For example:
+
+```json
+{
+  "version": 1,
+  "repo": "/path/to/project",
+  "tickets": "tickets.json",
+  "workers": [
+    {"id": "codex-builder", "agent": "codex"},
+    {"id": "claude-builder", "agent": "claude-code"}
+  ],
+  "agent": "codex",
+  "max_processes": 2,
+  "verification": [["python3", "-m", "unittest", "discover", "-s", "tests", "-v"]]
+}
+```
+
+Use checks appropriate to the target project. Run this configuration with the
+same `anvil run <run.json>` command. Each worker entry is one slot; a pool may
+contain one to eight slots, including multiple slots using the same agent.
+Each entry can supply its own trusted `agent_binary`. Top-level `agent` and
+`agent_binary` select the independent reviewer for every pool candidate. Without
+`workers`, that agent still handles both roles in the existing serial mode.
+
+The shipped [pool configuration](examples/parallel-run.json) and
+[three-ticket example](examples/parallel-tickets.json) target a fresh sibling
+`anvil-demo` repository prepared as in the serial example below. The first two
+tickets use different agents; the third depends on both. Running that configuration
+launches real model turns; ordinary tests use private fake executables instead.
+
+`max_processes` defaults to the pool size and limits concurrent managed command
+invocations across agent turns, review, verification, and supervisor Git. It
+does not limit how many descendants a trusted command creates. A slot keeps its
+ticket until acceptance, bounding the candidate queue as well as implementations.
+
+Tickets may set `worker` to a configured slot ID. Unassigned tickets use the
+first available compatible slot. Shared `resources` labels prevent those tickets
+from overlapping through implementation, review, and integration. Set
+`exclusive: true` for a ticket that must run without any other ticket in flight.
+For example, `"worker": "claude-builder", "resources": ["database-schema"]`.
+Dependencies are dispatched only after their prerequisite changes are accepted;
+their prompts include saved dependency handoffs and accepted commit IDs.
+
+One integration owner applies each candidate onto the current accepted branch,
+then reviews and verifies the resulting revision. Merge conflicts stop the run
+with the candidate preserved. Any blocker, failure, or Ctrl-C cancels active
+commands and waits for cleanup before releasing the repository lock. Other
+claimed tickets become interrupted; undispatched tickets remain pending.
+
+This is one coordinated run, not two supervisors operating on the same checkout.
+The repository lock still rejects another run, including from a linked worktree.
+There is no live conversation injected into an active worker turn, lease
+reassignment, or automatic retry/resume. See [coordination details](docs/PARALLEL_EXECUTION.md)
+and [validation evidence](docs/VALIDATION.md). No live mixed-agent acceptance run
+has been recorded.
+
 ## Small serial example
 
 The [serial tickets](examples/serial-tickets.json) add a tested Python greeting function, then a command-line interface. They contain no skill requests. From a source checkout, prepare a new sibling repository:
@@ -101,7 +159,7 @@ Use a new `anvil-demo` directory and your existing Git identity. The example con
 
 ## Tickets and entry skill
 
-The input is JSON with `version: 1` and a nonempty `tasks` array. Each task has an `id`, `title`, `objective`, `depends_on`, and nonempty `acceptance_criteria`; see the [ticket schema](schemas/tickets.schema.json). The planner rejects duplicate IDs, missing prerequisites, self-dependencies, cycles, and malformed fields. Optional `skills` names can be planned, but nonempty skill requests cannot yet execute.
+The input is JSON with `version: 1` and a nonempty `tasks` array. Each task has an `id`, `title`, `objective`, `depends_on`, and nonempty `acceptance_criteria`; see the [ticket schema](schemas/tickets.schema.json). Optional scheduling fields are `worker`, `resources`, and `exclusive`. The planner rejects duplicate IDs, missing prerequisites, self-dependencies, cycles, and malformed fields. Optional `skills` names can be planned, but nonempty skill requests cannot yet execute.
 
 The Codex entry skill lives at [skills/anvil/SKILL.md](skills/anvil/SKILL.md). Install the CLI first, then copy the complete `skills/anvil` directory into your chosen agent skill directory, inspecting any existing skill before replacing it. Python distributions include it under `share/anvil/skills/anvil` in the installation prefix. Package installation does not register the skill automatically.
 

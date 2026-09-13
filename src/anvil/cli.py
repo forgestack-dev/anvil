@@ -1,4 +1,4 @@
-"""Planning, supervised serial execution, and durable run inspection."""
+"""Planning, supervised execution, and durable run inspection."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from anvil.planning import TaskGraph
 
 def parser() -> argparse.ArgumentParser:
     command = argparse.ArgumentParser(
-        prog="anvil", description="Plan tickets, execute them serially, and inspect saved runs."
+        prog="anvil", description="Plan tickets, coordinate coding agents, and inspect saved runs."
     )
     command.add_argument("--version", action="version", version=f"anvil {__version__}")
     subcommands = command.add_subparsers(dest="command", required=True)
@@ -33,7 +33,7 @@ def parser() -> argparse.ArgumentParser:
     check.add_argument("--agent", choices=AGENT_NAMES, default="codex")
     check.add_argument("--agent-binary", help="Trusted agent executable name or path.")
     check.add_argument("--json", action="store_true", help="Print JSON output.")
-    run = subcommands.add_parser("run", help="Execute a trusted run configuration serially.")
+    run = subcommands.add_parser("run", help="Execute a trusted serial or worker-pool configuration.")
     run.add_argument("config", type=Path)
     run.add_argument("--json", action="store_true", help="Print the final run report as JSON.")
     status = subcommands.add_parser("status", help="Read a saved run directory without resuming it.")
@@ -56,8 +56,9 @@ def main(argv: list[str] | None = None) -> int:
         git = shutil.which("git")
         result = {
             "version": __version__,
-            "stage": "serial-execution",
+            "stage": "coordinated-execution",
             "ticket_execution_available": os.name == "posix",
+            "worker_pools_available": os.name == "posix",
             "git": git,
             "agent": arguments.agent,
             arguments.agent: asdict(agent),
@@ -65,14 +66,14 @@ def main(argv: list[str] | None = None) -> int:
         if arguments.json:
             print(json.dumps(result, indent=2))
         else:
-            print(f"Anvil {__version__} — serial execution")
+            print(f"Anvil {__version__} — serial and coordinated worker execution")
             print(f"Git: {git or 'not found'}")
             label = "Codex" if arguments.agent == "codex" else "Claude Code"
             print(f"{label}: {agent.executable or 'not found'}")
             print(f"{label} compatibility: {'compatible' if agent.compatible else 'unavailable/incompatible'}")
             if agent.error:
                 print(f"{label} detail: {agent.error}")
-            print("Serial execution requires macOS or Linux. Skill loading and recovery are planned.")
+            print("Execution requires macOS or Linux. Skill loading and recovery are planned.")
         return 0 if git and agent.compatible and os.name == "posix" else 1
 
     if arguments.command in ("run", "status"):
@@ -81,11 +82,11 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if arguments.command == "run":
                 if os.name != "posix":
-                    raise ContractError("serial execution currently requires macOS or Linux")
-                from .execution import run_serial
+                    raise ContractError("execution currently requires macOS or Linux")
+                from .execution import run
                 from .workspaces import WorkspaceError
                 try:
-                    result = run_serial(RunConfig.load(arguments.config),
+                    result = run(RunConfig.load(arguments.config),
                                         progress=lambda message: print(message, file=sys.stderr, flush=True))
                 except WorkspaceError as exc:
                     raise ContractError(str(exc)) from exc

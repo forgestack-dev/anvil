@@ -187,12 +187,19 @@ class RunStore:
 
     def start_attempt(
         self, task_id: str, base_sha: str, workspace: str, *, attempt_id: str | None = None,
+        worker_id: str | None = None, agent: str | None = None,
     ) -> str:
-        """Start atomically; callers may reserve an ID to name its workspace."""
+        """Claim atomically, with an optional reserved ID and worker assignment."""
         _text(base_sha, "base_sha")
         _text(workspace, "workspace")
         attempt_id = str(uuid4()) if attempt_id is None else attempt_id
         _text(attempt_id, "attempt_id")
+        assignment = {}
+        for name, value in (("worker_id", worker_id), ("agent", agent)):
+            if value is not None:
+                _text(value, name)
+                assignment[name] = value
+        encoded = _encode(assignment)
         with self._transaction() as connection:
             if self._run(connection)["status"] != "running":
                 raise StoreError("starting an attempt requires a running run")
@@ -208,16 +215,66 @@ class RunStore:
                 raise StoreError(f"task {task_id} has unfinished dependencies: {', '.join(blocked)}")
             timestamp = _now()
             connection.execute(
-                "INSERT INTO attempts VALUES (?, ?, ?, ?, 'running', '{}', ?, ?, NULL)",
-                (attempt_id, task_id, base_sha, workspace, timestamp, timestamp),
+                "INSERT INTO attempts VALUES (?, ?, ?, ?, 'running', ?, ?, ?, NULL)",
+                (attempt_id, task_id, base_sha, workspace, encoded, timestamp, timestamp),
             )
             connection.execute(
-                "UPDATE tasks SET status = 'running', attempt_id = ?, updated_at = ? WHERE id = ?",
-                (attempt_id, timestamp, task_id),
+                "UPDATE tasks SET status = 'running', attempt_id = ?, details = ?, "
+                "updated_at = ? WHERE id = ?",
+                (attempt_id, encoded, timestamp, task_id),
             )
             self._event(connection, timestamp, "task", task_id, attempt_id,
                         "pending", "running", {"base_sha": base_sha, "workspace": workspace})
+            if assignment:
+                self._event(connection, timestamp, "dispatch", task_id, attempt_id,
+                            "pending", "running", assignment | {
+                                "base_sha": base_sha, "workspace": workspace,
+                            })
             return attempt_id
+
+    @classmethod
+    def _active_task(
+        cls, connection: sqlite3.Connection, task_id: str, attempt_id: str,
+    ) -> sqlite3.Row:
+        if cls._run(connection)["status"] != "running":
+            raise StoreError("attempt updates require a running run")
+        task = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if task is None:
+            raise StoreError(f"unknown task: {task_id}")
+        if task["attempt_id"] is None or task["attempt_id"] != attempt_id:
+            raise StoreError(f"stale or missing attempt for task {task_id}")
+        if task["status"] not in _PHASES[:-1]:
+            raise StoreError(f"task {task_id} is terminal or has not started: {task['status']}")
+        return task
+
+    def heartbeat(self, task_id: str, *, attempt_id: str) -> None:
+        """Refresh an active owner's heartbeat without adding audit events."""
+        with self._transaction() as connection:
+            task = self._active_task(connection, task_id, attempt_id)
+            timestamp = _now()
+            details = json.loads(task["details"])
+            details["heartbeat_at"] = timestamp
+            encoded = _encode(details)
+            connection.execute(
+                "UPDATE tasks SET details = ?, updated_at = ? WHERE id = ?",
+                (encoded, timestamp, task_id),
+            )
+            connection.execute(
+                "UPDATE attempts SET details = ?, updated_at = ? WHERE id = ?",
+                (encoded, timestamp, attempt_id),
+            )
+
+    def record_message(
+        self, task_id: str, *, attempt_id: str, kind: str, body: dict,
+    ) -> None:
+        """Persist a coordinator message tied to its current active owner."""
+        _text(kind, "message kind")
+        if not isinstance(body, dict):
+            raise StoreError("message body must be an object")
+        with self._transaction() as connection:
+            task = self._active_task(connection, task_id, attempt_id)
+            self._event(connection, _now(), "message", task_id, attempt_id,
+                        task["status"], task["status"], {"message_kind": kind, "body": body})
 
     @staticmethod
     def _require_evidence(status: str, details: dict) -> None:

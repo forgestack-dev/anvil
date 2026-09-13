@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from anvil.cli import main
-from anvil.config import RunConfig
+from anvil.config import RunConfig, WorkerConfig
 from anvil.contracts import ContractError, Task
 from anvil.store import RunStore, StoreError
 from anvil.workspaces import WorkspaceError
@@ -66,6 +66,21 @@ class RunCliTests(unittest.TestCase):
         self.assertIn(str(self.root / "saved-run"), stdout)
         self.assertIn("required check did not complete", stdout)
         self.assertEqual(stderr, "")
+
+    def test_worker_pool_configuration_routes_to_coordinator(self):
+        from dataclasses import replace
+        config = replace(self.config, workers=(WorkerConfig("codex", "codex"),
+                                               WorkerConfig("claude", "claude-code")))
+        report = self.report("success")
+        with patch("anvil.config.RunConfig.load", return_value=config), \
+                patch("anvil.parallel.run_parallel", return_value=report) as parallel, \
+                patch("anvil.execution.run_serial") as serial:
+            code, stdout, stderr = self.invoke(["run", str(self.config_path), "--json"])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(stdout), report)
+        self.assertEqual(stderr, "")
+        self.assertIs(parallel.call_args.args[0], config)
+        serial.assert_not_called()
 
     def test_invalid_run_configuration_returns_error_before_any_worker_or_state(self):
         documents = [

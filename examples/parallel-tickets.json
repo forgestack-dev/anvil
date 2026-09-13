@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "id": "greeting",
+      "title": "Add a greeting function",
+      "objective": "Create greeting.py with greet(name) returning Hello, <name>! after stripping surrounding whitespace. Use unittest and standard-library Python only; put the tests in tests/test_greeting.py.",
+      "depends_on": [],
+      "worker": "codex-builder",
+      "acceptance_criteria": [
+        "greet(' Ada ') returns 'Hello, Ada!'.",
+        "Empty or whitespace-only names raise ValueError; non-string inputs raise TypeError.",
+        "Public behavior and invalid inputs have unittest coverage."
+      ]
+    },
+    {
+      "id": "farewell",
+      "title": "Add a farewell function",
+      "objective": "Create farewell.py with farewell(name) returning Goodbye, <name>! after stripping surrounding whitespace. Use unittest and standard-library Python only; put the tests in tests/test_farewell.py.",
+      "depends_on": [],
+      "worker": "claude-builder",
+      "acceptance_criteria": [
+        "farewell(' Ada ') returns 'Goodbye, Ada!'.",
+        "Empty or whitespace-only names raise ValueError; non-string inputs raise TypeError.",
+        "Public behavior and invalid inputs have unittest coverage."
+      ]
+    },
+    {
+      "id": "conversation",
+      "title": "Combine the accepted greeting and farewell",
+      "objective": "Create conversation.py with conversation(name) returning a two-element tuple of the greeting and farewell from the accepted modules. Add tests in tests/test_conversation.py. Reuse the two functions without duplicating their validation logic.",
+      "depends_on": ["greeting", "farewell"],
+      "resources": ["conversation-api"],
+      "acceptance_criteria": [
+        "conversation(' Ada ') returns ('Hello, Ada!', 'Goodbye, Ada!').",
+        "Input validation remains consistent with the underlying functions.",
+        "Unittest coverage verifies composition and invalid inputs."
+      ]
+    }
+  ]
+}
