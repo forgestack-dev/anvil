@@ -40,6 +40,16 @@ This adapter does not add parallel execution, upstream skill loading, or recover
 
 The implemented contract is in [PARALLEL_EXECUTION.md](PARALLEL_EXECUTION.md). This milestone does not provide live conversational messaging, lease reassignment, multi-ticket atomic staging groups, or hard-crash recovery. A real mixed-agent acceptance exercise remains pending.
 
+## 2a. Native AI Hero skill management — implemented
+
+- Install complete upstream skill directories for Codex, Claude Code, or both in repository or global scope.
+- Resolve a source reference once to an exact commit; preserve instruction bytes, metadata, supporting files, executable flags, and upstream license notices.
+- Default to `engineering` and `productivity`; support explicit skill selection and opt-in experimental skills.
+- Record installation selection, revision, and file hashes; update every recorded agent target together after checking for local changes and destination conflicts.
+- Preview install/update changes and inspect installed files without network access through `skills status`.
+
+These are native skills for ordinary agent sessions. Harness ticket `skills` invocation and catalog-wide behavior compatibility remain part of milestone 4. Install/update previews fetch the source; only status is offline. Normal application errors roll back, while hard termination across multiple skill directories can require manual inspection. See [UPSTREAM.md](UPSTREAM.md).
+
 ## 3. Recovery
 
 - Pause/resume/stop commands, bounded retries, and backoff.
@@ -49,7 +59,7 @@ The implemented contract is in [PARALLEL_EXECUTION.md](PARALLEL_EXECUTION.md). T
 
 ## 4. Full skill integration
 
-- Discover complete, pinned upstream skill directories and supporting files.
+- Connect the managed, pinned upstream skill catalog to per-ticket execution.
 - Resolve invocation requirements, human decisions, and missing tools.
 - Record skill use and compatibility adaptations per attempt.
 - Add Markdown intake and spec-to-ticket preparation.

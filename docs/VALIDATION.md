@@ -4,6 +4,22 @@ Validated on 2026-09-12 using Python 3.11 on macOS and Codex CLI 0.153.4.
 
 ## Automated checks
 
+The AI Hero management milestone passes 253 tests, including 51 new source,
+installation/update, and CLI cases. Offline fixtures check pinned source
+resolution, complete skill resources and license notices, archive boundaries,
+both agent destinations, saved selections, local-change protection, previews,
+read-only status, unreadable local directories, concurrent-operation locks, rollback after partial placement
+or manifest failure, and repeated interruption during a synchronized update.
+
+A separate network acceptance check downloaded revision
+`3cca18b368ae95cdbdebbff572ccafa662551015` from the official upstream repository.
+It previewed and installed all 25 stable skills into both native agent directories
+in an isolated temporary Git repository, checked matching skill contents and
+license notices, then confirmed that update was a no-op and offline status was
+clean. No personal skill directories were changed and no upstream code or model
+turns were executed. This verifies native skill installation, not Anvil ticket
+skill loading or the behavior of every upstream skill.
+
 The previous serial/Claude milestone passed 155 tests. The expanded suite now also covers coordinated mixed-agent pools, strict scheduling contracts, shared process capacity and cancellation, ownership heartbeats, and durable handoffs. Tests use Python 3.11 on macOS without live model calls; CI also runs Python 3.12 on Linux. See the mixed-pool validation below for the new behavioral coverage.
 
 Execution tests use temporary real Git repositories. One runs through the real Codex adapter with a local fake executable, including its schema files, output artifacts, and subprocess boundary. Other scenarios cover rejected review, missing acceptance evidence, failed verification, modified candidates, worker-created commits, stale attempts, repository locks, and interruptions immediately after persisted completion. Regressions also cover Git filters surviving timeout or interruption, case-distinct ticket IDs sharing a filesystem, and interruption immediately after an attempt is recorded. Real SIGINT regressions verify cleanup when interruption arrives before process creation returns or repeatedly during shutdown, along with restoration and delivery of the caller's signal handlers. Failed work cannot release dependent tickets or advance the accepted branch.
