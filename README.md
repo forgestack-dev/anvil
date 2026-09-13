@@ -65,6 +65,14 @@ is `.anvil/aihero.json` at the repository root, or
 `~/.local/state/anvil/skills/aihero.json` for global scope. It records the exact
 upstream commit, selected agents and skills, file hashes, and executable flags.
 
+For global Claude Code skills, setting `CLAUDE_CONFIG_DIR` changes the destination
+to `$CLAUDE_CONFIG_DIR/skills`. Codex and repository destinations stay the same.
+Anvil records custom Claude destinations; use the same configuration directory
+for subsequent install, update, and status commands. Changing or unsetting it
+after a custom installation produces an error instead of redirecting ownership.
+Existing default installations continue to use `~/.claude/skills`; these commands
+do not migrate installations between profiles.
+
 Install and update accept `--ref`, defaulting to `main`; the reference is resolved
 once to an exact commit before files are downloaded. They also accept `--dry-run`,
 which previews changes without changing the installation but still fetches the

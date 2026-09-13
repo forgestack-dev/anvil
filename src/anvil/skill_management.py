@@ -37,12 +37,21 @@ _HASH = re.compile(r"[0-9a-f]{64}\Z")
 class SkillScope:
     root: Path
     global_scope: bool = False
+    claude_config_dir: Path | None = None
 
     def __post_init__(self):
         root = Path(self.root).expanduser().resolve()
         if not root.is_dir():
             raise SkillError(f"skill scope must be an existing directory: {root}")
         object.__setattr__(self, "root", root)
+        if self.global_scope and self.claude_config_dir is not None:
+            configured = Path(self.claude_config_dir).expanduser()
+            # Canonicalize the explicitly selected parents, but leave the final
+            # directory unresolved so installation checks still reject symlinks.
+            configured = configured.parent.resolve() / configured.name
+            if configured.name == "..":
+                configured = configured.resolve()
+            object.__setattr__(self, "claude_config_dir", configured)
 
     @property
     def manifest(self) -> Path:
@@ -50,6 +59,8 @@ class SkillScope:
         return parent / "aihero.json"
 
     def target(self, agent: str) -> Path:
+        if agent == "claude-code" and self.global_scope and self.claude_config_dir is not None:
+            return self.claude_config_dir / "skills"
         return self.root / (".agents/skills" if agent == "codex" else ".claude/skills")
 
 
@@ -57,7 +68,8 @@ def scope_for(repo: Path | None = None, *, global_scope: bool = False) -> SkillS
     if global_scope:
         if repo is not None:
             raise SkillError("choose either a repository or a global installation")
-        return SkillScope(Path.home(), True)
+        configured = os.environ.get("CLAUDE_CONFIG_DIR") or None
+        return SkillScope(Path.home(), True, Path(configured) if configured else None)
     directory = Path(repo or Path.cwd()).expanduser().resolve()
     if not directory.is_dir():
         raise SkillError(f"repository directory does not exist: {directory}")
@@ -92,8 +104,14 @@ def _relative(value):
 
 def _safe_path(scope: SkillScope, path: Path):
     """Reject redirected managed ancestors, including dangling symlinks."""
-    relative = path.relative_to(scope.root)
-    current = scope.root
+    boundary = scope.root
+    if (scope.global_scope and scope.claude_config_dir is not None
+            and path == scope.target("claude-code")):
+        # Only the explicitly configured agent root may live outside the home.
+        # Check its canonical ancestors too, in case one changed after capture.
+        boundary = Path(path.anchor)
+    relative = path.relative_to(boundary)
+    current = boundary
     for part in relative.parts:
         current /= part
         if current.is_symlink():
@@ -124,14 +142,33 @@ def _read_manifest(scope: SkillScope):
         return None
     value = _read_json(scope.manifest)
     try:
-        if (set(value) != {"version", "source", "revision", "agents", "selection", "skills"}
-                or type(value["version"]) is not int or value["version"] != 1
+        fields = {"version", "source", "revision", "agents", "selection", "skills"}
+        if value.get("version") == 2:
+            fields.add("claude_config_dir")
+        if (set(value) != fields
+                or type(value["version"]) is not int or value["version"] not in (1, 2)
                 or value["source"] != SOURCE or not _SHA.fullmatch(value["revision"])):
             raise SkillError("unsupported skill manifest or source")
         agents = value["agents"]
         if (not isinstance(agents, list) or not agents or any(agent not in _AGENTS for agent in agents)
                 or len(set(agents)) != len(agents)):
             raise SkillError("invalid manifest agents")
+        if value["version"] == 2:
+            configured = value["claude_config_dir"]
+            if (not scope.global_scope or "claude-code" not in agents
+                    or not isinstance(configured, str) or "\0" in configured
+                    or not Path(configured).is_absolute()):
+                raise SkillError("invalid manifest Claude configuration directory")
+        if scope.global_scope and "claude-code" in agents:
+            recorded = value.get("claude_config_dir", str(scope.root / ".claude"))
+            requested = str(scope.target("claude-code").parent)
+            if recorded != requested:
+                raise SkillError(
+                    f"this installation uses Claude configuration directory {recorded}; "
+                    f"CLAUDE_CONFIG_DIR currently selects {requested}. "
+                    "Set CLAUDE_CONFIG_DIR to the recorded directory before inspecting or updating; "
+                    "changing an existing installation's destination is not supported."
+                )
         selection = value["selection"]
         if (set(selection) != {"names", "include_experimental"}
                 or not isinstance(selection["names"], list)
@@ -253,7 +290,7 @@ def status(scope: SkillScope) -> dict:
                        conflicts=conflicts)
 
 
-def _catalog_manifest(catalog: Catalog, agents, selection):
+def _catalog_manifest(scope: SkillScope, catalog: Catalog, agents, selection):
     if not _SHA.fullmatch(catalog.revision) or not catalog.skills:
         raise SkillError("source catalog must contain skills at an exact commit")
     skills = {}
@@ -269,11 +306,20 @@ def _catalog_manifest(catalog: Catalog, agents, selection):
                 raise SkillError("invalid source file")
             files[path] = _file_record(file.content, file.executable)
         skills[name] = {"source_path": skill.source_path, "files": files}
-    return {"version": 1, "source": SOURCE, "revision": catalog.revision,
-            "agents": list(agents), "selection": selection, "skills": skills}
+    manifest = {"version": 1, "source": SOURCE, "revision": catalog.revision,
+                "agents": list(agents), "selection": selection, "skills": skills}
+    if (scope.global_scope and "claude-code" in agents
+            and scope.target("claude-code") != scope.root / ".claude/skills"):
+        manifest.update(version=2, claude_config_dir=str(scope.target("claude-code").parent))
+    return manifest
 
 
 def _preflight(scope, old, new):
+    roots = [scope.target(agent) for agent in new["agents"]]
+    for index, root in enumerate(roots):
+        for other in [scope.manifest.parent, *roots[:index]]:
+            if root.is_relative_to(other) or other.is_relative_to(root):
+                raise SkillError(f"skill destinations and metadata must not overlap: {root} and {other}")
     conflicts = _conflicts(scope, old)
     owned = set(old["skills"]) if old else set()
     for agent in new["agents"]:
@@ -393,7 +439,7 @@ def _operate(scope, *, updating, agents, ref, names, include_experimental, dry_r
             raise SkillError("local skill changes must be resolved before updating:\n" + "\n".join(existing_conflicts))
         catalog = fetch_catalog(ref=ref, names=tuple(selection["names"]),
                                 include_experimental=selection["include_experimental"])
-        new = _catalog_manifest(catalog, selected_agents, selection)
+        new = _catalog_manifest(scope, catalog, selected_agents, selection)
         _preflight(scope, old, new)
         if old is not None and not updating and old != new:
             raise SkillError("AI Hero is already managed here; use skills update aihero to update its recorded agents and selection")

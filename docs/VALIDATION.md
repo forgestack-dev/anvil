@@ -4,6 +4,20 @@ Validated on 2026-09-12 using Python 3.11 on macOS and Codex CLI 0.153.4.
 
 ## Automated checks
 
+Global Claude profile support adds 14 regression cases, bringing the suite to
+267 tests. They exercise custom destinations outside the home directory through
+the CLI, saved-profile checks, legacy default installations, local edits,
+unsafe or conflicting paths, manifest tampering, and rollback across both agent
+directories. The primary CLI regression fails against the original implementation
+because it reports the default Claude directory instead of the configured one.
+
+A network check also installed all 25 stable upstream skills into an isolated
+temporary home and an external Claude profile at revision
+`3cca18b368ae95cdbdebbff572ccafa662551015`. Both copies matched, preview created
+no installation, update reported no changes, and offline status passed. The
+default Claude directory was not created. This used no real personal skill
+directories or model calls.
+
 The AI Hero management milestone passes 253 tests, including 51 new source,
 installation/update, and CLI cases. Offline fixtures check pinned source
 resolution, complete skill resources and license notices, archive boundaries,

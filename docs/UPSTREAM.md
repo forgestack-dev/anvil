@@ -23,12 +23,32 @@ Claude Code are selected by default. Installation can select one agent with
 | Scope | Codex skills | Claude Code skills | Manifest |
 |---|---|---|---|
 | Repository | `<repo>/.agents/skills` | `<repo>/.claude/skills` | `<repo>/.anvil/aihero.json` |
-| Global | `~/.agents/skills` | `~/.claude/skills` | `~/.local/state/anvil/skills/aihero.json` |
+| Global | `~/.agents/skills` | `$CLAUDE_CONFIG_DIR/skills`, or `~/.claude/skills` when unset or empty | `~/.local/state/anvil/skills/aihero.json` |
 
 The native discovery locations are documented by
 [Codex](https://learn.chatgpt.com/docs/build-skills) and
 [Claude Code](https://code.claude.com/docs/en/skills). The manager writes separate
 copies of each complete skill directory into the selected agent roots.
+
+Claude Code's [`CLAUDE_CONFIG_DIR` override](https://code.claude.com/docs/en/claude-directory)
+applies only to global Claude installation. For example:
+
+```sh
+export CLAUDE_CONFIG_DIR=/path/to/claude-profile
+anvil skills install aihero --global
+anvil skills status aihero --global
+anvil skills update aihero --global
+```
+
+The custom directory may be outside the home directory and is captured when
+each command starts. Anvil records it in a version 2 manifest and requires later
+commands to select the same directory. Changing or unsetting the variable yields
+an error before downloading or replacing skills. Version 1 manifests retain
+their original default destinations. There is one global manifest and lock
+because the installation also shares Codex's destination; switching profiles
+does not create a second owner or migrate files. Codex-only installations and
+repository scope ignore this override. Symlinked installation directories,
+overlapping agent destinations, and overlap with Anvil metadata are rejected.
 
 Default selection includes `skills/engineering` and `skills/productivity`.
 `--include-experimental` also includes `skills/in-progress`. Repeat `--skill NAME`
