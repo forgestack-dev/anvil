@@ -2,13 +2,13 @@
 
 **Turn a spec into coordinated engineering work.**
 
-Anvil is ForgeStack's engineering harness for working through specifications and tickets with coding agents. It combines an entry skill, a local runner, and adapters for Codex and Claude Code. Integration with the full AI Hero skill catalog is planned.
+Anvil is ForgeStack's engineering harness for working through specifications and tickets with coding agents. It combines an entry skill, a local runner, adapters for Codex and Claude Code, and managed installation of AI Hero skills for ordinary agent sessions.
 
 ## Current status
 
-Anvil executes a JSON ticket graph **serially** using Codex or Claude Code. It launches the selected agent in isolated Git worktrees, records results in SQLite, reviews the complete integration revision with a separate turn that has read-only tools, runs required checks, and advances a managed local branch only after acceptance evidence, review, and verification pass. Each run uses one agent for both implementation and review.
+Anvil executes a JSON ticket graph serially or with a **coordinated pool of Codex and Claude Code workers**. Workers implement ready tickets in isolated Git worktrees. One supervisor owns the SQLite ledger and integration queue, reviews each change on top of the latest accepted branch, runs required checks, and advances that branch only after acceptance evidence, independent review, and verification pass.
 
-It also validates ticket graphs, previews dependency waves, checks local prerequisites, and reads saved run state. Parallel workers, retries, pause/resume, crash recovery, upstream skill loading, Markdown intake, and issue-tracker closeout remain planned. Requests for skills in an execution ticket are rejected rather than silently ignored. Nothing installs Anvil into an application repository automatically.
+It also validates ticket graphs, previews dependency waves, checks local prerequisites, reads saved run state, and installs or updates AI Hero skills in both agents' native directories. Retries, pause/resume, crash recovery, upstream skill invocation within harness tickets, Markdown intake, and issue-tracker closeout remain planned. Requests for skills in an execution ticket are rejected rather than silently ignored. Package installation does not register skills or modify an application repository automatically.
 
 ## Install and plan
 
@@ -24,13 +24,66 @@ anvil doctor
 anvil doctor --agent claude-code
 ```
 
-Validation and planning work without an agent CLI. `doctor` checks Git and the selected executable's version and advertised flags; it does not authenticate or make a model request. It defaults to Codex. To probe a custom executable, supply `--agent-binary /path/to/executable`; `doctor` does not read run configurations. The planner's dependency waves describe possible parallelism, but this version executes one ticket at a time.
+Validation and planning work without an agent CLI. `doctor` checks Git and the selected executable's version and advertised flags; it does not authenticate or make a model request. It defaults to Codex. To probe a custom executable, supply `--agent-binary /path/to/executable`; `doctor` does not read run configurations. The planner's dependency waves describe possible parallelism; actual dispatch also respects available workers and declared shared resources.
 
 To use the CLI directly from a source checkout:
 
 ```sh
 PYTHONPATH=src python3 -m anvil plan examples/tickets.json
 ```
+
+## Install AI Hero skills for both agents
+
+After installing Anvil, explicitly install the upstream skills into a repository:
+
+```sh
+anvil skills install aihero --repo /path/to/project
+anvil skills status aihero --repo /path/to/project
+anvil skills update aihero --repo /path/to/project --dry-run
+anvil skills update aihero --repo /path/to/project
+```
+
+Installation defaults to both Codex and Claude Code, using the upstream
+`engineering` and `productivity` groups. Each agent receives the complete selected
+skill directories, their supporting files, and `LICENSE.aihero`. Instructions and
+upstream metadata are preserved. Use `--agent codex` or `--agent claude-code` for
+one agent, repeat `--skill NAME` to select particular skills, and explicitly add
+`--include-experimental` for skills from `in-progress`. Explicit selection can
+also name skills in `misc`. Named subsets do not automatically include other
+skills referenced by their instructions. Skill management supports macOS/Linux;
+repository scope uses Git.
+
+Repository scope resolves to the Git root, including when launched from a
+subdirectory. Codex discovers `.agents/skills`, while Claude Code discovers
+`.claude/skills`. Anvil keeps separate managed copies for the two agents.
+[Codex locations](https://learn.chatgpt.com/docs/build-skills),
+[Claude Code locations](https://code.claude.com/docs/en/skills).
+
+Omitting a scope flag uses the current repository. Use `--global` instead of
+`--repo` for `~/.agents/skills` and `~/.claude/skills`. The installation manifest
+is `.anvil/aihero.json` at the repository root, or
+`~/.local/state/anvil/skills/aihero.json` for global scope. It records the exact
+upstream commit, selected agents and skills, file hashes, and executable flags.
+
+Install and update accept `--ref`, defaulting to `main`; the reference is resolved
+once to an exact commit before files are downloaded. They also accept `--dry-run`,
+which previews changes without changing the installation but still fetches the
+upstream source. `status` checks saved files locally without network access.
+All three commands accept `--json`; status returns exit code 1 for local
+modifications, and input or installation errors return 2.
+
+Updates use the agents and selection recorded at installation. Local edits or
+unmanaged destination conflicts abort the operation for both agents. Anvil rolls
+back ordinary application errors; a hard termination during file replacement
+may require inspection of the saved manifest and retained backups. There is no
+force, adoption, uninstall, or in-place agent/selection-change command.
+
+These skills are available to normal Codex and Claude Code sessions under each
+agent's discovery and invocation rules. **Harness ticket `skills` requests remain
+unsupported**, and Anvil's Claude worker still disables native skill loading in
+safe mode. Installing the catalog does not establish behavioral compatibility
+for every upstream skill. See [upstream management](docs/UPSTREAM.md) for the
+source contract and remaining integration work.
 
 ## Run tickets
 
@@ -81,6 +134,64 @@ The saved run directory contains `state.sqlite`, `report.json`, worktrees, and p
 
 `run` exits with 0 for success, 1 for failure, 2 for invalid input/setup, 3 for blocked work, or 130 for Ctrl-C. `status` exits with 0 when the saved state was read successfully, regardless of the run's recorded outcome. Anvil does not push, open a pull request, merge into a user branch, or close external tickets.
 
+## Coordinated Codex and Claude workers
+
+Add a `workers` pool to a run configuration. For example:
+
+```json
+{
+  "version": 1,
+  "repo": "/path/to/project",
+  "tickets": "tickets.json",
+  "workers": [
+    {"id": "codex-builder", "agent": "codex"},
+    {"id": "claude-builder", "agent": "claude-code"}
+  ],
+  "agent": "codex",
+  "max_processes": 2,
+  "verification": [["python3", "-m", "unittest", "discover", "-s", "tests", "-v"]]
+}
+```
+
+Use checks appropriate to the target project. Run this configuration with the
+same `anvil run <run.json>` command. Each worker entry is one slot; a pool may
+contain one to eight slots, including multiple slots using the same agent.
+Each entry can supply its own trusted `agent_binary`. Top-level `agent` and
+`agent_binary` select the independent reviewer for every pool candidate. Without
+`workers`, that agent still handles both roles in the existing serial mode.
+
+The shipped [pool configuration](examples/parallel-run.json) and
+[three-ticket example](examples/parallel-tickets.json) target a fresh sibling
+`anvil-demo` repository prepared as in the serial example below. The first two
+tickets use different agents; the third depends on both. Running that configuration
+launches real model turns; ordinary tests use private fake executables instead.
+
+`max_processes` defaults to the pool size and limits concurrent managed command
+invocations across agent turns, review, verification, and supervisor Git. It
+does not limit how many descendants a trusted command creates. A slot keeps its
+ticket until acceptance, bounding the candidate queue as well as implementations.
+
+Tickets may set `worker` to a configured slot ID. Unassigned tickets use the
+first available compatible slot. Shared `resources` labels prevent those tickets
+from overlapping through implementation, review, and integration. Set
+`exclusive: true` for a ticket that must run without any other ticket in flight.
+For example, `"worker": "claude-builder", "resources": ["database-schema"]`.
+Dependencies are dispatched only after their prerequisite changes are accepted;
+their prompts include saved dependency handoffs and accepted commit IDs.
+
+One integration owner applies each candidate onto the current accepted branch,
+then reviews and verifies the resulting revision. Merge conflicts stop the run
+with the candidate preserved. Any blocker, failure, or Ctrl-C cancels active
+commands and waits for cleanup before releasing the repository lock. Other
+claimed tickets become interrupted; undispatched tickets remain pending.
+
+This is one coordinated run, not two supervisors operating on the same checkout.
+The repository lock still rejects another run, including from a linked worktree.
+There is no live conversation injected into an active worker turn, lease
+reassignment, or automatic retry/resume. See [coordination details](docs/PARALLEL_EXECUTION.md)
+and [validation evidence](docs/VALIDATION.md). No live mixed-agent acceptance run
+has been recorded.
+
 ## Small serial example
 
 The [serial tickets](examples/serial-tickets.json) add a tested Python greeting function, then a command-line interface. They contain no skill requests. From a source checkout, prepare a new sibling repository:
@@ -101,7 +212,7 @@ Use a new `anvil-demo` directory and your existing Git identity. The example con
 
 ## Tickets and entry skill
 
-The input is JSON with `version: 1` and a nonempty `tasks` array. Each task has an `id`, `title`, `objective`, `depends_on`, and nonempty `acceptance_criteria`; see the [ticket schema](schemas/tickets.schema.json). The planner rejects duplicate IDs, missing prerequisites, self-dependencies, cycles, and malformed fields. Optional `skills` names can be planned, but nonempty skill requests cannot yet execute.
+The input is JSON with `version: 1` and a nonempty `tasks` array. Each task has an `id`, `title`, `objective`, `depends_on`, and nonempty `acceptance_criteria`; see the [ticket schema](schemas/tickets.schema.json). Optional scheduling fields are `worker`, `resources`, and `exclusive`. The planner rejects duplicate IDs, missing prerequisites, self-dependencies, cycles, and malformed fields. Optional `skills` names can be planned, but nonempty skill requests cannot yet execute.
 
 The Codex entry skill lives at [skills/anvil/SKILL.md](skills/anvil/SKILL.md). Install the CLI first, then copy the complete `skills/anvil` directory into your chosen agent skill directory, inspecting any existing skill before replacing it. Python distributions include it under `share/anvil/skills/anvil` in the installation prefix. Package installation does not register the skill automatically.
 
@@ -118,6 +229,6 @@ CI tests Python 3.11 and 3.12, runs the example planner, and checks distribution
 
 ## Attribution
 
-Anvil is an independent ForgeStack project. Its design builds on [Matt Pocock's AI Hero skills](https://www.aihero.dev/skills), including the experimental [`implement-spec` workflow](https://github.com/mattpocock/skills/blob/main/skills/in-progress/implement-spec/SKILL.md). The source revision is recorded in [upstream/aihero.lock.json](upstream/aihero.lock.json). No upstream skill code is currently vendored or loaded.
+Anvil is an independent ForgeStack project. Its design builds on [Matt Pocock's AI Hero skills](https://www.aihero.dev/skills), including the experimental [`implement-spec` workflow](https://github.com/mattpocock/skills/blob/main/skills/in-progress/implement-spec/SKILL.md). The design reference revision is recorded in [upstream/aihero.lock.json](upstream/aihero.lock.json). Explicit skill installations record their own revision in the installation manifest; package installation does not fetch upstream skills.
 
-Anvil is MIT licensed. Future upstream imports must preserve their original license and attribution.
+Anvil is MIT licensed. Installed AI Hero skills retain their upstream MIT license and attribution.

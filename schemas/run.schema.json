@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Anvil serial run configuration",
-  "description": "Paths are relative to this file. Verification commands are trusted argv arrays executed without an implicit shell.",
+  "title": "Anvil run configuration",
+  "description": "Paths are relative to this file. Verification commands are trusted argv arrays executed without an implicit shell. Worker IDs must be unique; Anvil validates that constraint at runtime.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "repo", "tickets", "verification"],
@@ -15,6 +15,15 @@
     "codex_binary": {"$ref": "#/$defs/text", "description": "Legacy Codex executable override. Cannot be used with agent_binary or the claude-code agent."},
     "agent_timeout": {"type": "number", "exclusiveMinimum": 0, "maximum": 3600},
     "check_timeout": {"type": "number", "exclusiveMinimum": 0, "maximum": 3600},
+    "workers": {
+      "type": "array", "minItems": 1, "maxItems": 8,
+      "description": "Named worker slots. With workers configured, the top-level agent selects the independent reviewer.",
+      "items": {"$ref": "#/$defs/worker"}
+    },
+    "max_processes": {
+      "type": "integer", "minimum": 1, "maximum": 8,
+      "description": "Concurrent managed command limit, including agents, review, verification and supervisor Git commands. Requires workers and defaults to the number of worker slots."
+    },
     "verification": {
       "type": "array", "minItems": 1,
       "items": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1, "not": {"pattern": "\u0000"}}}
@@ -23,7 +32,23 @@
   "allOf": [
     {"not": {"required": ["codex_binary", "agent_binary"]}},
     {"if": {"required": ["agent"], "properties": {"agent": {"const": "claude-code"}}},
-     "then": {"not": {"required": ["codex_binary"]}}}
+     "then": {"not": {"required": ["codex_binary"]}}},
+    {"if": {"required": ["max_processes"]}, "then": {"required": ["workers"]}}
   ],
-  "$defs": {"text": {"type": "string", "minLength": 1, "pattern": "\\S", "not": {"pattern": "\u0000"}}}
+  "$defs": {
+    "text": {"type": "string", "minLength": 1, "pattern": "\\S", "not": {"pattern": "\u0000"}},
+    "id": {
+      "type": "string", "minLength": 1, "maxLength": 80,
+      "pattern": "^[A-Za-z0-9]", "not": {"pattern": "[^A-Za-z0-9._-]"}
+    },
+    "worker": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "agent"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "agent": {"type": "string", "enum": ["codex", "claude-code"]},
+        "agent_binary": {"$ref": "#/$defs/text"}
+      }
+    }
+  }
 }

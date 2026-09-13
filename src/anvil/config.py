@@ -1,4 +1,4 @@
-"""Explicit configuration for a trusted local serial run."""
+"""Explicit configuration for a trusted local agent run."""
 
 from __future__ import annotations
 
@@ -7,8 +7,52 @@ import json
 import math
 from pathlib import Path
 
-from .contracts import ContractError, _object_fields
+from .contracts import ContractError, _identifier, _object_fields
 from .planning import _reject_constant, _unique_object
+
+
+def _executable_path(binary: str, agent: str, base: Path) -> str:
+    if "/" in binary or "\\" in binary:
+        binary_path = base / Path(binary).expanduser()
+        # Claude wrappers can dispatch on their invoked symlink name.
+        return str(binary_path.absolute() if agent == "claude-code" else binary_path.resolve())
+    return binary
+
+
+@dataclass(frozen=True)
+class WorkerConfig:
+    """One named worker slot; the run's selected agent remains its reviewer."""
+
+    id: str
+    agent: str = "codex"
+    agent_binary: str | None = None
+
+    def __post_init__(self) -> None:
+        _identifier(self.id, "worker.id")
+        if self.agent not in ("codex", "claude-code"):
+            raise ContractError("worker.agent must be codex or claude-code")
+        binary = self.agent_binary
+        if binary is None:
+            binary = "codex" if self.agent == "codex" else "claude"
+        if not isinstance(binary, str) or not binary.strip() or "\0" in binary:
+            raise ContractError("worker.agent_binary must be nonempty text without NUL")
+        object.__setattr__(self, "agent_binary", binary)
+
+    @property
+    def executable(self) -> str:
+        return self.agent_binary
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "agent": self.agent, "agent_binary": self.executable}
+
+    @classmethod
+    def from_document(cls, value: object, *, base: Path) -> WorkerConfig:
+        _object_fields(value, {"id", "agent"}, {"agent_binary"}, "worker")
+        # An explicit JSON null is not the same as omitting the executable.
+        if "agent_binary" in value and value["agent_binary"] is None:
+            raise ContractError("worker.agent_binary must be nonempty text without NUL")
+        worker = cls(value["id"], value["agent"], value.get("agent_binary"))
+        return cls(worker.id, worker.agent, _executable_path(worker.executable, worker.agent, base))
 
 
 @dataclass(frozen=True)
@@ -22,6 +66,8 @@ class RunConfig:
     check_timeout: float = 300
     agent: str = "codex"
     agent_binary: str | None = None
+    workers: tuple[WorkerConfig, ...] = ()
+    max_processes: int | None = None
 
     def __post_init__(self) -> None:
         if self.agent not in ("codex", "claude-code"):
@@ -39,6 +85,18 @@ class RunConfig:
         object.__setattr__(self, "agent_binary", binary)
         if self.agent == "codex":
             object.__setattr__(self, "codex_binary", binary)
+        if (not isinstance(self.workers, tuple) or len(self.workers) > 8
+                or any(not isinstance(worker, WorkerConfig) for worker in self.workers)):
+            raise ContractError("run configuration.workers must be a tuple of at most 8 WorkerConfig entries")
+        if len({worker.id for worker in self.workers}) != len(self.workers):
+            raise ContractError("run configuration.workers contains duplicate worker IDs")
+        if self.workers:
+            limit = len(self.workers) if self.max_processes is None else self.max_processes
+            if type(limit) is not int or not 1 <= limit <= 8:
+                raise ContractError("run configuration.max_processes must be an integer between 1 and 8")
+            object.__setattr__(self, "max_processes", limit)
+        elif self.max_processes is not None:
+            raise ContractError("run configuration.max_processes requires workers")
 
     @property
     def executable(self) -> str:
@@ -60,7 +118,7 @@ class RunConfig:
     def from_document(cls, value: object, *, base: Path) -> RunConfig:
         _object_fields(value, {"version", "repo", "tickets", "verification"},
                        {"state_dir", "codex_binary", "agent", "agent_binary",
-                        "agent_timeout", "check_timeout"},
+                        "agent_timeout", "check_timeout", "workers", "max_processes"},
                        "run configuration")
         if type(value["version"]) is not int or value["version"] != 1:
             raise ContractError("run configuration.version must be the integer 1")
@@ -98,21 +156,33 @@ class RunConfig:
             raise ContractError("codex_binary is only supported for the codex agent")
         binary_field = "codex_binary" if "codex_binary" in value else "agent_binary"
         binary = text(binary_field, "codex" if agent == "codex" else "claude")
-        if "/" in binary or "\\" in binary:
-            binary_path = base / Path(binary).expanduser()
-            # Claude wrappers can dispatch on their invoked symlink name.
-            binary = str(binary_path.absolute() if agent == "claude-code" else binary_path.resolve())
+        binary = _executable_path(binary, agent, base)
+        workers = ()
+        if "workers" in value:
+            if not isinstance(value["workers"], list) or not 1 <= len(value["workers"]) <= 8:
+                raise ContractError("run configuration.workers must be an array containing 1 to 8 workers")
+            workers = tuple(WorkerConfig.from_document(worker, base=base) for worker in value["workers"])
+        if "max_processes" in value:
+            if not workers:
+                raise ContractError("run configuration.max_processes requires workers")
+            if type(value["max_processes"]) is not int or not 1 <= value["max_processes"] <= 8:
+                raise ContractError("run configuration.max_processes must be an integer between 1 and 8")
         return cls(
             repo=resolve("repo"), tickets=resolve("tickets"),
             verification=tuple(tuple(command) for command in commands),
             state_dir=resolve("state_dir", str(Path.home() / ".local/state/anvil")),
             agent=agent, agent_binary=binary, agent_timeout=seconds("agent_timeout", 900),
             check_timeout=seconds("check_timeout", 300),
+            workers=workers, max_processes=value.get("max_processes"),
         )
 
     def to_dict(self) -> dict:
-        return {"version": 1, "repo": str(self.repo), "tickets": str(self.tickets),
+        result = {"version": 1, "repo": str(self.repo), "tickets": str(self.tickets),
                 "state_dir": str(self.state_dir), "agent": self.agent,
                 "agent_binary": self.executable,
                 "verification": [list(command) for command in self.verification],
                 "agent_timeout": self.agent_timeout, "check_timeout": self.check_timeout}
+        if self.workers:
+            result.update(workers=[worker.to_dict() for worker in self.workers],
+                          max_processes=self.max_processes)
+        return result

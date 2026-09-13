@@ -1,4 +1,4 @@
-"""Planning, supervised serial execution, and durable run inspection."""
+"""Planning, supervised execution, and durable run inspection."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from anvil.planning import TaskGraph
 
 def parser() -> argparse.ArgumentParser:
     command = argparse.ArgumentParser(
-        prog="anvil", description="Plan tickets, execute them serially, and inspect saved runs."
+        prog="anvil", description="Plan tickets, coordinate coding agents, and inspect saved runs."
     )
     command.add_argument("--version", action="version", version=f"anvil {__version__}")
     subcommands = command.add_subparsers(dest="command", required=True)
@@ -33,17 +33,86 @@ def parser() -> argparse.ArgumentParser:
     check.add_argument("--agent", choices=AGENT_NAMES, default="codex")
     check.add_argument("--agent-binary", help="Trusted agent executable name or path.")
     check.add_argument("--json", action="store_true", help="Print JSON output.")
-    run = subcommands.add_parser("run", help="Execute a trusted run configuration serially.")
+    run = subcommands.add_parser("run", help="Execute a trusted serial or worker-pool configuration.")
     run.add_argument("config", type=Path)
     run.add_argument("--json", action="store_true", help="Print the final run report as JSON.")
     status = subcommands.add_parser("status", help="Read a saved run directory without resuming it.")
     status.add_argument("run_dir", type=Path)
     status.add_argument("--json", action="store_true", help="Print the saved state as JSON.")
+    skills = subcommands.add_parser("skills", help="Install, update, or inspect managed agent skills.")
+    skill_actions = skills.add_subparsers(dest="skill_action", required=True)
+    for action, help_text in (
+        ("install", "Install AI Hero skills for Codex and Claude Code."),
+        ("update", "Update a recorded AI Hero skill installation."),
+        ("status", "Inspect a recorded AI Hero skill installation without changing it."),
+    ):
+        skill_action = skill_actions.add_parser(action, help=help_text)
+        skill_action.add_argument("source", choices=("aihero",))
+        scope = skill_action.add_mutually_exclusive_group()
+        scope.add_argument("--repo", type=Path, help="Target repository; defaults to the current directory.")
+        scope.add_argument("--global", dest="global_scope", action="store_true",
+                           help="Use the user's global agent skill directories.")
+        skill_action.add_argument("--json", action="store_true", help="Print JSON output.")
+        if action in ("install", "update"):
+            skill_action.add_argument("--ref", default="main", help="Upstream Git revision; defaults to main.")
+            skill_action.add_argument("--dry-run", action="store_true",
+                                      help="Preview the installation changes without applying them.")
+        if action == "install":
+            skill_action.add_argument("--agent", choices=("both", *AGENT_NAMES), default="both",
+                                      help="Agent skill directories to install into; defaults to both.")
+            skill_action.add_argument("--skill", action="append", default=[], metavar="NAME",
+                                      help="Select an upstream skill; repeat to select multiple skills.")
+            skill_action.add_argument("--include-experimental", action="store_true",
+                                      help="Include skills from the upstream experimental directory.")
     return command
+
+
+def _skill_command(arguments: argparse.Namespace) -> int:
+    from . import skill_management
+
+    try:
+        scope = skill_management.scope_for(arguments.repo, global_scope=arguments.global_scope)
+        if arguments.skill_action == "install":
+            agents = AGENT_NAMES if arguments.agent == "both" else (arguments.agent,)
+            result = skill_management.install(
+                scope, agents=agents, ref=arguments.ref, names=tuple(arguments.skill),
+                include_experimental=arguments.include_experimental, dry_run=arguments.dry_run,
+            )
+        elif arguments.skill_action == "update":
+            result = skill_management.update(scope, ref=arguments.ref, dry_run=arguments.dry_run)
+        else:
+            result = skill_management.status(scope)
+    except (ValueError, OSError) as exc:
+        if arguments.json:
+            print(json.dumps({"error": str(exc)}))
+        else:
+            print(f"anvil: {exc}", file=sys.stderr)
+        return 2
+    if arguments.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"AI Hero skills: {result['status']}")
+        if result.get("revision"):
+            print(f"Revision: {result['revision']}")
+        print(f"Skills: {len(result.get('skills', []))}")
+        for agent, root in result.get("agents", {}).items():
+            print(f"  {agent}: {root}")
+        if result.get("manifest"):
+            print(f"Manifest: {result['manifest']}")
+        if result.get("changes"):
+            changes = result["changes"]
+            print(f"Changes: {len(changes.get('added', []))} added, "
+                  f"{len(changes.get('updated', []))} updated, "
+                  f"{len(changes.get('removed', []))} removed")
+        for conflict in result.get("conflicts", []):
+            print(f"Conflict: {conflict}")
+    return 1 if result["status"] == "modified" else 0
 
 
 def main(argv: list[str] | None = None) -> int:
     arguments = parser().parse_args(argv)
+    if arguments.command == "skills":
+        return _skill_command(arguments)
     if arguments.command == "doctor":
         try:
             agent = probe_agent(arguments.agent, arguments.agent_binary)
@@ -56,8 +125,9 @@ def main(argv: list[str] | None = None) -> int:
         git = shutil.which("git")
         result = {
             "version": __version__,
-            "stage": "serial-execution",
+            "stage": "coordinated-execution",
             "ticket_execution_available": os.name == "posix",
+            "worker_pools_available": os.name == "posix",
             "git": git,
             "agent": arguments.agent,
             arguments.agent: asdict(agent),
@@ -65,14 +135,14 @@ def main(argv: list[str] | None = None) -> int:
         if arguments.json:
             print(json.dumps(result, indent=2))
         else:
-            print(f"Anvil {__version__} — serial execution")
+            print(f"Anvil {__version__} — serial and coordinated worker execution")
             print(f"Git: {git or 'not found'}")
             label = "Codex" if arguments.agent == "codex" else "Claude Code"
             print(f"{label}: {agent.executable or 'not found'}")
             print(f"{label} compatibility: {'compatible' if agent.compatible else 'unavailable/incompatible'}")
             if agent.error:
                 print(f"{label} detail: {agent.error}")
-            print("Serial execution requires macOS or Linux. Skill loading and recovery are planned.")
+            print("Execution requires macOS or Linux. Skill loading and recovery are planned.")
         return 0 if git and agent.compatible and os.name == "posix" else 1
 
     if arguments.command in ("run", "status"):
@@ -81,11 +151,11 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if arguments.command == "run":
                 if os.name != "posix":
-                    raise ContractError("serial execution currently requires macOS or Linux")
-                from .execution import run_serial
+                    raise ContractError("execution currently requires macOS or Linux")
+                from .execution import run
                 from .workspaces import WorkspaceError
                 try:
-                    result = run_serial(RunConfig.load(arguments.config),
+                    result = run(RunConfig.load(arguments.config),
                                         progress=lambda message: print(message, file=sys.stderr, flush=True))
                 except WorkspaceError as exc:
                     raise ContractError(str(exc)) from exc

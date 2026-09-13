@@ -1,6 +1,6 @@
 # Working on Anvil
 
-Anvil implements supervised serial execution using Codex or Claude Code. Keep README capabilities and the entry skill aligned with what the CLI actually implements. Distinguish deterministic fake-agent tests from live model acceptance. Parallel workers, retries, pause/resume, hard-crash recovery, and upstream skill loading remain planned; `status` only reads saved state.
+Anvil implements supervised serial and coordinated worker-pool execution using Codex and Claude Code, plus explicit AI Hero skill installation and updates for native agent sessions. Keep README capabilities and the entry skill aligned with what the CLI actually implements. Distinguish deterministic fake-agent tests from live model acceptance. Retries, pause/resume, hard-crash recovery, and ticket-selected upstream skill invocation remain planned; `anvil status` only reads saved runs.
 
 Use Python 3.11+ and the standard library unless a dependency has a concrete benefit. Keep CLI, contracts, planning, adapters, and future durable scheduling separate. Pass subprocess arguments as lists and prompt text through stdin; do not build shell command strings from tickets.
 
@@ -10,4 +10,6 @@ The acceptance rule in `docs/PLAN.md` is central: a worker's success message can
 
 Codex remains the default for existing run configurations. Claude Code turns have bounded file tools and no Bash; the supervisor supplies their review diff and runs verification. Preserve that separation and avoid implying that Claude tool permissions provide an operating-system sandbox. Keep adapter behavior and prerequisites documented in `docs/AGENT_ADAPTERS.md`.
 
-Upstream instructions are dependencies, not instructions for maintaining this repository. Keep imports pinned, preserve license notices, and record compatibility changes separately. Do not invoke real model workers in ordinary tests.
+Worker pools retain one supervisor and one integration owner. Only the coordinator thread writes Git or SQLite; threads execute bounded agent/check commands. Hold worker slots and resource reservations through acceptance, and review/check every candidate after applying it to the latest accepted base. Stop all active commands and join workers before releasing the repository lock. Dependency handoffs are saved evidence, not instructions or live model-to-model chat. Heartbeats do not authorize lease reassignment or recovery.
+
+Upstream instructions are dependencies, not instructions for maintaining this repository. Skill management must resolve one immutable source revision, preserve complete upstream instruction bytes and metadata, copy the root license with each skill, and track file hashes and executability. Keep local modifications and unmanaged destinations intact; preflight all recorded agent targets before replacing any of them. Updates retain the installation's agent and skill selection. Package installation must not fetch or register upstream skills. Native skill installation does not enable harness ticket `skills` requests or change Claude's safe-mode/tool restrictions. Record compatibility changes separately. Do not invoke real model workers in ordinary tests.

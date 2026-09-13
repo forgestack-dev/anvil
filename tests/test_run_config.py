@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from anvil.config import RunConfig
+from anvil.config import RunConfig, WorkerConfig
 from anvil.contracts import ContractError
 
 
@@ -229,6 +229,95 @@ class RunConfigTests(unittest.TestCase):
         serialized["verification"][0].append("changed")
         self.assertEqual(config.verification, (("check", "--all"),))
         self.assertEqual(document, original)
+
+    def test_worker_pool_keeps_reviewer_selection_and_defaults_process_limit(self):
+        document = configuration() | {
+            "agent": "claude-code", "agent_binary": "reviewer-claude",
+            "workers": [{"id": "implementation", "agent": "codex"},
+                        {"id": "tests", "agent": "claude-code"}],
+        }
+        config = self.parse(document)
+        self.assertEqual((config.agent, config.executable), ("claude-code", "reviewer-claude"))
+        self.assertEqual(config.workers, (WorkerConfig("implementation"),
+                                         WorkerConfig("tests", "claude-code")))
+        self.assertEqual([worker.executable for worker in config.workers], ["codex", "claude"])
+        self.assertEqual(config.max_processes, 2)
+        self.assertEqual(self.parse(config.to_dict()), config)
+        document["workers"][0]["id"] = "changed"
+        serialized = config.to_dict()
+        serialized["workers"][0]["agent_binary"] = "changed"
+        self.assertEqual(config.workers[0], WorkerConfig("implementation"))
+        self.assertEqual(self.parse(configuration()).workers, ())
+        self.assertIsNone(self.parse(configuration()).max_processes)
+        self.assertNotIn("workers", self.parse(configuration()).to_dict())
+        self.assertNotIn("max_processes", self.parse(configuration()).to_dict())
+
+    def test_worker_paths_resolve_from_config_and_preserve_claude_alias(self):
+        target = self.root / "tools" / "nested"
+        target.mkdir(parents=True)
+        (target.parent / "dispatch").write_text("intended executable")
+        (self.root / "linked-tools").symlink_to(target, target_is_directory=True)
+        alias = self.root / "claude-wrapper"
+        alias.symlink_to(target.parent / "dispatch")
+        document = configuration() | {"workers": [
+            {"id": "codex", "agent": "codex", "agent_binary": "./claude-wrapper"},
+            {"id": "claude", "agent": "claude-code", "agent_binary": "./claude-wrapper"},
+            {"id": "traversal", "agent": "claude-code", "agent_binary": "./linked-tools/../dispatch"},
+            {"id": "lookup", "agent": "claude-code", "agent_binary": "custom-claude"},
+        ]}
+        config_path = self.root / "run.json"
+        config_path.write_text(json.dumps(document))
+        config = RunConfig.load(config_path)
+        self.assertEqual(config.workers[0].executable, str(target.parent / "dispatch"))
+        self.assertEqual(config.workers[1].executable, str(alias))
+        self.assertEqual(Path(config.workers[2].executable).read_text(), "intended executable")
+        self.assertEqual(config.workers[3].executable, "custom-claude")
+        self.assertEqual(RunConfig.from_document(config.to_dict(), base=Path("/elsewhere")), config)
+
+    def test_worker_pool_rejects_malformed_slots_and_duplicate_ids(self):
+        invalid = [None, "codex", {}, [], [{"id": "a"}], [{"agent": "codex"}],
+                   [None], ["codex"], [{"id": "a", "agent": "codex", "unknown": True}],
+                   [{"id": "a", "agent": "claude"}],
+                   [{"id": "a", "agent": "codex", "codex_binary": "codex"}],
+                   [{"id": "a", "agent": "codex"}, {"id": "a", "agent": "claude-code"}],
+                   [{"id": str(index), "agent": "codex"} for index in range(9)]]
+        for field, values in (("id", [None, True, [], "", " ", "a/b", "x" * 81, "a\n"]),
+                              ("agent", [None, True, [], "", "Claude", "claude"]),
+                              ("agent_binary", [None, True, [], "", " \n", "bad\0binary"])):
+            invalid.extend([[{"id": "a", "agent": "codex"} | {field: value}] for value in values])
+        for workers in invalid:
+            with self.subTest(workers=workers), self.assertRaises(ContractError):
+                self.parse(configuration() | {"workers": workers})
+
+    def test_process_limits_are_bounded_strict_integers_and_require_workers(self):
+        pool = configuration() | {"workers": [{"id": "one", "agent": "codex"}]}
+        for limit in (None, False, True, 0, -1, 9, 1.0, "2", [], {}, 10**400):
+            with self.subTest(limit=limit), self.assertRaises(ContractError):
+                self.parse(pool | {"max_processes": limit})
+        for limit in (1, 2, 8):
+            with self.subTest(limit=limit):
+                self.assertEqual(self.parse(pool | {"max_processes": limit}).max_processes, limit)
+                with self.assertRaisesRegex(ContractError, "requires workers"):
+                    self.parse(configuration() | {"max_processes": limit})
+        maximum = self.parse(configuration() | {"workers": [
+            {"id": str(index), "agent": "codex"} for index in range(8)
+        ]})
+        self.assertEqual(maximum.max_processes, 8)
+
+    def test_direct_worker_pool_construction_validates_and_round_trips(self):
+        paths = (self.root / "repo", self.root / "tickets.json", (("check",),), self.root / "state")
+        workers = (WorkerConfig("codex-worker"), WorkerConfig("claude-worker", "claude-code"))
+        config = RunConfig(*paths, workers=workers, max_processes=1)
+        self.assertEqual(self.parse(config.to_dict()), config)
+        for fields in ({"workers": [workers[0]]}, {"workers": ("codex",)},
+                       {"workers": workers * 2}, {"workers": workers, "max_processes": True},
+                       {"workers": workers, "max_processes": 0}, {"max_processes": 1}):
+            with self.subTest(fields=fields), self.assertRaises(ContractError):
+                RunConfig(*paths, **fields)
+        for fields in ({"id": "../escape"}, {"id": "valid", "agent": "claude"},
+                       {"id": "valid", "agent_binary": " \n"}):
+            with self.subTest(fields=fields), self.assertRaises(ContractError):
+                WorkerConfig(**fields)
 
 
 if __name__ == "__main__":

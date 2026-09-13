@@ -24,6 +24,14 @@ class VerificationFailure(RuntimeError):
         self.records = records
 
 
+def run(config: RunConfig, *, progress=None) -> dict:
+    """Select the configured scheduler while keeping serial inputs compatible."""
+    if config.workers:
+        from .parallel import run_parallel
+        return run_parallel(config, progress=progress)
+    return run_serial(config, progress=progress)
+
+
 def verify(config: RunConfig, workspace: Path, artifacts: Path) -> list[dict]:
     artifacts.mkdir(parents=True, exist_ok=False)
     records = []
@@ -99,7 +107,11 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
     """
     # Validate direct API callers through the same contract as configuration files.
     config = RunConfig.from_document(config.to_dict(), base=Path.cwd())
+    if config.workers:
+        raise ContractError("worker pools require run() or run_parallel(), not run_serial()")
     graph = TaskGraph.load(config.tickets)
+    if any(task.worker is not None for task in graph.tasks):
+        raise ContractError("ticket worker assignments require a workers configuration")
     if any(task.skills for task in graph.tasks):
         raise ContractError("skill resolution is not implemented; remove skill requests or use planning only")
     repo = Repository(config.repo)

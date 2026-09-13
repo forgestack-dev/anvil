@@ -1,6 +1,8 @@
 # Agent adapters
 
-Choose one agent per run with `agent: "codex"` or `agent: "claude-code"`. Both use the same ticket contracts, separate implementation and review turns, managed Git worktrees, acceptance checks, and persisted state. Existing configurations default to Codex. Use `agent_binary` for a custom executable; the legacy `codex_binary` setting applies only to Codex and cannot accompany `agent_binary`.
+Choose `agent: "codex"` or `agent: "claude-code"` for serial implementation and review. A `workers` pool can combine both agents; then the top-level `agent` selects the independent reviewer and each worker selects its own implementation agent. Both use the same ticket contracts, managed Git worktrees, acceptance checks, and persisted state. Existing configurations default to serial Codex. Use `agent_binary` for a custom executable; the legacy `codex_binary` setting applies only to the top-level Codex selection and cannot accompany `agent_binary`.
+
+Pool runs locate every agent entrypoint before dispatch and share process capacity and cancellation across all managed commands. Each worker owns a separate worktree; one integration owner applies candidates to the current accepted branch and reviews/checks the resulting commit. See [worker coordination](PARALLEL_EXECUTION.md) for scheduling, shared resources, and dependency handoffs.
 
 `anvil doctor --agent <agent>` probes the selected CLI's version and required flags without authenticating or requesting a model response. For a custom executable, add `--agent-binary /path/to/executable`. A successful probe establishes local CLI compatibility, not working account access. Anvil uses the CLI's configured account and model; it does not pass a model override or permission bypass. Subprocesses do not inherit desktop-only tools or connected apps.
 
