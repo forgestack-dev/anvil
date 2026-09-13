@@ -1,14 +1,14 @@
 # Anvil — build plan
 
-Status: serial execution is implemented and accepted through a live two-ticket exercise. JSON tickets now run through isolated Codex implementation, read-only review of the exact integration revision, required checks, a managed local branch, and a SQLite evidence ledger. `anvil status` reads saved runs; it does not resume them. See [ROADMAP.md](ROADMAP.md) for milestone progress, [VALIDATION.md](VALIDATION.md) for evidence, and [README.md](../README.md) for supported commands and configuration.
+Status: serial execution and coordinated mixed Codex/Claude worker pools are implemented. Codex serial acceptance was established through a live two-ticket exercise; mixed pools have deterministic process/Git tests, not a recorded live model acceptance run. One supervisor owns dispatch, resource reservations, dependency handoffs, and review/checks of each exact integration revision on the latest accepted base. `anvil status` reads saved runs; it does not resume them. See [ROADMAP.md](ROADMAP.md), [VALIDATION.md](VALIDATION.md), and [README.md](../README.md) for supported capabilities and evidence.
 
-The remainder describes the full target design. Current execution is one attempt per ticket on macOS/Linux; a blocker or terminal failure stops the whole serial run. Parallelism, retries, pause/resume, crash recovery, wide-refactor groups, Markdown intake, and upstream skill loading remain planned. Nonempty skill requests are rejected. Verification commands are trusted configuration executed directly on the host. An application-repository pilot follows acceptance of the serial milestone.
+The remainder describes the full target design. Current execution is one attempt per ticket on macOS/Linux; a blocker or terminal failure stops the whole run and cancels active peers. Retries, pause/resume, crash recovery, multi-ticket atomic staging groups, Markdown intake, and upstream skill loading remain planned. Exclusive tickets and declared resource labels serialize known overlapping work. Nonempty skill requests are rejected. Verification commands are trusted configuration executed directly on the host. See [implemented coordination](PARALLEL_EXECUTION.md) for the pool contract and its limits.
 
 ## Recommendation
 
 Build `anvil`: one discoverable entry skill backed by a small local executable runtime and a versioned library of AI Hero skills. The skill provides the user interface and engineering guidance. The runtime enforces scheduling, exclusive task ownership, persistence, process limits, and integration.
 
-Start with a single host and one Git repository per run. Use Python with SQLite for a compact runtime, and Codex CLI as the first agent adapter. Keep the adapter boundary explicit so Claude Code or another agent can be added without rewriting scheduling.
+Start with a single host and one Git repository per run. Use Python with SQLite for a compact runtime. Codex and Claude Code adapters now share the serial execution contract; keep the adapter boundary explicit as scheduling grows.
 
 One worker and several parallel workers use the same execution model. Dependencies create successive waves of work. Multiple workstreams in the same repository share a coordinator and integration queue, including cross-workstream dependencies.
 
@@ -114,7 +114,7 @@ The runtime is a process, so continued unattended execution requires its host to
 
 ## Agent adapter
 
-The first adapter launches the locally installed Codex CLI, captures structured events and result schemas, and records session IDs when useful. The installed CLI exposes noninteractive execution, JSON event output, structured final output, and resume. These are also documented in the [official noninteractive guide](https://learn.chatgpt.com/docs/non-interactive-mode).
+The adapters launch a locally installed Codex or Claude Code CLI, capture structured events, and validate final results. The selected agent handles both implementation and independent review for a run. Codex remains the default for existing configurations. Claude turns use a restricted file-tool set; the supervisor supplies their review diff and executes checks. See [agent behavior](AGENT_ADAPTERS.md) for the implemented contracts and their different permission boundaries.
 
 The adapter contract covers capability checks, launch, events, structured result, cancellation, and optional resume. Keep sandbox and approval behavior consistent with the selected runtime and existing authorization. The CLI adapter supplies fresh execution contexts; desktop-only tools and connected apps must not be assumed to exist inside subprocesses.
 
@@ -125,7 +125,7 @@ The adapter contract covers capability checks, launch, events, structured result
 3. **Parallel execution and coordination.** Add atomic claims, per-attempt worktrees, dependency scheduling, durable messages, global process limits, and serialized integration. Demonstrate independent slices running concurrently and dependent work waiting correctly.
 4. **Interruption and recovery.** Add heartbeat expiry, stale-result rejection, pause/resume/stop, timeouts, retries, rate-limit backoff, and Git/state reconciliation. Verify recovery at each externally visible transition.
 5. **Full catalog validation and packaging.** Exercise skill discovery, dependency loading, explicit invocation, human-decision paths, and missing capabilities. Run an independent skill evaluation and a real end-to-end burndown. Package the skill and runtime with concise setup and usage instructions.
-6. **Extensions after the core works.** Add the preferred live tracker and another agent adapter. Consider plugin distribution, remote execution, or a visual dashboard when there is a demonstrated need.
+6. **Extensions after the core works.** Add the preferred live tracker and further agent adapters as needed; Claude Code is already supported. Consider plugin distribution, remote execution, or a visual dashboard when there is a demonstrated need.
 
 ## Required behavioral tests
 
@@ -147,4 +147,4 @@ Use deterministic fake-agent tests for scheduling and crash handling, real Git f
 
 ## Decisions left for implementation
 
-The first agent is Codex, with adapters for other agents later. A target project and actual spec/ticket set are needed for the first live trial. A live issue tracker, publishing behavior, and remote execution are optional extensions and do not block building the local core.
+Codex and Claude Code are supported. An application-repository pilot and its actual spec/ticket set remain to be selected. A live issue tracker, publishing behavior, and remote execution are optional extensions and do not block building the local core.

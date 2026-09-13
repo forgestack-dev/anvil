@@ -1,17 +1,20 @@
-"""Create an opt-in live Codex exercise; this script never starts an agent.
+"""Create an opt-in live agent exercise; this script never starts an agent.
 
-Usage: python tests/create_live_fixture.py /absolute/new/directory
+Usage: python tests/create_live_fixture.py /absolute/new/directory [--agent claude-code]
 Then run the printed configuration using anvil run. Model usage is intentional
 and separate from the ordinary unittest suite.
 """
 
+import argparse
 import json
 from pathlib import Path
 import subprocess
 import sys
 
 
-def create(destination: Path) -> Path:
+def create(destination: Path, *, agent: str = "codex") -> Path:
+    if agent not in ("codex", "claude-code"):
+        raise ValueError("agent must be codex or claude-code")
     destination = destination.expanduser().resolve()
     destination.mkdir(parents=True, exist_ok=False)
     repo = destination / "repo"
@@ -20,6 +23,8 @@ def create(destination: Path) -> Path:
         "# Fixture instructions\n\nUse Python's standard library only. "
         "Add unittest coverage for public behavior and retain existing tests. "
         "The implementation lives in labels.py. Run python3 -m unittest discover -s tests -v. "
+        "Use ASCII Unicode escape sequences in Python literals when exact non-ASCII code points "
+        "matter to a test; visually similar glyphs must not change the intended input. "
         "Do not introduce dependencies, background services, or unrelated changes.\n",
         encoding="utf-8",
     )
@@ -51,6 +56,7 @@ def create(destination: Path) -> Path:
     config = destination / "run.json"
     config.write_text(json.dumps({
         "version": 1, "repo": "./repo", "tickets": "./tickets.json", "state_dir": "./runs",
+        "agent": agent,
         "verification": [[sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"]],
         "agent_timeout": 300, "check_timeout": 30,
     }, indent=2) + "\n", encoding="utf-8")
@@ -65,4 +71,8 @@ def create(destination: Path) -> Path:
 
 
 if __name__ == "__main__":
-    print(create(Path(sys.argv[1])))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("destination", type=Path)
+    parser.add_argument("--agent", choices=("codex", "claude-code"), default="codex")
+    arguments = parser.parse_args()
+    print(create(arguments.destination, agent=arguments.agent))

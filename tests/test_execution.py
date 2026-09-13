@@ -1,10 +1,13 @@
+from contextlib import chdir
 import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
+from textwrap import dedent
 import unittest
 from unittest.mock import patch
 
@@ -315,6 +318,209 @@ class SerialExecutionTests(unittest.TestCase):
                 self.assertTrue((artifact_dir / "result.json").is_file())
                 self.assertTrue((artifact_dir / "schema.json").is_file())
                 self.assertTrue((artifact_dir / "events.jsonl").is_file())
+
+    def claude_configuration(self, mode="success"):
+        binary = self.root / f"fake claude-{mode}"
+        trace = self.root / f"claude-{mode}-trace.jsonl"
+        binary.write_text(
+            f"#!{sys.executable}\n"
+            f"MODE = {mode!r}\n"
+            f"TRACE = {str(trace)!r}\n"
+            + dedent("""\
+                import json
+                from pathlib import Path
+                import subprocess
+                import sys
+
+                args = sys.argv[1:]
+                prompt = sys.stdin.read()
+                schema = json.loads(args[args.index('--json-schema') + 1])
+                read_only = 'verdict' in schema['required']
+                head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+                with Path(TRACE).open('a') as stream:
+                    stream.write(json.dumps({'argv': args, 'prompt': prompt, 'schema': schema,
+                                             'read_only': read_only, 'head': head,
+                                             'cwd': str(Path.cwd()), 'entrypoint': sys.argv[0]}) + '\\n')
+                value = Path('value.txt')
+                if read_only:
+                    result = {'verdict': 'approve', 'summary': 'Inspected candidate files',
+                              'findings': [], 'acceptance': [
+                                  {'criterion': 1, 'satisfied': True, 'evidence': 'Value inspected'}]}
+                    if MODE == 'invalid-review':
+                        result['acceptance'] = []
+                    elif MODE == 'contradictory-approve':
+                        result['findings'] = ['No actionable findings. Non-blocking nit: prefer a trailing newline.']
+                    elif MODE == 'review-rejects':
+                        result.update(verdict='request_changes', acceptance=[],
+                                      findings=['The requested behavior is missing'])
+                    elif MODE == 'review-mutates':
+                        Path('README.md').write_text('Unexpected reviewer mutation')
+                else:
+                    previous = int(value.read_text()) if value.exists() else 0
+                    value.write_text('invalid' if MODE == 'bad-check' else str(previous + 1))
+                    result = {'status': 'completed', 'summary': 'Updated value', 'blockers': [],
+                              'acceptance': [{'criterion': 1, 'evidence': 'Value updated'}]}
+                denials = [{'tool_name': 'Edit', 'tool_use_id': 'denied-review-edit',
+                            'tool_input': {}}] if read_only and MODE == 'denied-review' else []
+                print(json.dumps({'type': 'system', 'subtype': 'init'}))
+                print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False,
+                                  'permission_denials': denials, 'structured_output': result}))
+                """),
+            encoding="utf-8",
+        )
+        binary.chmod(0o755)
+        document = self.config.to_dict() | {
+            "repo": "repo", "tickets": "tickets.json", "state_dir": f"claude-state-{mode}",
+            "agent": "claude-code", "agent_binary": f"./{binary.name}",
+        }
+        config_path = self.root / f"claude-{mode}-run.json"
+        config_path.write_text(json.dumps(document), encoding="utf-8")
+        return RunConfig.load(config_path), trace
+
+    def test_claude_selected_by_configuration_completes_dependencies_with_exact_commit_evidence(self):
+        config, trace_path = self.claude_configuration()
+        result = run_serial(config)
+        self.assertEqual(result["status"], "success", result["error"])
+        self.assertEqual([task["status"] for task in result["tasks"]], ["done", "done"])
+        self.assertEqual(result["config"]["agent"], "claude-code")
+        self.assertEqual(result["config"]["agent_binary"], config.executable)
+        trace = [json.loads(line) for line in trace_path.read_text().splitlines()]
+        self.assertEqual([call["read_only"] for call in trace], [False, True, False, True])
+        expected_base = self.base
+        for number, (task, attempt) in enumerate(zip(result["tasks"], result["attempts"]), start=1):
+            worker, review = trace[2 * (number - 1):2 * number]
+            details = task["details"]
+            integrated = details["integrated_sha"]
+            self.assertEqual(attempt["base_sha"], expected_base)
+            self.assertEqual(worker["head"], expected_base)
+            self.assertEqual(review["head"], integrated)
+            self.assertEqual(details["reviewed_sha"], integrated)
+            self.assertEqual(details["verified_sha"], integrated)
+            self.assertEqual(git(self.repo, "rev-parse", f"{details['candidate_sha']}^"), expected_base)
+            self.assertEqual(git(self.repo, "show", f"{details['candidate_sha']}:value.txt"), str(number))
+            self.assertEqual(git(self.repo, "rev-parse", f"{integrated}^"), expected_base)
+            self.assertEqual(git(self.repo, "show", f"{integrated}:value.txt"), str(number))
+            self.assertIn(expected_base, worker["prompt"])
+            self.assertIn(expected_base, review["prompt"])
+            self.assertIn(integrated, review["prompt"])
+            expected_diff = git(self.repo, "diff", "--no-ext-diff", "--no-textconv", "--no-color",
+                                "--no-renames", expected_base, integrated, "--")
+            self.assertTrue(expected_diff)
+            self.assertIn(expected_diff, review["prompt"])
+            self.assertIn(f"+{number}", review["prompt"])
+            if number == 2:
+                self.assertIn("-1", review["prompt"])
+            for role, call in (("worker", worker), ("review", review)):
+                args = call["argv"]
+                tools = set(args[args.index("--tools") + 1].split(","))
+                expected_tools = {"Read", "Glob", "Grep"} | ({"Edit", "Write"} if role == "worker" else set())
+                self.assertEqual(tools, expected_tools)
+                self.assertIn("Bash", args[args.index("--disallowedTools") + 1].split(","))
+                self.assertEqual(args[args.index("--permission-mode") + 1],
+                                 "acceptEdits" if role == "worker" else "dontAsk")
+                self.assertNotIn(call["prompt"], args)
+                artifact_dir = Path(result["run_dir"]) / "artifacts" / attempt["id"] / role
+                self.assertEqual(json.loads((artifact_dir / "schema.json").read_text()), call["schema"])
+                events = [json.loads(line) for line in (artifact_dir / "events.jsonl").read_text().splitlines()]
+                normalized = json.loads((artifact_dir / "result.json").read_text())
+                self.assertEqual(events[-1]["structured_output"], normalized)
+                self.assertEqual(normalized, details["worker" if role == "worker" else "review"])
+                self.assertTrue((artifact_dir / "stderr.log").is_file())
+            transitions = [event["to_status"] for event in result["events"] if event["task_id"] == task["id"]]
+            self.assertEqual(transitions, ["running", "candidate", "reviewed", "verified", "integrating", "done"])
+            self.assertTrue(all(check["returncode"] == 0 and not check["timed_out"]
+                                for check in details["verification"]))
+            expected_base = integrated
+        self.assertEqual(git(self.repo, "rev-parse", result["branch"]), expected_base)
+        self.assertEqual(git(self.repo, "show", f"{result['branch']}:value.txt"), "2")
+        self.assertEqual(git(self.repo, "rev-parse", "HEAD"), self.base)
+        self.assertEqual(git(self.repo, "status", "--porcelain"), "")
+        self.assertFalse((self.repo / "value.txt").exists())
+        self.assertEqual(RunStore.read(Path(result["run_dir"]) / "state.sqlite"),
+                         {key: value for key, value in result.items() if key != "run_dir"})
+
+    def test_claude_configuration_preserves_selected_alias_across_dependent_tickets(self):
+        config, trace_path = self.claude_configuration("selected-alias")
+        alias = self.root / "anvil-test-claude"
+        alias.symlink_to(Path(config.executable).name)
+        shadow_directory = self.root / "shadow bin"
+        shadow_directory.mkdir()
+        shadow = shadow_directory / alias.name
+        shadow.write_text(f"#!{sys.executable}\nraise SystemExit('wrong executable selected')\n")
+        shadow.chmod(0o755)
+        git_directory = self.root / "git bin"
+        git_directory.mkdir()
+        (git_directory / "git").symlink_to(Path(shutil.which("git")).absolute())
+
+        for binary in (alias.name, f"./{alias.name}"):
+            with self.subTest(binary=binary):
+                trace_path.write_text("")
+                config_path = self.root / "selected-alias-run.json"
+                config_path.write_text(json.dumps(config.to_dict() | {"agent_binary": binary}))
+                selected_config = RunConfig.load(config_path)
+
+                def replace_search_path_after_first_ticket(message):
+                    if message == "t1: done":
+                        os.environ["PATH"] = str(shadow_directory) + os.pathsep + str(git_directory)
+
+                with chdir(self.root), patch.dict(os.environ, {"PATH": "." + os.pathsep + str(git_directory)}):
+                    result = run_serial(selected_config, progress=replace_search_path_after_first_ticket)
+                    final_search_path = os.environ["PATH"]
+
+                self.assertEqual(result["status"], "success", result["error"])
+                self.assertEqual(final_search_path, str(shadow_directory) + os.pathsep + str(git_directory))
+                self.assertEqual([task["status"] for task in result["tasks"]], ["done", "done"])
+                calls = [json.loads(line) for line in trace_path.read_text().splitlines()]
+                self.assertEqual([call["read_only"] for call in calls], [False, True, False, True])
+                self.assertEqual({call["entrypoint"] for call in calls}, {str(alias.parent.resolve() / alias.name)})
+                self.assertEqual(calls[0]["head"], self.base)
+                self.assertEqual(calls[2]["head"], result["tasks"][0]["details"]["integrated_sha"])
+                for task, review in zip(result["tasks"], calls[1::2]):
+                    details = task["details"]
+                    self.assertEqual(details["integrated_sha"], review["head"])
+                    self.assertEqual(details["reviewed_sha"], review["head"])
+                    self.assertEqual(details["verified_sha"], review["head"])
+                self.assertEqual(git(self.repo, "show", f"{result['branch']}:value.txt"), "2")
+                self.assertEqual(git(self.repo, "rev-parse", "HEAD"), self.base)
+                self.assertEqual(git(self.repo, "status", "--porcelain"), "")
+
+    def test_claude_review_and_verification_failures_preserve_branch_and_pending_dependency(self):
+        for mode in ("invalid-review", "contradictory-approve", "denied-review", "review-mutates",
+                     "review-rejects", "bad-check"):
+            with self.subTest(mode=mode):
+                config, trace_path = self.claude_configuration(mode)
+                result = run_serial(config)
+                expected_status = "blocked" if mode == "review-rejects" else "failed"
+                self.assertEqual(result["status"], expected_status)
+                self.assertEqual([task["status"] for task in result["tasks"]], [expected_status, "pending"])
+                self.assertEqual(len(result["attempts"]), 1)
+                self.assertIsNone(result["tasks"][1]["attempt_id"])
+                calls = [json.loads(line) for line in trace_path.read_text().splitlines()]
+                self.assertEqual([call["read_only"] for call in calls], [False, True])
+                self.assertTrue(result["error"])
+                details = result["tasks"][0]["details"]
+                self.assertIn("candidate_sha", details)
+                self.assertNotIn("integrated_sha", details)
+                self.assertNotIn("verified_sha", details)
+                if mode == "bad-check":
+                    self.assertEqual(details["reviewed_sha"], calls[1]["head"])
+                    self.assertNotEqual(details["verification"][0]["returncode"], 0)
+                else:
+                    self.assertNotIn("reviewed_sha", details)
+                if mode == "contradictory-approve":
+                    review_path = (Path(result["run_dir"]) / "artifacts" / result["attempts"][0]["id"]
+                                   / "review" / "result.json")
+                    review = json.loads(review_path.read_text())
+                    self.assertEqual(review["verdict"], "approve")
+                    self.assertEqual([item["satisfied"] for item in review["acceptance"]], [True])
+                    self.assertEqual(review["findings"],
+                                     ["No actionable findings. Non-blocking nit: prefer a trailing newline."])
+                    self.assertIn("contradicts", result["error"])
+                self.assertEqual(git(self.repo, "rev-parse", result["branch"]), self.base)
+                self.assertEqual(git(self.repo, "rev-parse", "HEAD"), self.base)
+                self.assertEqual(git(self.repo, "status", "--porcelain"), "")
+                self.assertFalse((self.repo / "value.txt").exists())
+                self.assertEqual(json.loads((Path(result["run_dir"]) / "report.json").read_text()), result)
 
     def test_case_distinct_ticket_ids_use_distinct_workspaces_and_evidence(self):
         document = json.loads(self.tickets.read_text())

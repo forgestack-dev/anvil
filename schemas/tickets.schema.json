@@ -30,6 +30,16 @@
         "id": {"$ref": "#/$defs/id"},
         "title": {"$ref": "#/$defs/text"},
         "objective": {"$ref": "#/$defs/text"},
+        "worker": {"$ref": "#/$defs/id", "description": "Pin this task to a configured worker ID; omission allows any available worker."},
+        "resources": {
+          "type": "array", "uniqueItems": true,
+          "description": "Named resources held from dispatch through integration. Tasks sharing a resource cannot overlap.",
+          "items": {"$ref": "#/$defs/id"}
+        },
+        "exclusive": {
+          "type": "boolean", "default": false,
+          "description": "Run without any other active task, holding exclusivity through integration."
+        },
         "depends_on": {
           "type": "array",
           "uniqueItems": true,

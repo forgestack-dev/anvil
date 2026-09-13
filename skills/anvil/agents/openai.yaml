@@ -1,4 +1,4 @@
 interface:
   display_name: "Anvil"
-  short_description: "Run and inspect supervised serial ticket work"
-  default_prompt: "Use $anvil to inspect my tickets and run configuration, execute the authorized work serially, and report the verified local branch and saved run state."
+  short_description: "Coordinate coding agents and inspect ticket work"
+  default_prompt: "Use $anvil to inspect my tickets and run configuration, coordinate the authorized agents, and report the verified local branch and saved run state."

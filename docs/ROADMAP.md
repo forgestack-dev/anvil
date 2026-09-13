@@ -21,12 +21,34 @@
 
 This version attempts each ticket once and stops the whole run on a blocker or failure. It does not resolve upstream skills, resume saved runs, or reconcile hard crashes. Verification commands are trusted argument arrays executed directly on the host. Completion means a verified local branch, not publication or tracker closeout.
 
-## 2. Parallel execution
+## 1a. Claude Code adapter — implemented
 
-- Atomic claims, ownership tokens, heartbeat handling, and global process limits.
-- Dependency-driven dispatch and durable worker messages.
-- Single integration owner and explicit wide-refactor groups.
-- Prove overlapping workers cannot corrupt task state or each other's workspaces.
+- Select Codex or Claude Code per run, preserving Codex as the default and reading legacy Codex configurations.
+- Probe the selected CLI and custom executable with `anvil doctor`.
+- Run Claude Code with structured output, finite turns, file tools, and separate review; the supervisor provides the diff and runs checks.
+- Preserve the same evidence, process lifecycle, and Git integration gates for both agents.
+- Document Claude's customization and permission boundaries in [agent behavior](AGENT_ADAPTERS.md).
+
+This adapter does not add parallel execution, upstream skill loading, or recovery. The serial milestone's live Codex exercise does not establish live Claude acceptance; consult [validation evidence](VALIDATION.md) for the recorded scope.
+
+## 2. Parallel execution — implemented, live acceptance pending
+
+- Named Codex/Claude worker pools, atomic claims, ownership tokens, recorded heartbeats, and shared managed-command limits.
+- Dependency-driven dispatch and durable coordinator messages with accepted dependency handoffs.
+- Single integration owner, declared resource reservations, and exclusive tickets.
+- Deterministic real-process/Git tests for overlapping workers, stale-base integration, failures, and interruption.
+
+The implemented contract is in [PARALLEL_EXECUTION.md](PARALLEL_EXECUTION.md). This milestone does not provide live conversational messaging, lease reassignment, multi-ticket atomic staging groups, or hard-crash recovery. A real mixed-agent acceptance exercise remains pending.
+
+## 2a. Native AI Hero skill management — implemented
+
+- Install complete upstream skill directories for Codex, Claude Code, or both in repository or global scope.
+- Resolve a source reference once to an exact commit; preserve instruction bytes, metadata, supporting files, executable flags, and upstream license notices.
+- Default to `engineering` and `productivity`; support explicit skill selection and opt-in experimental skills.
+- Record installation selection, revision, and file hashes; update every recorded agent target together after checking for local changes and destination conflicts.
+- Preview install/update changes and inspect installed files without network access through `skills status`.
+
+These are native skills for ordinary agent sessions. Harness ticket `skills` invocation and catalog-wide behavior compatibility remain part of milestone 4. Install/update previews fetch the source; only status is offline. Normal application errors roll back, while hard termination across multiple skill directories can require manual inspection. See [UPSTREAM.md](UPSTREAM.md).
 
 ## 3. Recovery
 
@@ -37,7 +59,7 @@ This version attempts each ticket once and stops the whole run on a blocker or f
 
 ## 4. Full skill integration
 
-- Discover complete, pinned upstream skill directories and supporting files.
+- Connect the managed, pinned upstream skill catalog to per-ticket execution.
 - Resolve invocation requirements, human decisions, and missing tools.
 - Record skill use and compatibility adaptations per attempt.
 - Add Markdown intake and spec-to-ticket preparation.
@@ -47,5 +69,5 @@ This version attempts each ticket once and stops the whole run on a blocker or f
 
 - Pilot Anvil in an application repository after the serial milestone is accepted.
 - Add the preferred live issue tracker and external closeout semantics.
-- Add another coding-agent adapter.
+- Add further coding-agent adapters based on usage.
 - Evaluate plugin distribution and remote execution based on usage.
