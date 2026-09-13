@@ -39,11 +39,80 @@ def parser() -> argparse.ArgumentParser:
     status = subcommands.add_parser("status", help="Read a saved run directory without resuming it.")
     status.add_argument("run_dir", type=Path)
     status.add_argument("--json", action="store_true", help="Print the saved state as JSON.")
+    skills = subcommands.add_parser("skills", help="Install, update, or inspect managed agent skills.")
+    skill_actions = skills.add_subparsers(dest="skill_action", required=True)
+    for action, help_text in (
+        ("install", "Install AI Hero skills for Codex and Claude Code."),
+        ("update", "Update a recorded AI Hero skill installation."),
+        ("status", "Inspect a recorded AI Hero skill installation without changing it."),
+    ):
+        skill_action = skill_actions.add_parser(action, help=help_text)
+        skill_action.add_argument("source", choices=("aihero",))
+        scope = skill_action.add_mutually_exclusive_group()
+        scope.add_argument("--repo", type=Path, help="Target repository; defaults to the current directory.")
+        scope.add_argument("--global", dest="global_scope", action="store_true",
+                           help="Use the user's global agent skill directories.")
+        skill_action.add_argument("--json", action="store_true", help="Print JSON output.")
+        if action in ("install", "update"):
+            skill_action.add_argument("--ref", default="main", help="Upstream Git revision; defaults to main.")
+            skill_action.add_argument("--dry-run", action="store_true",
+                                      help="Preview the installation changes without applying them.")
+        if action == "install":
+            skill_action.add_argument("--agent", choices=("both", *AGENT_NAMES), default="both",
+                                      help="Agent skill directories to install into; defaults to both.")
+            skill_action.add_argument("--skill", action="append", default=[], metavar="NAME",
+                                      help="Select an upstream skill; repeat to select multiple skills.")
+            skill_action.add_argument("--include-experimental", action="store_true",
+                                      help="Include skills from the upstream experimental directory.")
     return command
+
+
+def _skill_command(arguments: argparse.Namespace) -> int:
+    from . import skill_management
+
+    try:
+        scope = skill_management.scope_for(arguments.repo, global_scope=arguments.global_scope)
+        if arguments.skill_action == "install":
+            agents = AGENT_NAMES if arguments.agent == "both" else (arguments.agent,)
+            result = skill_management.install(
+                scope, agents=agents, ref=arguments.ref, names=tuple(arguments.skill),
+                include_experimental=arguments.include_experimental, dry_run=arguments.dry_run,
+            )
+        elif arguments.skill_action == "update":
+            result = skill_management.update(scope, ref=arguments.ref, dry_run=arguments.dry_run)
+        else:
+            result = skill_management.status(scope)
+    except (ValueError, OSError) as exc:
+        if arguments.json:
+            print(json.dumps({"error": str(exc)}))
+        else:
+            print(f"anvil: {exc}", file=sys.stderr)
+        return 2
+    if arguments.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"AI Hero skills: {result['status']}")
+        if result.get("revision"):
+            print(f"Revision: {result['revision']}")
+        print(f"Skills: {len(result.get('skills', []))}")
+        for agent, root in result.get("agents", {}).items():
+            print(f"  {agent}: {root}")
+        if result.get("manifest"):
+            print(f"Manifest: {result['manifest']}")
+        if result.get("changes"):
+            changes = result["changes"]
+            print(f"Changes: {len(changes.get('added', []))} added, "
+                  f"{len(changes.get('updated', []))} updated, "
+                  f"{len(changes.get('removed', []))} removed")
+        for conflict in result.get("conflicts", []):
+            print(f"Conflict: {conflict}")
+    return 1 if result["status"] == "modified" else 0
 
 
 def main(argv: list[str] | None = None) -> int:
     arguments = parser().parse_args(argv)
+    if arguments.command == "skills":
+        return _skill_command(arguments)
     if arguments.command == "doctor":
         try:
             agent = probe_agent(arguments.agent, arguments.agent_binary)

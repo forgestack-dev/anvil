@@ -1,11 +1,11 @@
 ---
 name: anvil
-description: Prepare ticket graphs, coordinate Codex and Claude Code workers, and inspect saved runs with the ForgeStack Anvil engineering harness. Use for specification or ticket burndown and Anvil operation; check installed capabilities before execution.
+description: Prepare ticket graphs, coordinate Codex and Claude Code workers, inspect saved runs, and manage native AI Hero skills with the ForgeStack Anvil engineering harness. Use for specification or ticket burndown and Anvil operation; check installed capabilities before execution.
 ---
 
 # Anvil
 
-Use Anvil to turn a defined engineering objective into verifiable tickets and execute them serially or with a coordinated Codex/Claude Code worker pool. The runtime owns dispatch, shared-resource reservations, independent review, verification, local integration, and saved status. It does not load AI Hero skills, retry, pause/resume, or close external tickets.
+Use Anvil to turn a defined engineering objective into verifiable tickets and execute them serially or with a coordinated Codex/Claude Code worker pool. The runtime owns dispatch, shared-resource reservations, independent review, verification, local integration, and saved status. Separate skill-management commands install AI Hero skills for native agent sessions. Ticket-selected skill invocation, retry, pause/resume, and external ticket closure remain unsupported.
 
 ## Prepare or inspect work
 
@@ -14,6 +14,14 @@ Read the supplied spec or tickets and project instructions. Preserve scope, iden
 When adapting source material to JSON, use the shipped schema and retain the source relationship in the surrounding plan. Check `anvil --help` and `anvil --version`, then run `anvil validate <tickets.json>` and `anvil plan <tickets.json> --json`. These commands inspect input without implementing it. Dependency waves show possible parallelism; a configured worker pool also respects worker assignments and declared resource reservations.
 
 If Anvil is unavailable, inspect the checkout or installation instructions supplied by the user. Do not assume a checkout path, install an unrelated package named `anvil`, or register the entry skill in another project automatically.
+
+## Manage native AI Hero skills
+
+For installation, update, or inspection, read the native skill-management section of [references/workflow.md](references/workflow.md). Use `anvil skills install aihero`, `update aihero`, or `status aihero` with the user's repository or global scope. Installation defaults to both agents and stable engineering/productivity skills; preserve requested agent and skill selections, and require explicit experimental opt-in. Updates retain the recorded selection.
+
+Use `--dry-run` when a change preview is requested or useful; it fetches upstream files but leaves the installation unchanged. `skills status` is offline. Report the selected revision, destinations, and any conflicts. Preserve local changes and retained backups when a conflict or interrupted update needs inspection. Do not bypass the manager with forced copying or delete an installation to change its selection without explicit scope to do so.
+
+Native installation does not enable ticket `skills` requests or prove every skill behaves correctly in both agents. Anvil's Claude worker keeps safe mode and its disabled Skill tool; do not claim that installing native skills changes that execution boundary.
 
 ## Execute authorized work
 

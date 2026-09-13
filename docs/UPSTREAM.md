@@ -1,21 +1,99 @@
 # AI Hero integration
 
-Upstream repository: https://github.com/mattpocock/skills
+Anvil downloads skills from [mattpocock/skills](https://github.com/mattpocock/skills),
+the source of the [AI Hero catalog](https://www.aihero.dev/skills). Installation
+is an explicit operation after installing Anvil; Python package installation
+does not fetch upstream content or register native skills.
 
-Catalog: https://www.aihero.dev/skills
+## Install, inspect, and update
 
-The reference in `upstream/aihero.lock.json` identifies a verified source commit. It is a reference-only record: this scaffold does not download, install, load, or execute upstream skills, and does not claim compatibility testing against the catalog.
+```sh
+anvil skills install aihero --repo /path/to/project
+anvil skills status aihero --repo /path/to/project --json
+anvil skills update aihero --repo /path/to/project --dry-run
+anvil skills update aihero --repo /path/to/project
+```
 
-## Integration requirements
+The manager supports macOS/Linux. Repository scope uses Git to find the working
+tree root, including from a subdirectory; it defaults to the current repository.
+Use `--global` instead of `--repo` for user-wide installation. Both Codex and
+Claude Code are selected by default. Installation can select one agent with
+`--agent codex` or `--agent claude-code`.
 
-Discover all skill directories and include their referenced resources. Record per-file content hashes when imports are implemented. Do not automatically update an active run's source snapshot.
+| Scope | Codex skills | Claude Code skills | Manifest |
+|---|---|---|---|
+| Repository | `<repo>/.agents/skills` | `<repo>/.claude/skills` | `<repo>/.anvil/aihero.json` |
+| Global | `~/.agents/skills` | `~/.claude/skills` | `~/.local/state/anvil/skills/aihero.json` |
 
-Preserve user-invoked versus model-invoked behavior and human decision requirements. A user can provide settled decisions and authorization up front; missing answers must not be fabricated. Keep harness-owned workflow adaptations separate from upstream files.
+The native discovery locations are documented by
+[Codex](https://learn.chatgpt.com/docs/build-skills) and
+[Claude Code](https://code.claude.com/docs/en/skills). The manager writes separate
+copies of each complete skill directory into the selected agent roots.
 
-The experimental `skills/in-progress/implement-spec/SKILL.md` provides the reference pattern for graph scheduling, isolated implementers, and integration. Experimental content can change or disappear, so pin its revision.
+Default selection includes `skills/engineering` and `skills/productivity`.
+`--include-experimental` also includes `skills/in-progress`. Repeat `--skill NAME`
+to choose a named subset, including skills from `skills/misc`; experimental
+skills still require explicit opt-in even when selected by name. A subset
+installs only those names. It does not automatically install other skills or
+tools referenced by their instructions.
 
-The stable implementation and review skills need a compatibility adjustment: review must receive the full candidate, including work that began uncommitted, and a pinned base revision. Review findings do not themselves repair or validate a change.
+Install and update accept `--ref`, defaulting to `main`. A reference is resolved
+once to an exact commit SHA, and the downloaded archive uses that SHA. The
+manifest records the commit, original agent/skill selection, each file's content
+hash, and its executable flag. `--dry-run` fetches and checks the selected source
+and previews changes without replacing installed files or writing a manifest.
+`status` reads local files and the saved manifest without network access; it does
+not check whether upstream has a newer revision. All three commands accept
+`--json`.
 
-Honor scoped run permissions around tracker comments, ticket closure, commits, PRs, and human-facing setup workflows. The orchestrator owns completion semantics and must distinguish code integrated locally, ready for review, merged, and externally closed.
+`update` applies the recorded agent and skill selection to the requested source
+revision. It updates all recorded destinations together and does not change
+the selection itself. Local modifications, missing managed files, or unmanaged
+destination conflicts abort replacement for all agents. An unchanged source and
+installation require no replacement. Normal application errors roll back the
+operation. Replacement across multiple directories is not atomic against a hard
+termination: inspect reported mismatches and preserve any retained staging
+backups before deciding how to recover. There is no force, adoption, uninstall,
+or in-place agent/selection-change command.
 
-The upstream project is MIT licensed. Preserve its copyright and permission notice alongside any imported files. Anvil's license does not replace the upstream license.
+## Preserved content and compatibility
+
+The installer preserves upstream instruction bytes, frontmatter, metadata, and
+supporting files inside each selected skill directory. It makes no agent-specific
+port or behavioral transformation. It also copies the upstream root license as
+`LICENSE.aihero` into every installed skill directory, retaining its copyright
+and permission notice. Anvil's own MIT license does not replace that notice.
+
+At the design reference commit
+`3cca18b368ae95cdbdebbff572ccafa662551015`, the source contains 25 stable skills,
+8 experimental skills, and 4 miscellaneous skills. The stable default selection
+covers the stable catalog's cross-skill references at that revision; subsets may
+omit referenced skills. [upstream/aihero.lock.json](../upstream/aihero.lock.json)
+is the design reference, while each installation's manifest is the authority for
+its installed revision. Catalog counts and available names can change upstream.
+
+These commands make skills available to normal Codex and Claude Code sessions
+under their native invocation rules. Preserving upstream content does not prove
+that every skill's expected tools, permissions, human decisions, or behavior
+work in both agents. The installer does not execute upstream scripts or invoke
+a model to certify compatibility.
+
+## Remaining harness integration
+
+Nonempty ticket `skills` requests remain rejected by the executor. Anvil's
+Claude adapter still uses safe mode with native skill loading and the Skill tool
+disabled. Native installation does not alter those worker permissions. Resolving
+skills for bounded ticket attempts and recording their use remain planned.
+
+Future harness adaptations must preserve user-invoked versus model-invoked
+behavior, human decision requirements, and source snapshots. Keep adaptations
+separate from upstream files. The experimental
+`skills/in-progress/implement-spec/SKILL.md` remains a reference for graph
+scheduling, isolated implementers, and integration.
+
+Review must receive the full candidate, including work that began uncommitted,
+and a pinned base revision. Review findings do not repair or validate a change
+by themselves. The orchestrator retains its completion rules and scoped
+permissions for tracker comments, ticket closure, commits, PRs, and setup. It
+must distinguish work integrated locally, ready for review, merged, and
+externally closed.

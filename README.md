@@ -2,13 +2,13 @@
 
 **Turn a spec into coordinated engineering work.**
 
-Anvil is ForgeStack's engineering harness for working through specifications and tickets with coding agents. It combines an entry skill, a local runner, and adapters for Codex and Claude Code. Integration with the full AI Hero skill catalog is planned.
+Anvil is ForgeStack's engineering harness for working through specifications and tickets with coding agents. It combines an entry skill, a local runner, adapters for Codex and Claude Code, and managed installation of AI Hero skills for ordinary agent sessions.
 
 ## Current status
 
 Anvil executes a JSON ticket graph serially or with a **coordinated pool of Codex and Claude Code workers**. Workers implement ready tickets in isolated Git worktrees. One supervisor owns the SQLite ledger and integration queue, reviews each change on top of the latest accepted branch, runs required checks, and advances that branch only after acceptance evidence, independent review, and verification pass.
 
-It also validates ticket graphs, previews dependency waves, checks local prerequisites, and reads saved run state. Retries, pause/resume, crash recovery, upstream skill loading, Markdown intake, and issue-tracker closeout remain planned. Requests for skills in an execution ticket are rejected rather than silently ignored. Nothing installs Anvil into an application repository automatically.
+It also validates ticket graphs, previews dependency waves, checks local prerequisites, reads saved run state, and installs or updates AI Hero skills in both agents' native directories. Retries, pause/resume, crash recovery, upstream skill invocation within harness tickets, Markdown intake, and issue-tracker closeout remain planned. Requests for skills in an execution ticket are rejected rather than silently ignored. Package installation does not register skills or modify an application repository automatically.
 
 ## Install and plan
 
@@ -31,6 +31,59 @@ To use the CLI directly from a source checkout:
 ```sh
 PYTHONPATH=src python3 -m anvil plan examples/tickets.json
 ```
+
+## Install AI Hero skills for both agents
+
+After installing Anvil, explicitly install the upstream skills into a repository:
+
+```sh
+anvil skills install aihero --repo /path/to/project
+anvil skills status aihero --repo /path/to/project
+anvil skills update aihero --repo /path/to/project --dry-run
+anvil skills update aihero --repo /path/to/project
+```
+
+Installation defaults to both Codex and Claude Code, using the upstream
+`engineering` and `productivity` groups. Each agent receives the complete selected
+skill directories, their supporting files, and `LICENSE.aihero`. Instructions and
+upstream metadata are preserved. Use `--agent codex` or `--agent claude-code` for
+one agent, repeat `--skill NAME` to select particular skills, and explicitly add
+`--include-experimental` for skills from `in-progress`. Explicit selection can
+also name skills in `misc`. Named subsets do not automatically include other
+skills referenced by their instructions. Skill management supports macOS/Linux;
+repository scope uses Git.
+
+Repository scope resolves to the Git root, including when launched from a
+subdirectory. Codex discovers `.agents/skills`, while Claude Code discovers
+`.claude/skills`. Anvil keeps separate managed copies for the two agents.
+[Codex locations](https://learn.chatgpt.com/docs/build-skills),
+[Claude Code locations](https://code.claude.com/docs/en/skills).
+
+Omitting a scope flag uses the current repository. Use `--global` instead of
+`--repo` for `~/.agents/skills` and `~/.claude/skills`. The installation manifest
+is `.anvil/aihero.json` at the repository root, or
+`~/.local/state/anvil/skills/aihero.json` for global scope. It records the exact
+upstream commit, selected agents and skills, file hashes, and executable flags.
+
+Install and update accept `--ref`, defaulting to `main`; the reference is resolved
+once to an exact commit before files are downloaded. They also accept `--dry-run`,
+which previews changes without changing the installation but still fetches the
+upstream source. `status` checks saved files locally without network access.
+All three commands accept `--json`; status returns exit code 1 for local
+modifications, and input or installation errors return 2.
+
+Updates use the agents and selection recorded at installation. Local edits or
+unmanaged destination conflicts abort the operation for both agents. Anvil rolls
+back ordinary application errors; a hard termination during file replacement
+may require inspection of the saved manifest and retained backups. There is no
+force, adoption, uninstall, or in-place agent/selection-change command.
+
+These skills are available to normal Codex and Claude Code sessions under each
+agent's discovery and invocation rules. **Harness ticket `skills` requests remain
+unsupported**, and Anvil's Claude worker still disables native skill loading in
+safe mode. Installing the catalog does not establish behavioral compatibility
+for every upstream skill. See [upstream management](docs/UPSTREAM.md) for the
+source contract and remaining integration work.
 
 ## Run tickets
 
@@ -176,6 +229,6 @@ CI tests Python 3.11 and 3.12, runs the example planner, and checks distribution
 
 ## Attribution
 
-Anvil is an independent ForgeStack project. Its design builds on [Matt Pocock's AI Hero skills](https://www.aihero.dev/skills), including the experimental [`implement-spec` workflow](https://github.com/mattpocock/skills/blob/main/skills/in-progress/implement-spec/SKILL.md). The source revision is recorded in [upstream/aihero.lock.json](upstream/aihero.lock.json). No upstream skill code is currently vendored or loaded.
+Anvil is an independent ForgeStack project. Its design builds on [Matt Pocock's AI Hero skills](https://www.aihero.dev/skills), including the experimental [`implement-spec` workflow](https://github.com/mattpocock/skills/blob/main/skills/in-progress/implement-spec/SKILL.md). The design reference revision is recorded in [upstream/aihero.lock.json](upstream/aihero.lock.json). Explicit skill installations record their own revision in the installation manifest; package installation does not fetch upstream skills.
 
-Anvil is MIT licensed. Future upstream imports must preserve their original license and attribution.
+Anvil is MIT licensed. Installed AI Hero skills retain their upstream MIT license and attribution.

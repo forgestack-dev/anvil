@@ -1,6 +1,18 @@
-# Supervised execution workflow
+# Anvil operations
 
-Use this reference when preparing a run configuration, executing tickets, or interpreting completion evidence. Check the installed CLI first; this describes serial execution and coordinated worker pools.
+Use the relevant section when managing native AI Hero skills, preparing a run configuration, executing tickets, or interpreting completion evidence. Check the installed CLI first.
+
+## Native skill management
+
+Use `anvil skills install aihero --repo /path/to/project` to install for both agents on macOS/Linux. Repository scope resolves to the Git root; omitting a scope flag uses the current repository. `--global` selects the user's home directory instead and cannot accompany `--repo`. Codex destinations are `.agents/skills`; Claude Code destinations are `.claude/skills`. Global destinations use the same paths under `~`. These match [Codex local discovery](https://learn.chatgpt.com/docs/build-skills) and [Claude Code skill locations](https://code.claude.com/docs/en/skills).
+
+Installation options are `--agent both|codex|claude-code`, repeatable `--skill NAME`, `--include-experimental`, `--ref REF`, and `--dry-run`. Without explicit names, selection includes upstream `engineering` and `productivity` groups; experimental opt-in adds `in-progress`. Explicit names can also select `misc` skills, but experimental names still require the opt-in flag. Named subsets do not automatically include other skills referenced by their instructions. The default source reference is `main`, resolved once to an exact commit. Complete skill directories and upstream metadata remain intact; the root license is included as `LICENSE.aihero` in each installed skill.
+
+Use `anvil skills update aihero` with the same scope to update all recorded agents and the original selection. Update accepts `--ref` and `--dry-run`, but no new agent or skill selection. Install and update previews fetch the source without changing the installation. `anvil skills status aihero` reads the manifest and installed files without contacting upstream. All three commands accept `--json`; modified status returns 1, and input or management errors return 2.
+
+The repository manifest is `.anvil/aihero.json`; the global manifest is `~/.local/state/anvil/skills/aihero.json`. It records revision, agents, selection, file hashes, and executability. Local edits or unmanaged destination conflicts stop the whole operation before replacement. Normal application failures roll back both agents. A hard termination can leave a mismatch and retained staging backups; inspect saved state and preserve those backups. The manager has no force, adoption, uninstall, or in-place selection-change operation.
+
+Package installation alone does not download or register upstream skills. Native registration makes skills discoverable in ordinary agent sessions under each agent's invocation rules; it does not guarantee behavior compatibility. Nonempty harness ticket `skills` requests remain rejected. Anvil's Claude adapter still disables native skills and the Skill tool in safe mode.
 
 ## Configuration and prerequisites
 
