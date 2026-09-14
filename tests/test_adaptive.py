@@ -276,6 +276,27 @@ prompt = sys.stdin.read()''')
         with self.assertRaisesRegex(ContractError,'aggregate soft budget'):
             benchmark_module.compare(options_with_budget(50.0),['standard','strong'])
 
+    def test_benchmark_invocation_budget_counts_reachable_attempts(self):
+        import anvil.benchmark as benchmark_module
+        from anvil.contracts import ContractError
+        tasks=[{'id':'b1','title':'Low-risk check','objective':'Check','depends_on':[],
+                'acceptance_criteria':['Checked'],'risk':'low'}]
+        self.tickets.write_text(json.dumps({'version':1,'tasks':tasks}))
+        def options_with_invocations(limit):
+            options=config_options(attempts=2)
+            options['max_invocations']=limit
+            return replace(self.config,adaptive=options)
+        def fake_run(cfg,**kw):
+            raise RuntimeError('stop after invocation budget check')
+        # Reachable maximum is 4 calls for standard (two attempts, worker plus
+        # reviewer each) plus 2 for strong, which has no escalation headroom:
+        # 6. The old per-profile math counted 8.
+        with patch.object(benchmark_module,'run',fake_run):
+            with self.assertRaisesRegex(RuntimeError,'stop after invocation budget check'):
+                benchmark_module.compare(options_with_invocations(6),['standard','strong'])
+        with self.assertRaisesRegex(ContractError,'aggregate invocation budget'):
+            benchmark_module.compare(options_with_invocations(5),['standard','strong'])
+
     def test_benchmark_incomplete_telemetry_charges_escalation_path(self):
         import anvil.benchmark as benchmark_module
         tasks=[{'id':'b1','title':'Low-risk check','objective':'Check','depends_on':[],

@@ -48,13 +48,12 @@ def compare(config, names):
     # configuration under comparison, so it inherits the retry limit instead
     # of forcing a single attempt.
     attempts = options.get("max_attempts", 1)
-    calls = len(graph.tasks)*2*attempts*len(names)
+    # Each reachable attempt costs two invocations (worker plus reviewer); a
+    # profile with no escalation headroom cannot run the full attempt count.
+    calls = sum(len(_escalation_path(options["profiles"], n, attempts))*2 for n in names)*len(graph.tasks)
     if calls > options.get("max_invocations", 100):
         raise ContractError("benchmark exceeds aggregate invocation budget")
     review = options["profiles"][options["review_profile"]]
-    # Retries can escalate to a more expensive profile than the one under
-    # comparison, so reserve the worst case per profile for every attempt;
-    # otherwise the budget check can pass here and fail midway through.
     # The aggregate budget sums each profile's reachable escalation path, as
     # the consumption accounting does: a profile with no escalation headroom
     # cannot run the full attempt count.
