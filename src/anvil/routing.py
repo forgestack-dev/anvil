@@ -20,10 +20,12 @@ def learning_catalog(config):
     """Bind comparable evidence to the execution and acceptance conditions."""
     value = config if isinstance(config, dict) else config.to_dict()
     adaptive = value["adaptive"]
-    return fingerprint({"evidence_version": 2, "profiles": adaptive["profiles"],
+    return fingerprint({"evidence_version": 3, "profiles": adaptive["profiles"],
                         "max_attempts": adaptive.get("max_attempts", 1),
                         "review_profile": adaptive["review_profile"],
-                        "verification": value["verification"]})
+                        "verification": value["verification"],
+                        "agent_timeout": value.get("agent_timeout"),
+                        "check_timeout": value.get("check_timeout")})
 
 
 def validate_selection(agent, profile):

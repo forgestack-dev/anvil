@@ -191,6 +191,67 @@ prompt = sys.stdin.read()''')
         from anvil.workspaces import Repository
         self.assertEqual(import_run(Repository(self.repo),result)['imported_or_existing'],2)
 
+    def test_retry_keeps_ticket_in_progress_and_preserves_failure_cause(self):
+        owner=self
+        seen=[]
+        states={}
+        original=Publisher.flush
+        def spy_flush(publisher):
+            original(publisher)
+            for task in json.loads(owner.tickets.read_text())['tasks']:
+                status=task['execution']['status']
+                # Only watch a ticket once it has started: a retry must never
+                # send it back to an unowned todo.
+                if states.get(task['id']) not in (None,'todo'):
+                    seen.append(status)
+                states[task['id']]=status
+        class Once(FakeRunner):
+            def run(self,**kw):
+                self.mode='review-rejects' if kw.get('read_only') and not self.reviews else 'success'
+                return super().run(**kw)
+        cfg=replace(self.config,ticket_status=True,adaptive=config_options(attempts=2))
+        with patch.object(Publisher,'flush',spy_flush):
+            result=run_serial(cfg,runner=Once())
+        self.assertEqual(result['status'],'success',result.get('error'))
+        # The retried ticket moves straight from review back to running; it is
+        # never published as an unowned todo.
+        self.assertNotIn('todo',seen)
+        failed=next(a for a in result['routing']['attempts'] if a['status']=='failed')
+        self.assertEqual(failed['failure_category'],'review_rejection')
+        raw=next(a for a in result['attempts'] if a['status']=='failed')
+        self.assertEqual(raw['details']['failure_category'],'review_rejection')
+        self.assertIn('retry_reason',raw['details'])
+
+    def test_verification_failure_retry_preserves_structured_cause(self):
+        class Once(FakeRunner):
+            def run(self,**kw):
+                self.mode='bad-check' if not self.workers else 'success'
+                return super().run(**kw)
+        result=run_serial(replace(self.config,adaptive=config_options(attempts=2)),runner=Once())
+        self.assertEqual(result['status'],'success',result.get('error'))
+        failed=next(a for a in result['routing']['attempts'] if a['status']=='failed')
+        self.assertEqual(failed['failure_category'],'verification_failure')
+
+    def test_benchmark_keeps_configured_retry_limit_for_evidence_catalog(self):
+        import anvil.benchmark as benchmark_module
+        from anvil.routing import learning_catalog
+        tasks=[{'id':'b1','title':'Low-risk check','objective':'Check','depends_on':[],
+                'acceptance_criteria':['Checked'],'risk':'low'}]
+        self.tickets.write_text(json.dumps({'version':1,'tasks':tasks}))
+        captured=[]
+        def fake_run(cfg,**kw):
+            captured.append(cfg)
+            raise RuntimeError('stop after capture')
+        cfg=replace(self.config,adaptive=config_options(attempts=2))
+        with patch.object(benchmark_module,'run',fake_run):
+            with self.assertRaises(RuntimeError):
+                benchmark_module.compare(cfg,['standard','strong'])
+        selected=captured[0].adaptive
+        self.assertEqual(selected['max_attempts'],2)
+        # Benchmark evidence fingerprints into the production catalog, so it
+        # stays eligible under the same retry limit.
+        self.assertEqual(learning_catalog(captured[0]),learning_catalog(cfg))
+
     def test_damaged_history_does_not_erase_accepted_run_report(self):
         history=self.repo/'.git'/'anvil-routing'
         history.mkdir();(history/'history.sqlite').write_bytes(b'not a database')

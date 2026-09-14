@@ -126,10 +126,16 @@ def report(result):
         evaluation = "observed_sufficient" if attempt["status"] == "done" else (
             "rejected" if attempt["status"] in ("failed", "blocked") and attributable_rejection
             else "insufficient_evidence")
+        # The coordinator records the structured retry cause when it retires the
+        # attempt; prefer it over re-deriving from whatever evidence survived.
+        stored_category = details.get("failure_category")
+        if stored_category not in ("review_rejection", "verification_failure", "retryable_rejection"):
+            stored_category = None
         records.append({"attempt_id": attempt["id"], "task_id": attempt["task_id"],
                         "status": attempt["status"], "decision": decisions.get(attempt["id"]),
                         "failure_category": ("none" if attempt["status"] == "done" else
                             "provider_error" if any(i.get("provider_error") for i in invocations) else
+                            stored_category if stored_category else
                             "review_rejection" if attempt["details"].get("review", {}).get("verdict") == "request_changes" else
                             "verification_failure" if attempt["details"].get("verification") else
                             "retryable_rejection" if "retry_reason" in attempt["details"] else "unknown"),

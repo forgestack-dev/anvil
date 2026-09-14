@@ -34,6 +34,41 @@ def history(repo):
             db.close()
 
 
+def _invocation_provenance(invocation):
+    return {key: invocation.get(key) for key in
+            ("agent", "requested_model", "reported_model", "requested_effort", "cli_version")}
+
+
+def _provenance_ok(row):
+    """Every worker and reviewer invocation behind a sample must confirm the
+    requested model (or report none) and share one CLI version."""
+    provenance = row.get("provenance")
+    if not provenance:
+        # Samples recorded before per-invocation provenance keep the
+        # first-worker checks.
+        return (row.get("requested_model") and
+                row.get("reported_model") in (None, row.get("requested_model")) and
+                row.get("cli_version") and row.get("cli_version") != "injected-test-runner")
+    versions = set()
+    for entry in provenance:
+        worker = entry.get("worker") or {}
+        if not worker.get("requested_model"):
+            return False
+        if worker.get("reported_model") not in (None, worker.get("requested_model")):
+            return False
+        review = entry.get("review")
+        if review:
+            if not review.get("requested_model"):
+                return False
+            if review.get("reported_model") not in (None, review.get("requested_model")):
+                return False
+        for invocation in (worker, review) if review else (worker,):
+            version = invocation.get("cli_version")
+            if version:
+                versions.add(version)
+    return len(versions) == 1 and "injected-test-runner" not in versions
+
+
 def import_run(repo, result):
     if Path(result["repo"]).resolve() != repo.path:
         raise ContractError("run belongs to another repository")
@@ -50,6 +85,16 @@ def import_run(repo, result):
         first = attempts[0]
         costs = [a["cost_usd"] for a in attempts]
         worker = first["invocations"][0]
+        # Provenance for every invocation that contributed to the outcome, not
+        # just the first worker: an escalated retry or a mismatched reviewer
+        # must not silently enter training evidence.
+        provenance = []
+        for attempt in attempts:
+            invocations = attempt["invocations"]
+            attempt_worker = _invocation_provenance(invocations[0]) if invocations else {}
+            review = invocations[1] if len(invocations) > 1 else {}
+            provenance.append({"worker": attempt_worker,
+                               "review": _invocation_provenance(review) if review.get("agent") else None})
         sample = {"catalog": catalog, "profile": first["decision"]["profile"],
                   "assessment": first["decision"]["assessment"], "agent": worker.get("agent"),
                   "cli_version": worker.get("cli_version"),
@@ -59,7 +104,8 @@ def import_run(repo, result):
                   "eligible": all(a["evaluation"] != "insufficient_evidence" for a in attempts),
                   "reported_model": worker.get("reported_model"),
                   "requested_model": worker.get("requested_model"),
-                  "effort": worker.get("requested_effort")}
+                  "effort": worker.get("requested_effort"),
+                  "provenance": provenance}
         samples.append((result["run_id"], task["id"], json.dumps(sample, sort_keys=True)))
     with history(repo) as db:
         for run_id, task_id, data in samples:
@@ -101,8 +147,7 @@ def train(repo, config, *, min_samples, max_quality_loss, min_cost_improvement, 
     with history(repo) as db:
         all_rows = [json.loads(r[0]) for r in db.execute("SELECT data FROM samples ORDER BY run_id, task_id")]
     rows = [r for r in all_rows if r["catalog"] == catalog and r["eligible"] and r["cost"] is not None
-            and r["requested_model"] and r["reported_model"] in (None, r["requested_model"])
-            and r["cli_version"] and r["cli_version"] != "injected-test-runner"]
+            and _provenance_ok(r)]
     # Re-running one ticket cannot manufacture independent evidence.
     unique = {}
     for row in rows:

@@ -144,3 +144,51 @@ class RoutingComponents(unittest.TestCase):
         policy = train(repo, cfg, min_samples=20, max_quality_loss=0.1,
                        min_cost_improvement=0.2, max_latency_ratio=1.1)
         self.assertFalse(policy['validated'])
+
+    def test_learning_catalog_binds_execution_timeouts(self):
+        repo, cfg = self.populate()
+        catalog = learning_catalog(cfg)
+        self.assertNotEqual(learning_catalog(replace(cfg, agent_timeout=cfg.agent_timeout + 1)), catalog)
+        self.assertNotEqual(learning_catalog(replace(cfg, check_timeout=cfg.check_timeout + 1)), catalog)
+        self.assertEqual(learning_catalog(replace(cfg, ticket_status=not cfg.ticket_status)), catalog)
+
+    def test_training_rejects_mismatched_invocation_provenance(self):
+        def worker(model='test-standard', cli='fixture-v1', reported=None):
+            return {'requested_model': model, 'reported_model': reported if reported is not None else model,
+                    'cli_version': cli}
+        cases = {
+            'escalated worker model mismatch': [
+                {'worker': worker(), 'review': None},
+                {'worker': worker(reported='unexpected-model'), 'review': None}],
+            'reviewer model mismatch': [
+                {'worker': worker(), 'review': worker(reported='unexpected-model')}],
+            'reviewer cli mismatch': [
+                {'worker': worker(), 'review': worker(cli='other-v1')}],
+        }
+        repo, cfg = self.populate()
+        for label, provenance in cases.items():
+            with self.subTest(label=label):
+                with history(repo) as db:
+                    for run_id, task_id, data in db.execute('SELECT * FROM samples').fetchall():
+                        row = json.loads(data)
+                        row['provenance'] = provenance
+                        db.execute('UPDATE samples SET data=? WHERE run_id=? AND task_id=?',
+                                   (json.dumps(row), run_id, task_id))
+                policy = train(repo, cfg, min_samples=20, max_quality_loss=0.1,
+                               min_cost_improvement=0.2, max_latency_ratio=1.1)
+                self.assertFalse(policy['validated'])
+
+    def test_training_accepts_consistent_invocation_provenance(self):
+        repo, cfg = self.populate()
+        with history(repo) as db:
+            for run_id, task_id, data in db.execute('SELECT * FROM samples').fetchall():
+                row = json.loads(data)
+                row['provenance'] = [
+                    {'worker': {'requested_model': row['requested_model'],
+                                'reported_model': row['reported_model'],
+                                'cli_version': row['cli_version']}, 'review': None}]
+                db.execute('UPDATE samples SET data=? WHERE run_id=? AND task_id=?',
+                           (json.dumps(row), run_id, task_id))
+        policy = train(repo, cfg, min_samples=20, max_quality_loss=0.1,
+                       min_cost_improvement=0.2, max_latency_ratio=1.1)
+        self.assertTrue(policy['validated'])

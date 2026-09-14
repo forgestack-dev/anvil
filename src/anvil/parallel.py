@@ -224,7 +224,7 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                 repo.assert_revision(workspace, base)
                 heartbeat = time.monotonic()
 
-                def retry(item, reason):
+                def retry(item, reason, failure_category):
                     profile = adaptive.next_profile(item) if adaptive else None
                     if profile is None:
                         return False
@@ -234,12 +234,15 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                     new_id = str(uuid.uuid4())
                     decision = adaptive.decide(item.task, item.worker, base, new_id, escalate=profile)
                     old_id = item.attempt_id
-                    store.retry(item.task.id, attempt_id=old_id, reason=reason)
                     item.attempt_id, item.base = new_id, base
                     item.workspace = run_dir / "workers" / new_id
                     item.artifacts = run_dir / "artifacts" / new_id
                     item.claims, item.candidate = None, None
-                    store.start_attempt(item.task.id, base, str(item.workspace), attempt_id=new_id,
+                    # Retire the rejected attempt and claim its replacement in one
+                    # transaction, so publication never sees an unowned retry.
+                    store.retry_attempt(item.task.id, attempt_id=old_id, reason=reason,
+                                        failure_category=failure_category, new_attempt_id=new_id,
+                                        base_sha=base, workspace=str(item.workspace),
                                         worker_id=item.worker.id, agent=item.worker.agent)
                     store.record_message(item.task.id, attempt_id=new_id, kind="routing_decision", body=decision)
                     repo.create_worktree(item.workspace, base)
@@ -285,7 +288,7 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                         try:
                             outcome = integration.future.result()
                         except VerificationFailure as exc:
-                            if retry(item, str(exc) + "\n" + json.dumps(exc.records)):
+                            if retry(item, str(exc) + "\n" + json.dumps(exc.records), "verification_failure"):
                                 integration = None
                                 continue
                             raise
@@ -295,7 +298,7 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                             store.record_message(item.task.id, attempt_id=item.attempt_id,
                                                  kind="review_result", body=outcome)
                             if outcome["verdict"] != "approve":
-                                if retry(item, "; ".join(outcome["findings"])):
+                                if retry(item, "; ".join(outcome["findings"]), "review_rejection"):
                                     integration = None
                                     continue
                                 raise _Blocked("; ".join(outcome["findings"]),

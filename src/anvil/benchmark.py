@@ -17,18 +17,22 @@ def compare(config, names):
     options = config.adaptive
     if any(n not in options["profiles"] or options["profiles"][n]["agent"] != config.agent for n in names):
         raise ContractError("benchmark profiles must match the serial worker agent")
-    calls = len(graph.tasks)*2*len(names)
+    # Benchmark evidence must land in the same catalog as the production
+    # configuration under comparison, so it inherits the retry limit instead
+    # of forcing a single attempt.
+    attempts = options.get("max_attempts", 1)
+    calls = len(graph.tasks)*2*attempts*len(names)
     if calls > options.get("max_invocations", 100):
         raise ContractError("benchmark exceeds aggregate invocation budget")
     review = options["profiles"][options["review_profile"]]
-    reserve = sum((options["profiles"][n].get("reserve_usd",0)+review.get("reserve_usd",0))*len(graph.tasks) for n in names)
+    reserve = sum((options["profiles"][n].get("reserve_usd",0)+review.get("reserve_usd",0))*len(graph.tasks)*attempts for n in names)
     limit = options.get("soft_budget_usd")
     if limit is not None and reserve > limit:
         raise ContractError("benchmark cannot reserve aggregate soft budget")
     results, consumed = [], 0.0
     for name in names:
         selected = deepcopy(options)
-        selected.update(mode="off", max_attempts=1, defaults={config.agent:name})
+        selected.update(mode="off", max_attempts=attempts, defaults={config.agent:name})
         # Benchmark imports evidence but cannot change the policy under comparison.
         selected.pop("learning", None)
         if limit is not None:

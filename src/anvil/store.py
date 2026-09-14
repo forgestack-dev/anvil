@@ -333,7 +333,27 @@ class RunStore:
             )
             self._event(connection, timestamp, "task", task_id, attempt_id, old, status, merged)
 
-    def retry(self, task_id, *, attempt_id, reason):
+    def retry_attempt(self, task_id, *, attempt_id, reason, failure_category, new_attempt_id,
+                      base_sha, workspace, worker_id=None, agent=None):
+        """Retire a rejected attempt and claim its replacement atomically.
+
+        The task moves straight from the rejected phase to running under the
+        new attempt: it never becomes visibly pending, so ticket publication
+        cannot observe an unowned retry and a crash cannot strand the task as
+        pending. The retired attempt keeps the structured failure cause
+        alongside the formatted reason for diagnostics and learning evidence.
+        """
+        _text(reason, "reason")
+        if failure_category not in ("review_rejection", "verification_failure"):
+            raise StoreError("failure_category must be review_rejection or verification_failure")
+        _text(new_attempt_id, "new_attempt_id")
+        _text(base_sha, "base_sha")
+        _text(workspace, "workspace")
+        assignment = {}
+        for name, value in (("worker_id", worker_id), ("agent", agent)):
+            if value is not None:
+                _text(value, name)
+                assignment[name] = value
         with self._transaction() as connection:
             task = self._active_task(connection, task_id, attempt_id)
             config = json.loads(self._run(connection)["config"])
@@ -344,12 +364,29 @@ class RunStore:
             if task["status"] not in {"candidate", "reviewed"}:
                 raise StoreError("only rejected review/check attempts can retry")
             timestamp = _now()
-            details = json.loads(task["details"]) | {"retry_reason": reason}
+            details = json.loads(task["details"]) | {"retry_reason": reason,
+                                                     "failure_category": failure_category}
             connection.execute("UPDATE attempts SET status='failed', details=?, finished_at=?, updated_at=? WHERE id=?",
                                (_encode(details), timestamp, timestamp, attempt_id))
-            connection.execute("UPDATE tasks SET status='pending', attempt_id=NULL, details='{}', updated_at=? WHERE id=?",
-                               (timestamp, task_id))
-            self._event(connection, timestamp, "retry", task_id, attempt_id, task["status"], "pending", details)
+            encoded_assignment = _encode(assignment)
+            connection.execute(
+                "INSERT INTO attempts VALUES (?, ?, ?, ?, 'running', ?, ?, ?, NULL)",
+                (new_attempt_id, task_id, base_sha, workspace, encoded_assignment, timestamp, timestamp),
+            )
+            connection.execute(
+                "UPDATE tasks SET status='running', attempt_id=?, details=?, updated_at=? WHERE id=?",
+                (new_attempt_id, encoded_assignment, timestamp, task_id),
+            )
+            self._event(connection, timestamp, "retry", task_id, attempt_id, task["status"], "running",
+                        {"retry_reason": reason, "failure_category": failure_category,
+                         "new_attempt_id": new_attempt_id})
+            self._event(connection, timestamp, "task", task_id, new_attempt_id,
+                        task["status"], "running", {"base_sha": base_sha, "workspace": workspace})
+            if assignment:
+                self._event(connection, timestamp, "dispatch", task_id, new_attempt_id,
+                            task["status"], "running",
+                            assignment | {"base_sha": base_sha, "workspace": workspace})
+            return new_attempt_id
 
     @staticmethod
     def _snapshot(connection: sqlite3.Connection) -> dict:
