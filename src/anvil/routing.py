@@ -16,6 +16,16 @@ def fingerprint(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, allow_nan=False).encode()).hexdigest()
 
 
+def learning_catalog(config):
+    """Bind comparable evidence to the execution and acceptance conditions."""
+    value = config if isinstance(config, dict) else config.to_dict()
+    adaptive = value["adaptive"]
+    return fingerprint({"evidence_version": 2, "profiles": adaptive["profiles"],
+                        "max_attempts": adaptive.get("max_attempts", 1),
+                        "review_profile": adaptive["review_profile"],
+                        "verification": value["verification"]})
+
+
 def validate_selection(agent, profile):
     if not isinstance(profile, dict) or profile.get("effort") not in EFFORTS[agent]:
         raise ContractError("unsupported effort for selected agent")
@@ -129,7 +139,7 @@ class Policy:
         self.learned = None
         if self.config.get("mode") == "adaptive":
             from .learning import load_policy
-            self.learned = load_policy(repo, self.config.get("policy"), fingerprint(self.profiles))
+            self.learned = load_policy(repo, self.config.get("policy"), learning_catalog(config))
         self.workers = config.workers
         self.review = self.config["review_profile"]
         if self.profiles[self.review]["agent"] != config.agent:

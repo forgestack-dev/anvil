@@ -39,7 +39,7 @@ def dispatch(args):
     from .planning import TaskGraph
     from .workspaces import Repository, WorkspaceError
     from .store import RunStore, StoreError
-    from .routing import Policy, fingerprint
+    from .routing import Policy, learning_catalog
     from . import learning
     try:
         if args.command == "tickets":
@@ -80,7 +80,7 @@ def dispatch(args):
                     raise ContractError("configure explicit learning gates before training")
                 result = learning.train(repo, config, **{k:v for k,v in options.items() if k != "auto_promote"})
             elif args.action == "promote":
-                result = learning.promote(repo, args.policy_id, fingerprint(config.adaptive["profiles"]))
+                result = learning.promote(repo, args.policy_id, learning_catalog(config))
             else:
                 result = learning.rollback(repo)
         print(json.dumps(result, indent=2))

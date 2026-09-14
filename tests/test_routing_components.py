@@ -9,7 +9,7 @@ import test_execution
 from test_adaptive import config_options
 from anvil.config import RunConfig, WorkerConfig
 from anvil.contracts import ContractError
-from anvil.routing import validate_config, Policy, fingerprint
+from anvil.routing import validate_config, Policy, fingerprint, learning_catalog
 from anvil.planning import TaskGraph
 from anvil.workspaces import Repository
 from anvil.telemetry import usage
@@ -57,14 +57,14 @@ class RoutingComponents(unittest.TestCase):
         path.write_text('{}');data=usage(path,'codex',profile)
         self.assertIsNone(data['cost_usd']);self.assertIsNotNone(data['usage_error'])
 
-    def populate(self, *, candidate_success=True, samples=100):
-        options=config_options();cfg=replace(self.config,adaptive=options)
+    def populate(self, *, candidate_success=True, samples=100, attempts=1):
+        options=config_options(attempts=attempts);cfg=replace(self.config,adaptive=options)
         repo=Repository(self.repo)
         with history(repo) as db:
             for split in (0,1):
                 for name,cost in [('standard',1.0),('strong',0.2)]:
                     for i in range(samples):
-                        value={'catalog':fingerprint(options['profiles']),'profile':name,'agent':'codex',
+                        value={'catalog':learning_catalog(cfg),'profile':name,'agent':'codex',
                                'assessment':{'cohort':'rank-1','input_digest':f'{i*2+split:08x}'+'0'*56},
                                'cli_version':'fixture-v1','eligible':True,'cost':cost,'duration':1,
                                'reported_model':options['profiles'][name]['model'],
@@ -108,3 +108,39 @@ class RoutingComponents(unittest.TestCase):
         with self.assertRaises(ContractError):RunConfig.from_document(value,base=self.root)
         value=config_options();value['profiles']['standard'].update(agent='claude-code',model='claude-haiku-4-5-20251001',effort='low')
         with self.assertRaises(ContractError):validate_config(value)
+
+    def test_training_and_active_policy_require_matching_execution_conditions(self):
+        repo, cfg = self.populate(attempts=2)
+        gates = dict(min_samples=20, max_quality_loss=0.1,
+                     min_cost_improvement=0.2, max_latency_ratio=1.1)
+        policy = train(repo, cfg, **gates)
+        self.assertTrue(policy['validated'])
+        promote(repo, policy['id'], policy['catalog'])
+        variants = []
+        options = deepcopy(cfg.adaptive); options['max_attempts'] = 1
+        variants.append(replace(cfg, adaptive=options))
+        options = deepcopy(cfg.adaptive); options['review_profile'] = 'standard'
+        variants.append(replace(cfg, adaptive=options))
+        variants.append(replace(cfg, verification=(('true',),)))
+        for changed in variants:
+            with self.subTest(config=changed.to_dict()):
+                self.assertFalse(train(repo, changed, **gates)['validated'])
+                with self.assertRaises(ContractError):
+                    promote(repo, policy['id'], learning_catalog(changed))
+                options = deepcopy(changed.adaptive); options['mode'] = 'adaptive'
+                execution = replace(changed, adaptive=options,
+                                    workers=(WorkerConfig('one'),), max_processes=1)
+                with self.assertRaises(ContractError):
+                    Policy(execution, TaskGraph.load(self.tickets), repo)
+
+    def test_old_accounting_catalog_is_not_training_evidence(self):
+        repo, cfg = self.populate()
+        with history(repo) as db:
+            for run_id, task_id, data in db.execute('SELECT * FROM samples').fetchall():
+                row = json.loads(data)
+                row['catalog'] = fingerprint(cfg.adaptive['profiles'])
+                db.execute('UPDATE samples SET data=? WHERE run_id=? AND task_id=?',
+                           (json.dumps(row), run_id, task_id))
+        policy = train(repo, cfg, min_samples=20, max_quality_loss=0.1,
+                       min_cost_improvement=0.2, max_latency_ratio=1.1)
+        self.assertFalse(policy['validated'])

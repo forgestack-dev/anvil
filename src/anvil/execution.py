@@ -119,6 +119,8 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
     if config.workers:
         raise ContractError("worker pools require run() or run_parallel(), not run_serial()")
     graph = TaskGraph.load(config.tickets)
+    if config.adaptive is None and any(task.profile is not None for task in graph.tasks):
+        raise ContractError("ticket profiles require an adaptive configuration")
     if any(task.worker is not None for task in graph.tasks):
         raise ContractError("ticket worker assignments require a workers configuration")
     if any(task.skills for task in graph.tasks):

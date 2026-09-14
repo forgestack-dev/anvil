@@ -116,8 +116,15 @@ def report(result):
                 invocations.append({"role": role, "cost_usd": None if started else 0,
                                     "cost_kind": "unknown" if started else "not_started"})
         costs = [r["cost_usd"] for r in invocations]
+        details = attempt["details"]
+        attributable_rejection = (
+            "retry_reason" in details
+            or details.get("review", {}).get("verdict") == "request_changes"
+            or any(check.get("returncode") not in (None, 0) or check.get("timed_out")
+                   for check in details.get("verification", []))
+        )
         evaluation = "observed_sufficient" if attempt["status"] == "done" else (
-            "rejected" if "retry_reason" in attempt["details"] or "review" in attempt["details"]
+            "rejected" if attempt["status"] in ("failed", "blocked") and attributable_rejection
             else "insufficient_evidence")
         records.append({"attempt_id": attempt["id"], "task_id": attempt["task_id"],
                         "status": attempt["status"], "decision": decisions.get(attempt["id"]),
@@ -138,7 +145,7 @@ def report(result):
 
 def learn(repo, config, result):
     from .learning import import_run, train, promote, rollback
-    from .routing import fingerprint
+    from .routing import learning_catalog
     try:
         result["learning"] = import_run(repo, result)
         options = config.adaptive.get("learning")
@@ -149,7 +156,7 @@ def learn(repo, config, result):
             result["learning"]["validated"] = policy["validated"]
             if options.get("auto_promote"):
                 if policy["validated"]:
-                    result["learning"].update(promote(repo, policy["id"], fingerprint(config.adaptive["profiles"])))
+                    result["learning"].update(promote(repo, policy["id"], learning_catalog(config)))
                 else:
                     result["learning"].update(rollback(repo))
     except (OSError, ValueError, sqlite3.Error, KeyError, TypeError) as exc:

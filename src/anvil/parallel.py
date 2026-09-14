@@ -140,6 +140,8 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
     if not config.workers:
         raise ContractError("parallel execution requires a workers configuration")
     graph = TaskGraph.load(config.tickets)
+    if config.adaptive is None and any(task.profile is not None for task in graph.tasks):
+        raise ContractError("ticket profiles require an adaptive configuration")
     if any(task.skills for task in graph.tasks):
         raise ContractError("skill resolution is not implemented; use planning for skill requests")
     worker_ids = {worker.id for worker in config.workers}

@@ -209,3 +209,49 @@ prompt = sys.stdin.read()''')
         self.assertEqual(result['status'],'success')
         self.assertFalse(result['routing']['cost_complete'])
         self.assertGreaterEqual(result['routing']['known_cost_usd'],0)
+
+    def test_ticket_profile_without_adaptive_rejects_before_dispatch(self):
+        doc = json.loads(self.tickets.read_text())
+        doc['tasks'][0]['profile'] = 'nonexistent-profile'
+        self.tickets.write_text(json.dumps(doc))
+        runner = FakeRunner()
+        for parallel in (False, True):
+            with self.subTest(parallel=parallel), self.assertRaisesRegex(ContractError, 'profiles require'):
+                if parallel:
+                    cfg = replace(self.config, workers=(WorkerConfig('one'),), max_processes=1)
+                    run_parallel(cfg, runners={'one': runner}, review_runner=runner)
+                else:
+                    run_serial(self.config, runner=runner)
+        self.assertEqual(runner.workers, [])
+        self.assertEqual(runner.reviews, [])
+
+    def test_approved_attempt_cancellation_and_infrastructure_error_are_not_quality_failures(self):
+        from anvil.execution import verify
+        from anvil.processes import ProcessError
+        from anvil.learning import history
+        for error in (KeyboardInterrupt(), ProcessError('verification process unavailable')):
+            calls = []
+            def stop_after_review(*args):
+                calls.append(1)
+                if len(calls) > 1:
+                    raise error
+                return verify(*args)
+            with self.subTest(error=type(error).__name__), patch('anvil.parallel.verify', stop_after_review):
+                result = run_serial(replace(self.config, adaptive=config_options()), runner=FakeRunner())
+            attempt = result['routing']['attempts'][0]
+            self.assertEqual(attempt['evaluation'], 'insufficient_evidence')
+            self.assertEqual(result['attempts'][0]['details']['review']['verdict'], 'approve')
+            with history(Repository(self.repo)) as db:
+                sample = json.loads(db.execute('SELECT data FROM samples WHERE run_id=?', (result['run_id'],)).fetchone()[0])
+            self.assertFalse(sample['eligible'])
+
+    def test_real_check_rejection_remains_eligible_with_bound_execution_conditions(self):
+        from anvil.learning import history
+        from anvil.routing import learning_catalog
+        result = run_serial(replace(self.config, adaptive=config_options()), runner=FakeRunner('bad-check'))
+        self.assertEqual(result['routing']['attempts'][0]['evaluation'], 'rejected')
+        with history(Repository(self.repo)) as db:
+            sample = json.loads(db.execute('SELECT data FROM samples WHERE run_id=?', (result['run_id'],)).fetchone()[0])
+        self.assertTrue(sample['eligible'])
+        self.assertFalse(sample['accepted'])
+        self.assertEqual(sample['catalog'], learning_catalog(result['config']))

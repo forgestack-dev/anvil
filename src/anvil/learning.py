@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 import sqlite3
 from .contracts import ContractError, _identifier
-from .routing import fingerprint
+from .routing import fingerprint, learning_catalog
 from .ticket_status import atomic, encoded, read_regular, destination_lock
 
 
@@ -41,7 +41,7 @@ def import_run(repo, result):
         raise ContractError("only finalized runs can enter history")
     if "routing" not in result:
         raise ContractError("run has no routing telemetry")
-    catalog = fingerprint(result["config"]["adaptive"]["profiles"])
+    catalog = learning_catalog(result["config"])
     samples = []
     for task in result["tasks"]:
         attempts = [a for a in result["routing"]["attempts"] if a["task_id"] == task["id"]]
@@ -97,7 +97,7 @@ def train(repo, config, *, min_samples, max_quality_loss, min_cost_improvement, 
     if config.adaptive is None or config.repo.resolve() != repo.path:
         raise ContractError("training requires an adaptive configuration for this repository")
     profiles = config.adaptive["profiles"]
-    catalog = fingerprint(profiles)
+    catalog = learning_catalog(config)
     with history(repo) as db:
         all_rows = [json.loads(r[0]) for r in db.execute("SELECT data FROM samples ORDER BY run_id, task_id")]
     rows = [r for r in all_rows if r["catalog"] == catalog and r["eligible"] and r["cost"] is not None
