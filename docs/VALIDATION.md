@@ -4,6 +4,19 @@ Validated on 2026-09-12 using Python 3.11 on macOS and Codex CLI 0.153.4.
 
 ## Automated checks
 
+Claude stream compatibility was checked on 2026-09-14. The suite now includes
+269 tests, with regressions for `system/task_summary` events following a result
+from both worker and reviewer processes. Serial dependency integration and mixed
+worker-pool tests emit these trailers while checking the exact reviewed,
+verified, and integrated revision. Raw stream bytes remain preserved; malformed
+trailers, duplicate results, permission denials, failed results, nonzero exits,
+and timeouts still fail the turn.
+
+Replaying a captured 21-turn Claude Code worker event log through the parser reproduced
+the failure on `0.1.0.dev3` and returned the original structured result on
+`0.1.0.dev4`. This replay did not invoke a model or change saved run evidence;
+it verifies stream compatibility rather than retroactively accepting the ticket.
+
 Global Claude profile support adds 14 regression cases, bringing the suite to
 267 tests. They exercise custom destinations outside the home directory through
 the CLI, saved-profile checks, legacy default installations, local edits,

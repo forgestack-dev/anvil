@@ -140,14 +140,19 @@ def build_invocation(
 def _extract_result(data: bytes) -> dict:
     terminal = None
     for line in data.splitlines():
-        if terminal is not None:
-            raise ValueError("result must be the final event and occur exactly once")
         event = json.loads(line, object_pairs_hook=_unique_object,
                            parse_constant=_invalid_constant, parse_float=_finite_float)
         if not isinstance(event, dict):
             raise ValueError("each stream event must be a JSON object")
         if event.get("type") == "system" and event.get("subtype") == "permission_denied":
             raise ValueError("Claude Code reported denied permissions")
+        if terminal is not None:
+            # Claude Code 2.1.260 can emit task metadata after its result. Parse
+            # the entire stream and allow only this known informational trailer;
+            # a second result or a later error must never be hidden by success.
+            if event.get("type") == "system" and event.get("subtype") == "task_summary":
+                continue
+            raise ValueError("result must occur exactly once and may only be followed by system/task_summary events")
         if event.get("type") == "result":
             terminal = event
     if terminal is None:

@@ -150,6 +150,8 @@ class ParallelExecutionTests(unittest.TestCase):
                 print(json.dumps({'type': 'system', 'subtype': 'init'}))
                 print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False,
                                   'permission_denials': [], 'structured_output': result}))
+                print(json.dumps({'type': 'system', 'subtype': 'task_summary', 'detail': None,
+                                  'uuid': 'fixture-trailer', 'session_id': 'fixture-session'}))
             """))
         binary.chmod(0o755)
         return binary
@@ -221,6 +223,10 @@ class ParallelExecutionTests(unittest.TestCase):
                 artifacts = Path(result["run_dir"]) / "artifacts" / attempts[task_id]["id"] / role
                 self.assertEqual(json.loads((artifacts / "result.json").read_text()), details[role])
                 self.assertEqual(json.loads((artifacts / "schema.json").read_text()), traces[task_id, role]["schema"])
+                if traces[task_id, role]["agent"] == "claude-code":
+                    events = [json.loads(line) for line in (artifacts / "events.jsonl").read_text().splitlines()]
+                    self.assertEqual(events[-2]["type"], "result")
+                    self.assertEqual((events[-1]["type"], events[-1]["subtype"]), ("system", "task_summary"))
             expected_parent = sha
         self.assertNotEqual(tasks["beta"]["details"]["candidate_sha"], tasks["beta"]["details"]["integrated_sha"])
         self.assertEqual(attempts["combined"]["base_sha"], tasks["beta"]["details"]["integrated_sha"])

@@ -18,6 +18,12 @@ CLAUDE_HELP = (
     "--no-session-persistence --safe-mode --strict-mcp-config --mcp-config "
     "--disable-slash-commands --no-chrome --permission-prompts --permission-mode --tools --disallowedTools"
 )
+TASK_SUMMARY = {
+    "type": "system", "subtype": "task_summary", "detail": None,
+    "uuid": "9bac0a74-c640-49a4-8bd4-1eb83c7976e0",
+    "session_id": "2ae095af-af74-43b1-9c3e-8ce735b95384",
+}
+SUMMARY_EMISSION = f"print({json.dumps(TASK_SUMMARY)!r}, flush=True)"
 
 
 @unittest.skipUnless(os.name == "posix", "POSIX process execution")
@@ -86,11 +92,60 @@ class ClaudeExecutionTests(unittest.TestCase):
                 self.assertEqual(result["tools"], "Read,Glob,Grep" if read_only else "Read,Glob,Grep,Edit,Write")
                 self.assertEqual(result["mode"], "dontAsk" if read_only else "acceptEdits")
 
+    def test_task_summary_after_success_preserves_worker_and_reviewer_results_and_raw_stream(self):
+        for read_only in (False, True):
+            for summary_count in (1, 2):
+                with self.subTest(read_only=read_only, summary_count=summary_count):
+                    claims = ({"verdict": "approve", "summary": "Inspected candidate", "findings": [],
+                               "acceptance": [{"criterion": 1, "satisfied": True, "evidence": "Checked"}]}
+                              if read_only else
+                              {"status": "completed", "summary": "Implemented ticket", "blockers": [],
+                               "acceptance": [{"criterion": 1, "evidence": "Implemented"}]})
+                    events = [
+                        {"type": "system", "subtype": "init"},
+                        {"type": "result", "subtype": "success", "is_error": False,
+                         "permission_denials": [], "structured_output": claims, "num_turns": 21,
+                         "session_id": TASK_SUMMARY["session_id"]},
+                    ] + [TASK_SUMMARY] * summary_count
+                    raw_stream = "".join(json.dumps(event) + "\n" for event in events)
+                    self.fake(f"sys.stdout.write({raw_stream!r})")
+                    artifacts = self.root / f"summary-{read_only}-{summary_count}"
+                    result = self.run_fake(read_only=read_only, artifact_dir=artifacts)
+                    self.assertEqual(result, claims)
+                    self.assertEqual(json.loads((artifacts / "result.json").read_text()), claims)
+                    self.assertEqual((artifacts / "events.jsonl").read_bytes(), raw_stream.encode())
+
+    def test_task_summary_does_not_hide_invalid_events_after_the_result(self):
+        invalid_tails = (
+            "emit({})",  # A second result is ambiguous even after an allowed summary.
+            "print(json.dumps({'type':'result','subtype':'error_during_execution','is_error':True}))",
+            "print(json.dumps({'type':'system','subtype':'permission_denied'}))",
+            "print(json.dumps({'type':'system','subtype':'init'}))",
+            "print(json.dumps({'type':'system','subtype':'unknown'}))",
+            "print(json.dumps({'type':'system'}))",
+            "print(json.dumps({'type':'assistant','subtype':'task_summary'}))",
+            "print(json.dumps({'type':'tool','subtype':'task_summary'}))",
+            "print('{}')", "print('[]')", "print('null')", "print()", "print('broken')",
+            "sys.stdout.buffer.write(b'\\xff')",
+            "print('{\"type\":\"system\",\"subtype\":\"init\",\"subtype\":\"task_summary\"}')",
+            "print('{\"type\":\"system\",\"subtype\":\"task_summary\",\"detail\":{\"x\":1,\"x\":2}}')",
+            *[f"print('{{\"type\":\"system\",\"subtype\":\"task_summary\",\"detail\":{number}}}')"
+              for number in ("NaN", "Infinity", "1e999")],
+        )
+        for index, tail in enumerate(invalid_tails):
+            with self.subTest(tail=tail):
+                self.fake("emit({'status':'completed'})\n" + SUMMARY_EMISSION + "\n" + tail)
+                artifacts = self.root / f"invalid-summary-tail-{index}"
+                with self.assertRaisesRegex(ProcessError, "invalid result"):
+                    self.run_fake(artifact_dir=artifacts)
+                self.assertFalse((artifacts / "result.json").exists())
+                self.assertIn(json.dumps(TASK_SUMMARY).encode(), (artifacts / "events.jsonl").read_bytes())
+
     def test_timeout_or_nonzero_exit_rejects_even_a_success_envelope(self):
         for name, tail, expected in (("timeout", "time.sleep(30)", "timed out"),
                                      ("nonzero", "sys.exit(4)", "code 4")):
             with self.subTest(name=name):
-                self.fake("emit({'status':'completed'})\n" + tail)
+                self.fake("emit({'status':'completed'})\n" + SUMMARY_EMISSION + "\n" + tail)
                 artifacts = self.root / name
                 with self.assertRaisesRegex(ProcessError, expected):
                     self.run_fake(artifact_dir=artifacts, timeout=0.15 if name == "timeout" else 3)
@@ -99,6 +154,7 @@ class ClaudeExecutionTests(unittest.TestCase):
     def test_malformed_or_ambiguous_streams_are_rejected(self):
         cases = (
             "pass", "print('broken')", "print('[]')", "sys.stdout.buffer.write(b'\\xff')",
+            SUMMARY_EMISSION,
             "print('{\"type\":\"system\",\"type\":\"result\"}')",
             "print('{\"type\":\"system\",\"value\":NaN}')",
             "print('{\"type\":\"system\",\"value\":Infinity}')",
@@ -131,16 +187,20 @@ class ClaudeExecutionTests(unittest.TestCase):
         ]
         for index, changes in enumerate(cases):
             with self.subTest(changes=changes):
-                self.fake(f"print({json.dumps(dict(valid, **changes))!r})")
+                self.fake(f"print({json.dumps(dict(valid, **changes))!r})\n" + SUMMARY_EMISSION)
+                artifacts = self.root / f"envelope-{index}"
                 with self.assertRaisesRegex(ProcessError, "invalid result") as raised:
-                    self.run_fake(artifact_dir=self.root / f"envelope-{index}")
+                    self.run_fake(artifact_dir=artifacts)
                 self.assertNotIn("private input", str(raised.exception))
+                self.assertFalse((artifacts / "result.json").exists())
         for field in ("structured_output", "permission_denials", "is_error", "subtype"):
             with self.subTest(missing=field):
                 envelope = {key: value for key, value in valid.items() if key != field}
-                self.fake(f"print({json.dumps(envelope)!r})")
+                self.fake(f"print({json.dumps(envelope)!r})\n" + SUMMARY_EMISSION)
+                artifacts = self.root / f"missing-{field}"
                 with self.assertRaisesRegex(ProcessError, "invalid result"):
-                    self.run_fake(artifact_dir=self.root / f"missing-{field}")
+                    self.run_fake(artifact_dir=artifacts)
+                self.assertFalse((artifacts / "result.json").exists())
 
     def test_replaced_event_stream_and_result_symlinks_are_rejected(self):
         target = self.root / "outside"

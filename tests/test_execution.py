@@ -331,6 +331,7 @@ class SerialExecutionTests(unittest.TestCase):
                 from pathlib import Path
                 import subprocess
                 import sys
+                import uuid
 
                 args = sys.argv[1:]
                 prompt = sys.stdin.read()
@@ -362,9 +363,13 @@ class SerialExecutionTests(unittest.TestCase):
                               'acceptance': [{'criterion': 1, 'evidence': 'Value updated'}]}
                 denials = [{'tool_name': 'Edit', 'tool_use_id': 'denied-review-edit',
                             'tool_input': {}}] if read_only and MODE == 'denied-review' else []
+                session_id = str(uuid.uuid4())
                 print(json.dumps({'type': 'system', 'subtype': 'init'}))
                 print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False,
-                                  'permission_denials': denials, 'structured_output': result}))
+                                  'permission_denials': denials, 'structured_output': result,
+                                  'session_id': session_id, 'num_turns': 21}))
+                print(json.dumps({'type': 'system', 'subtype': 'task_summary', 'detail': None,
+                                  'uuid': str(uuid.uuid4()), 'session_id': session_id}))
                 """),
             encoding="utf-8",
         )
@@ -423,7 +428,12 @@ class SerialExecutionTests(unittest.TestCase):
                 self.assertEqual(json.loads((artifact_dir / "schema.json").read_text()), call["schema"])
                 events = [json.loads(line) for line in (artifact_dir / "events.jsonl").read_text().splitlines()]
                 normalized = json.loads((artifact_dir / "result.json").read_text())
-                self.assertEqual(events[-1]["structured_output"], normalized)
+                self.assertEqual([(event["type"], event["subtype"]) for event in events],
+                                 [("system", "init"), ("result", "success"), ("system", "task_summary")])
+                self.assertEqual(events[-1]["session_id"], events[-2]["session_id"])
+                self.assertIsNone(events[-1]["detail"])
+                self.assertEqual(events[-2]["num_turns"], 21)
+                self.assertEqual(events[-2]["structured_output"], normalized)
                 self.assertEqual(normalized, details["worker" if role == "worker" else "review"])
                 self.assertTrue((artifact_dir / "stderr.log").is_file())
             transitions = [event["to_status"] for event in result["events"] if event["task_id"] == task["id"]]
