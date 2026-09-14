@@ -39,6 +39,7 @@ class Repository:
     def __init__(self, path: Path):
         self.path = Path(path).resolve()
         self._managed_worktrees: set[Path] = set()
+        self.control_ticket = None
         top = Path(self.git("rev-parse", "--show-toplevel")).resolve()
         if top != self.path:
             raise WorkspaceError(f"repository path must be its top-level directory: {top}")
@@ -93,7 +94,17 @@ class Repository:
             raise WorkspaceError(f"workspace has uncommitted or untracked changes: {path}")
 
     def assert_clean(self) -> None:
-        self._assert_clean(self.path)
+        if self.control_ticket is None:
+            self._assert_clean(self.path)
+            return
+        from .ticket_status import document, inputs, read_regular
+        committed = document(self.git("show", f"HEAD:{self.control_ticket}").encode())
+        if inputs(committed) != inputs(document(read_regular(self.path / self.control_ticket))):
+            raise WorkspaceError("ticket input changed")
+        if self.git("diff", "--cached", "--name-only") or self.git(
+                "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none",
+                "--", ".", f":(literal,exclude){self.control_ticket}"):
+            raise WorkspaceError("workspace has uncommitted or untracked changes")
 
     def _managed(self, path: Path) -> Path:
         path = Path(path).resolve()
@@ -146,6 +157,9 @@ class Repository:
             raise WorkspaceError("worker moved HEAD; Anvil must own candidate commits")
         if not isinstance(message, str) or not message.strip():
             raise WorkspaceError("candidate commit message must be nonempty")
+        if self.control_ticket and self.git("status", "--porcelain=v1", "--",
+                                            self.control_ticket, cwd=path):
+            raise WorkspaceError("worker changed the protected ticket control file")
         self.git("add", "--all", "--", ".", cwd=path)
         tree = self.git("write-tree", cwd=path)
         if tree == self.git("rev-parse", f"{base}^{{tree}}"):

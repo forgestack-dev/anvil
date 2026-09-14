@@ -62,6 +62,16 @@ class CodexExecutionTests(unittest.TestCase):
         self.assertEqual((self.artifacts / "stderr.log").read_text(), "diagnostic\n")
         self.assertFalse((self.repo / "bad").exists())
 
+    def test_explicit_profile_reaches_both_roles(self):
+        self.fake("output.write_text(json.dumps({'argv':args}))")
+        for review in (False, True):
+            result = CodexRunner(str(self.binary), profile={"model":"test-model", "effort":"high"}).run(
+                repo=self.repo, prompt="Inspect fixture", schema=self.schema,
+                artifact_dir=self.root / f"profile-{review}", timeout=3, read_only=review)
+            argv = result["argv"]
+            self.assertEqual(argv[argv.index("--model")+1], "test-model")
+            self.assertIn('model_reasoning_effort="high"', argv)
+
     def test_read_only_is_explicit(self):
         self.fake("output.write_text(json.dumps({'sandbox': args[args.index('--sandbox')+1]}))")
         self.assertEqual(self.run_fake(read_only=True), {"sandbox": "read-only"})

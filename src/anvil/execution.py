@@ -67,7 +67,7 @@ def _worker_prompt(task: Task, base: str, *, file_tools_only: bool = False) -> s
         "the reason instead of assuming an answer. Report concrete evidence for each criterion; "
         "your result will be independently reviewed and checked. A completed result must have "
         "blockers: []; put explanatory notes in summary, not in blockers. Base commit: " + base + "\n\n"
-        "Ticket:\n" + json.dumps(task.to_dict(), indent=2)
+        "Ticket:\n" + json.dumps({k: v for k, v in task.to_dict().items() if k != "execution"}, indent=2)
     )
 
 
@@ -92,29 +92,42 @@ def _review_prompt(task: Task, base: str, candidate: str, claims: dict,
         "Use findings only for actionable changes, never for 'no findings' statements or optional "
         "style notes; put explanatory notes in summary. "
         "The supervisor will independently run required checks before integration.\n\nTicket:\n"
-        + json.dumps(task.to_dict(), indent=2) + "\n\nWorker claims:\n" + json.dumps(claims, indent=2)
+        + json.dumps({k: v for k, v in task.to_dict().items() if k != "execution"}, indent=2) + "\n\nWorker claims:\n" + json.dumps(claims, indent=2)
         + (f"\n\nDiff from {base} to {candidate}:\n{supplied_diff}"
            if supplied_diff is not None else "")
     )
 
 
 def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
-    """Execute once per ticket; failures preserve work and stop the run.
+    """Execute serially; adaptive configurations use the bounded pool coordinator.
 
-    No automatic retries/resume, remote publication, or upstream skill loading are
-    implemented here. `runner` is injectable for deterministic tests only; the CLI
+    Legacy configurations attempt each ticket once. Resume, remote publication,
+    and upstream skill loading remain unsupported. `runner` is injectable for deterministic tests only; the CLI
     selects the configured agent adapter.
     """
+    if config.adaptive is not None:
+        from dataclasses import replace
+        from .config import WorkerConfig
+        from .parallel import run_parallel
+        if any(task.worker is not None for task in TaskGraph.load(config.tickets).tasks):
+            raise ContractError("ticket worker assignments require a workers configuration")
+        configured = replace(config, workers=(WorkerConfig("serial", config.agent, config.executable),), max_processes=1)
+        return run_parallel(configured, runners={"serial": runner} if runner else None,
+                            review_runner=runner, progress=progress)
     # Validate direct API callers through the same contract as configuration files.
     config = RunConfig.from_document(config.to_dict(), base=Path.cwd())
     if config.workers:
         raise ContractError("worker pools require run() or run_parallel(), not run_serial()")
     graph = TaskGraph.load(config.tickets)
+    if config.adaptive is None and any(task.profile is not None for task in graph.tasks):
+        raise ContractError("ticket profiles require an adaptive configuration")
     if any(task.worker is not None for task in graph.tasks):
         raise ContractError("ticket worker assignments require a workers configuration")
     if any(task.skills for task in graph.tasks):
         raise ContractError("skill resolution is not implemented; remove skill requests or use planning only")
     repo = Repository(config.repo)
+    from .ticket_status import prepare_repo, attach
+    prepare_repo(repo, config)
     for protected in (repo.path, repo.common_dir):
         if config.state_dir == protected or protected in config.state_dir.parents:
             raise ContractError("state_dir must be outside the target checkout and its Git directory")
@@ -131,6 +144,7 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
         run_dir.mkdir(parents=True, exist_ok=False)
         integration = run_dir / "integration"
         current_task, attempt_id = None, None
+        publisher = None
         with RunStore(run_dir / "state.sqlite") as store:
             def record_stop(status: str, error: str, details: dict) -> bool:
                 # An interrupt can arrive after a transaction commits but before
@@ -155,6 +169,7 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
             try:
                 store.initialize(run_id=run_id, repo=str(repo.path), branch=branch, base_sha=base,
                                  tasks=graph.tasks, config=config.to_dict())
+                publisher = attach(store, config, repo)
                 store.set_run("running")
                 notify(f"Run {run_id}: verifying the baseline")
                 repo.create_worktree(integration, base)
@@ -194,6 +209,8 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
                                                      "--no-color", "--no-renames",
                                                      "--ignore-submodules=none", base, integrated,
                                                      "--", cwd=integration)
+                        if publisher is not None:
+                            store.record_message(task.id, attempt_id=attempt_id, kind="review_started", body={"sha": integrated})
                         review = runner.run(repo=integration,
                                             prompt=_review_prompt(task, base, integrated, claims,
                                                                   supplied_diff=supplied_diff),
@@ -237,6 +254,8 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
                     raise
             result = store.snapshot()
             result["run_dir"] = str(run_dir)
+            if publisher is not None:
+                result["ticket_publication"] = publisher.report()
             report = run_dir / "report.json"
             temporary = report.with_suffix(".tmp")
             temporary.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")

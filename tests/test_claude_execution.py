@@ -76,6 +76,16 @@ class ClaudeExecutionTests(unittest.TestCase):
         self.assertEqual((self.artifacts / "stderr.log").read_text(), "diagnostic\n")
         self.assertFalse((self.repo / "bad").exists())
 
+    def test_explicit_profile_reaches_both_roles(self):
+        self.fake("emit({'argv':args})")
+        for review in (False, True):
+            result = ClaudeRunner(str(self.binary), profile={"model":"test-model", "effort":"high"}).run(
+                repo=self.repo, prompt="Inspect fixture", schema=self.schema,
+                artifact_dir=self.root / f"profile-{review}", timeout=3, read_only=review)
+            argv = result["argv"]
+            self.assertEqual(argv[argv.index("--model")+1], "test-model")
+            self.assertEqual(argv[argv.index("--effort")+1], "high")
+
     def test_read_only_tools_and_inherited_git_environment_are_isolated(self):
         self.fake("emit({'tools':args[args.index('--tools')+1], 'mode':args[args.index('--permission-mode')+1],"
                   " 'git':{k:v for k,v in os.environ.items() if k.startswith('GIT_')},"

@@ -57,6 +57,7 @@ class RunStore:
                 connection.close()
             raise StoreError(f"cannot open run ledger {self.path}: {exc}") from exc
         self._connection = connection
+        self.after_commit = None
 
     def __enter__(self) -> RunStore:
         return self
@@ -76,6 +77,8 @@ class RunStore:
             if isinstance(exc, sqlite3.Error):
                 raise StoreError(f"run ledger operation failed: {exc}") from exc
             raise
+        if write and self.after_commit is not None:
+            self.after_commit()
 
     def initialize(
         self, *, run_id: str, repo: str, branch: str, base_sha: str,
@@ -98,6 +101,7 @@ class RunStore:
         with self._transaction() as connection:
             if connection.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone():
                 raise StoreError("run ledger already exists; initialize never overwrites it")
+            connection.execute("PRAGMA user_version = 2")
             connection.execute("""
                 CREATE TABLE runs (
                     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -117,7 +121,7 @@ class RunStore:
             """)
             connection.execute("""
                 CREATE TABLE attempts (
-                    id TEXT PRIMARY KEY, task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id),
+                    id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id),
                     base_sha TEXT NOT NULL, workspace TEXT NOT NULL,
                     status TEXT NOT NULL, details TEXT NOT NULL,
                     started_at TEXT NOT NULL, updated_at TEXT NOT NULL, finished_at TEXT
@@ -328,6 +332,88 @@ class RunStore:
                 (status, encoded, timestamp, finished_at, attempt_id),
             )
             self._event(connection, timestamp, "task", task_id, attempt_id, old, status, merged)
+
+    def record_rejection(self, task_id, *, attempt_id, reason, failure_category):
+        """Record a review/check rejection on the current attempt.
+
+        The rejection is stored on both the attempt and the task before any
+        retry reservation is made, so the structured failure cause survives
+        even when the invocation or cost budget rejects the next attempt.
+        Recording is idempotent with retry_attempt(): a later successful
+        retry merges the same reason and category again.
+        """
+        _text(reason, "reason")
+        if failure_category not in ("review_rejection", "verification_failure"):
+            raise StoreError("failure_category must be review_rejection or verification_failure")
+        with self._transaction() as connection:
+            task = self._active_task(connection, task_id, attempt_id)
+            if task["status"] not in {"candidate", "reviewed"}:
+                raise StoreError("only rejected review/check attempts can record a rejection")
+            timestamp = _now()
+            details = json.loads(task["details"]) | {"retry_reason": reason,
+                                                     "failure_category": failure_category}
+            encoded = _encode(details)
+            connection.execute("UPDATE attempts SET status='failed', details=?, finished_at=?, updated_at=? WHERE id=?",
+                               (encoded, timestamp, timestamp, attempt_id))
+            connection.execute("UPDATE tasks SET details=?, updated_at=? WHERE id=?",
+                               (encoded, timestamp, task_id))
+            self._event(connection, timestamp, "rejection", task_id, attempt_id,
+                        task["status"], task["status"], details)
+
+    def retry_attempt(self, task_id, *, attempt_id, reason, failure_category, new_attempt_id,
+                      base_sha, workspace, worker_id=None, agent=None):
+        """Retire a rejected attempt and claim its replacement atomically.
+
+        The task moves straight from the rejected phase to running under the
+        new attempt: it never becomes visibly pending, so ticket publication
+        cannot observe an unowned retry and a crash cannot strand the task as
+        pending. The retired attempt keeps the structured failure cause
+        alongside the formatted reason for diagnostics and learning evidence.
+        """
+        _text(reason, "reason")
+        if failure_category not in ("review_rejection", "verification_failure"):
+            raise StoreError("failure_category must be review_rejection or verification_failure")
+        _text(new_attempt_id, "new_attempt_id")
+        _text(base_sha, "base_sha")
+        _text(workspace, "workspace")
+        assignment = {}
+        for name, value in (("worker_id", worker_id), ("agent", agent)):
+            if value is not None:
+                _text(value, name)
+                assignment[name] = value
+        with self._transaction() as connection:
+            task = self._active_task(connection, task_id, attempt_id)
+            config = json.loads(self._run(connection)["config"])
+            maximum = (config.get("adaptive") or {}).get("max_attempts", 1)
+            count = connection.execute("SELECT COUNT(*) FROM attempts WHERE task_id=?", (task_id,)).fetchone()[0]
+            if count >= min(maximum, 2):
+                raise StoreError("configured attempt limit exhausted")
+            if task["status"] not in {"candidate", "reviewed"}:
+                raise StoreError("only rejected review/check attempts can retry")
+            timestamp = _now()
+            details = json.loads(task["details"]) | {"retry_reason": reason,
+                                                     "failure_category": failure_category}
+            connection.execute("UPDATE attempts SET status='failed', details=?, finished_at=?, updated_at=? WHERE id=?",
+                               (_encode(details), timestamp, timestamp, attempt_id))
+            encoded_assignment = _encode(assignment)
+            connection.execute(
+                "INSERT INTO attempts VALUES (?, ?, ?, ?, 'running', ?, ?, ?, NULL)",
+                (new_attempt_id, task_id, base_sha, workspace, encoded_assignment, timestamp, timestamp),
+            )
+            connection.execute(
+                "UPDATE tasks SET status='running', attempt_id=?, details=?, updated_at=? WHERE id=?",
+                (new_attempt_id, encoded_assignment, timestamp, task_id),
+            )
+            self._event(connection, timestamp, "retry", task_id, attempt_id, task["status"], "running",
+                        {"retry_reason": reason, "failure_category": failure_category,
+                         "new_attempt_id": new_attempt_id})
+            self._event(connection, timestamp, "task", task_id, new_attempt_id,
+                        task["status"], "running", {"base_sha": base_sha, "workspace": workspace})
+            if assignment:
+                self._event(connection, timestamp, "dispatch", task_id, new_attempt_id,
+                            task["status"], "running",
+                            assignment | {"base_sha": base_sha, "workspace": workspace})
+            return new_attempt_id
 
     @staticmethod
     def _snapshot(connection: sqlite3.Connection) -> dict:

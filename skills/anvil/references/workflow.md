@@ -38,7 +38,7 @@ One supervisor holds the repository lock. It creates an `anvil/<run-id>` branch 
 
 The runtime validates worker/reviewer result structure and criterion coverage, runs the configured checks on the reviewed integration revision, and rejects unexpected changes after review. Only the verified revision can advance the managed branch. The task becomes done before its dependents start. Worker declarations alone cannot authorize completion.
 
-A blocker, review request for changes, failed check, timeout, or other terminal failure stops the entire run. A pool cancels active commands and joins workers before releasing the repository lock. Other claimed unfinished tickets become interrupted; undispatched tickets stay pending. There are no automatic retries, human-input continuation, multi-ticket atomic staging groups, or upstream skill resolution. Nonempty `skills` requests are rejected before execution; do not describe catalog skills as invoked.
+A blocker, review request for changes, failed check, timeout, or other terminal failure stops the entire run. A pool cancels active commands and joins workers before releasing the repository lock. Other claimed unfinished tickets become interrupted; undispatched tickets stay pending. Legacy configurations have no automatic retries. Explicit adaptive configuration permits one bounded same-agent retry after a remediable review/check rejection. There is no human-input continuation, multi-ticket atomic staging groups, or upstream skill resolution. Nonempty `skills` requests are rejected before execution; do not describe catalog skills as invoked.
 
 ## Inspection and interruption
 
@@ -47,3 +47,11 @@ A blocker, review request for changes, failed check, timeout, or other terminal 
 `anvil status <run-directory> --json` reads persisted state without launching workers. Ctrl-C stops the active process group and records interruption. Timeouts also terminate the process group; ordinary child processes are cleaned up after successful commands too. Process groups are lifecycle control, not containment for a deliberately detached program.
 
 A hard crash can leave a saved run marked running. Persistence enables inspection but does not yet implement resume or Git/state reconciliation. Running the configuration again creates a separate run. Preserve previous work and evidence; do not interpret an empty ready queue, a saved running status, or a successful status read as completed work. Publication, pull requests, merging into the user's branch, and external ticket closeout are separate actions outside this runtime.
+
+## Ticket status and adaptive execution
+
+`ticket_status: true` updates source JSON tickets with execution metadata; done requires verified local integration. `anvil tickets sync <run-dir>` reconciles committed status events without resuming work. Conflicts preserve source edits; do not force-copy an old snapshot.
+
+An optional `adaptive` object configures named profiles (agent, model, effort, rank), `defaults`, and a fixed `review_profile`. Use `anvil route <run.json>` for an offline preview and `anvil routing report <run-dir>` for evidence. Modes are off, shadow, rules and adaptive; begin with shadow if effectiveness is not established. Explicit ticket profiles and worker affinity are preserved. `max_attempts` permits at most two attempts, with same-agent escalation only after remediable review/check failure. A new run never resumes an old one.
+
+Usage may be unknown and dollar estimates are not invoices. `soft_budget_usd` is an admission estimate; Claude alone supports per-profile `max_budget_usd`. Do not claim Codex has a hard dollar cap. Learning requires explicit sample/quality/cost/latency gates. Train and promote local immutable policies through `anvil routing`; promotion affects subsequent runs. Benchmark invokes paid agents and requires an authorized budget. Do not promise savings or infer that a successful model was the cheapest adequate choice.

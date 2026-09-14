@@ -5,7 +5,7 @@ description: Prepare ticket graphs, coordinate Codex and Claude Code workers, in
 
 # Anvil
 
-Use Anvil to turn a defined engineering objective into verifiable tickets and execute them serially or with a coordinated Codex/Claude Code worker pool. The runtime owns dispatch, shared-resource reservations, independent review, verification, local integration, and saved status. Separate skill-management commands install AI Hero skills for native agent sessions. Ticket-selected skill invocation, retry, pause/resume, and external ticket closure remain unsupported.
+Use Anvil to turn a defined engineering objective into verifiable tickets and execute them serially or with a coordinated Codex/Claude Code worker pool. The runtime owns dispatch, shared-resource reservations, independent review, verification, local integration, and saved status. Separate skill-management commands install AI Hero skills for native agent sessions. Ticket-selected skill invocation, pause/resume, and external ticket closure remain unsupported.
 
 ## Prepare or inspect work
 
@@ -33,4 +33,8 @@ Choose dependencies for prerequisite changes, `resources` for known shared work,
 
 Report the saved run directory and managed integration branch. Distinguish implemented, blocked, failed, interrupted, and still-pending work using recorded state. A worker claim is not acceptance: completion requires criterion evidence, approval for the exact integration revision, and passing checks. Local completion does not imply publication, merging into the user's branch, or external ticket closure.
 
-For inspection, use `anvil status <run-directory> --json`. It reads state without resuming. A repeated `run` starts fresh; it does not recover earlier attempts. Preserve failed artifacts and candidate worktrees for inspection. For unsupported live worker messaging, retries, pause/resume, or recovery, state the installed limitation and avoid substituting an untracked loop.
+For inspection, use `anvil status <run-directory> --json`. It reads state without resuming. A repeated `run` starts fresh; it does not recover earlier attempts. Preserve failed artifacts and candidate worktrees for inspection. For unsupported live worker messaging, general recovery, or pause/resume, state the installed limitation and avoid substituting an untracked loop.
+
+## Ticket status and routing
+
+When preparing JSON tickets, include `"execution": {"status": "todo"}`. Configure `ticket_status: true` when source updates are requested; the runtime owns subsequent status changes. Read [workflow.md](references/workflow.md) for routing, status reconciliation and bounded escalation. Preserve explicitly selected agents, profiles and budgets. Never infer completion from displayed status alone or activate paid benchmarks without authorization.

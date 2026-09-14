@@ -19,7 +19,7 @@
 - Deterministic tests exercise successful dependency execution, false success, failed checks, review rejection, interruptions, and Git ownership/integration boundaries.
 - A bounded live two-ticket exercise completed with independent reviews, six accepted criteria, and passing integrated checks; see [validation evidence](VALIDATION.md).
 
-This version attempts each ticket once and stops the whole run on a blocker or failure. It does not resolve upstream skills, resume saved runs, or reconcile hard crashes. Verification commands are trusted argument arrays executed directly on the host. Completion means a verified local branch, not publication or tracker closeout.
+Legacy configurations attempt each ticket once and stops the whole run on a blocker or failure. It does not resolve upstream skills, resume saved runs, or reconcile hard crashes. Verification commands are trusted argument arrays executed directly on the host. Completion means a verified local branch, not publication or tracker closeout.
 
 ## 1a. Claude Code adapter — implemented
 
@@ -71,3 +71,7 @@ These are native skills for ordinary agent sessions. Harness ticket `skills` inv
 - Add the preferred live issue tracker and external closeout semantics.
 - Add further coding-agent adapters based on usage.
 - Evaluate plugin distribution and remote execution based on usage.
+
+## 2b. Ticket status and adaptive routing — implemented, live validation bounded
+
+Source JSON status publication/reconciliation, explicit provider profiles, normalized usage, deterministic routing, bounded same-agent escalation, local history, held-out policy gates, promotion/rollback and opt-in benchmark comparisons. See [current contract](ADAPTIVE_ROUTING.md). General execution recovery and external ticket sinks remain separate work.

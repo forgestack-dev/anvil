@@ -128,11 +128,15 @@ class CodexRunner:
     """Launch Codex with fresh artifacts; return an unverified JSON object.
 
     The caller owns result-schema validation and acceptance decisions. The
-    adapter never selects a model, enables network access, or bypasses sandbox
+    adapter applies only explicitly configured profiles, never enables network access, or bypasses sandbox
     or approval policy. Its executable must come from trusted configuration.
     """
 
-    def __init__(self, codex_binary: str = "codex") -> None:
+    def __init__(self, codex_binary: str = "codex", *, profile=None) -> None:
+        if profile is not None:
+            from ..routing import validate_selection
+            validate_selection("codex", profile)
+        self.profile = dict(profile) if profile is not None else None
         _validate_binary(codex_binary)
         self.codex_binary = codex_binary
 
@@ -169,6 +173,10 @@ class CodexRunner:
             )
         except (OSError, ValueError, TypeError, UnicodeError) as exc:
             raise ProcessError(f"could not prepare Codex execution: {exc}") from exc
+        if self.profile is not None:
+            from dataclasses import replace
+            invocation = replace(invocation, argv=(*invocation.argv[:-1], "--model", self.profile["model"],
+                "--config", 'model_reasoning_effort="' + self.profile["effort"] + '"', "-"))
         outcome = run_process(
             invocation.argv,
             cwd=repo,

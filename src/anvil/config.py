@@ -68,8 +68,15 @@ class RunConfig:
     agent_binary: str | None = None
     workers: tuple[WorkerConfig, ...] = ()
     max_processes: int | None = None
+    ticket_status: bool = False
+    adaptive: dict | None = None
 
     def __post_init__(self) -> None:
+        if type(self.ticket_status) is not bool:
+            raise ContractError("ticket_status must be boolean")
+        if self.adaptive is not None:
+            from .routing import validate_config
+            validate_config(self.adaptive)
         if self.agent not in ("codex", "claude-code"):
             raise ContractError("run configuration.agent must be codex or claude-code")
         if self.agent == "claude-code" and self.codex_binary != "codex":
@@ -118,10 +125,13 @@ class RunConfig:
     def from_document(cls, value: object, *, base: Path) -> RunConfig:
         _object_fields(value, {"version", "repo", "tickets", "verification"},
                        {"state_dir", "codex_binary", "agent", "agent_binary",
-                        "agent_timeout", "check_timeout", "workers", "max_processes"},
+                        "agent_timeout", "check_timeout", "workers", "max_processes", "ticket_status", "adaptive"},
                        "run configuration")
         if type(value["version"]) is not int or value["version"] != 1:
             raise ContractError("run configuration.version must be the integer 1")
+
+        if "adaptive" in value and value["adaptive"] is None:
+            raise ContractError("adaptive must be an object, not null")
 
         def text(name: str, default: str | None = None) -> str:
             result = value.get(name, default)
@@ -168,12 +178,13 @@ class RunConfig:
             if type(value["max_processes"]) is not int or not 1 <= value["max_processes"] <= 8:
                 raise ContractError("run configuration.max_processes must be an integer between 1 and 8")
         return cls(
-            repo=resolve("repo"), tickets=resolve("tickets"),
+            repo=resolve("repo"), tickets=(base / Path(text("tickets")).expanduser()).parent.resolve() / Path(text("tickets")).name,
             verification=tuple(tuple(command) for command in commands),
             state_dir=resolve("state_dir", str(Path.home() / ".local/state/anvil")),
             agent=agent, agent_binary=binary, agent_timeout=seconds("agent_timeout", 900),
             check_timeout=seconds("check_timeout", 300),
             workers=workers, max_processes=value.get("max_processes"),
+            ticket_status=value.get("ticket_status", False), adaptive=value.get("adaptive"),
         )
 
     def to_dict(self) -> dict:
@@ -182,6 +193,10 @@ class RunConfig:
                 "agent_binary": self.executable,
                 "verification": [list(command) for command in self.verification],
                 "agent_timeout": self.agent_timeout, "check_timeout": self.check_timeout}
+        if self.ticket_status:
+            result["ticket_status"] = True
+        if self.adaptive is not None:
+            result["adaptive"] = self.adaptive
         if self.workers:
             result.update(workers=[worker.to_dict() for worker in self.workers],
                           max_processes=self.max_processes)
