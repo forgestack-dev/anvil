@@ -9,7 +9,11 @@ from pathlib import Path
 from .contracts import ContractError, _identifier, _object_fields, _text
 
 EFFORTS = {"codex": ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"),
-           "claude-code": ("low", "medium", "high", "xhigh", "max", "ultracode")}
+           "claude-code": ("low", "medium", "high", "xhigh", "max", "ultracode"),
+           # Muse has no effort levels: any profile selection for Muse is
+           # rejected by validate_selection, and adaptive profiles naming
+           # Muse are rejected by validate_config, exactly as before.
+           "muse": ()}
 
 
 def fingerprint(value):

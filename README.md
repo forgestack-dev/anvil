@@ -2,17 +2,17 @@
 
 **Turn a spec into coordinated engineering work.**
 
-Anvil is ForgeStack's engineering harness for working through specifications and tickets with coding agents. It combines an entry skill, a local runner, adapters for Codex and Claude Code, and managed installation of AI Hero skills for ordinary agent sessions.
+Anvil is ForgeStack's engineering harness for working through specifications and tickets with coding agents. It combines an entry skill, a local runner, adapters for Codex, Claude Code, and Muse, and managed installation of AI Hero skills for ordinary agent sessions.
 
 ## Current status
 
-Anvil executes a JSON ticket graph serially or with a **coordinated pool of Codex and Claude Code workers**. Workers implement ready tickets in isolated Git worktrees. One supervisor owns the SQLite ledger and integration queue, reviews each change on top of the latest accepted branch, runs required checks, and advances that branch only after acceptance evidence, independent review, and verification pass.
+Anvil executes a JSON ticket graph serially or with a **coordinated pool of Codex, Claude Code, and Muse workers**. Workers implement ready tickets in isolated Git worktrees. One supervisor owns the SQLite ledger and integration queue, reviews each change on top of the latest accepted branch, runs required checks, and advances that branch only after acceptance evidence, independent review, and verification pass. Muse turns are fulfilled by the operator running Anvil through a staged handoff rather than a local CLI; see [agent adapters](docs/AGENT_ADAPTERS.md).
 
 It also validates ticket graphs, previews dependency waves, checks local prerequisites, reads saved run state, and installs or updates AI Hero skills in both agents' native directories. Pause/resume, crash recovery, upstream skill invocation within harness tickets, Markdown intake, and issue-tracker closeout remain planned. Requests for skills in an execution ticket are rejected rather than silently ignored. Package installation does not register skills or modify an application repository automatically.
 
 ## Install and plan
 
-Requires Python 3.11 or later. Serial execution requires macOS or Linux, Git, and an installed Codex CLI or Claude Code CLI with working account access. Claude Code support targets version 2.1.260 or later with the required flags advertised by `doctor`. The runtime has no third-party Python dependencies; installation uses the build tools declared in `pyproject.toml`.
+Requires Python 3.11 or later. Serial execution requires macOS or Linux, Git, and an installed Codex CLI or Claude Code CLI with working account access for CLI-agent turns. Muse turns need no CLI: the operator running Anvil fulfills them through a staged handoff. Claude Code support targets version 2.1.260 or later with the required flags advertised by `doctor`. The runtime has no third-party Python dependencies; installation uses the build tools declared in `pyproject.toml`.
 
 ```sh
 python3 -m venv .venv

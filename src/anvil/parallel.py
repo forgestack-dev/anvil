@@ -59,6 +59,10 @@ class _Blocked(Exception):
 
 
 def _runner(agent: str, executable: str):
+    if agent == "muse":
+        # Muse turns are fulfilled by the operator through a staged handoff;
+        # there is no CLI entrypoint to locate.
+        return create_runner(agent, executable)
     # Select every entrypoint before dispatch, including Codex's PATH lookup.
     # Keep aliases intact for wrappers which dispatch on their invoked basename.
     selected = shutil.which(executable)

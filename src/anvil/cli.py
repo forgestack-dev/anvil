@@ -11,7 +11,7 @@ import shutil
 import sys
 
 from anvil import __version__
-from anvil.adapters import AGENT_NAMES, probe_agent
+from anvil.adapters import AGENT_NAMES, EXECUTION_AGENTS, probe_agent
 from anvil.contracts import ContractError
 from anvil.planning import TaskGraph
 from anvil.processes import ProcessError
@@ -32,7 +32,7 @@ def parser() -> argparse.ArgumentParser:
         subcommand.add_argument("--json", action="store_true", help="Print JSON output.")
     check = subcommands.add_parser("doctor", help="Check Git and the selected agent CLI.")
     check.add_argument("--config", type=Path, help="Also probe explicit model/effort profile controls in a run configuration.")
-    check.add_argument("--agent", choices=AGENT_NAMES, default="codex")
+    check.add_argument("--agent", choices=EXECUTION_AGENTS, default="codex")
     check.add_argument("--agent-binary", help="Trusted agent executable name or path.")
     check.add_argument("--json", action="store_true", help="Print JSON output.")
     run = subcommands.add_parser("run", help="Execute a trusted serial or worker-pool configuration.")
@@ -162,8 +162,11 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"Anvil {__version__} — serial and coordinated worker execution")
             print(f"Git: {git or 'not found'}")
-            label = "Codex" if arguments.agent == "codex" else "Claude Code"
-            print(f"{label}: {agent.executable or 'not found'}")
+            label = {"codex": "Codex", "claude-code": "Claude Code", "muse": "Muse"}[arguments.agent]
+            if arguments.agent == "muse":
+                print(f"{label}: operator-fulfilled turns (no local CLI)")
+            else:
+                print(f"{label}: {agent.executable or 'not found'}")
             print(f"{label} compatibility: {'compatible' if agent.compatible else 'unavailable/incompatible'}")
             if agent.error:
                 print(f"{label} detail: {agent.error}")

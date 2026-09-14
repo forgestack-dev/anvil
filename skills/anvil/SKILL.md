@@ -1,11 +1,11 @@
 ---
 name: anvil
-description: Prepare ticket graphs, coordinate Codex and Claude Code workers, inspect saved runs, and manage native AI Hero skills with the ForgeStack Anvil engineering harness. Use for specification or ticket burndown and Anvil operation; check installed capabilities before execution.
+description: Prepare ticket graphs, coordinate Codex, Claude Code, and Muse workers, inspect saved runs, and manage native AI Hero skills with the ForgeStack Anvil engineering harness. Use for specification or ticket burndown and Anvil operation; check installed capabilities before execution.
 ---
 
 # Anvil
 
-Use Anvil to turn a defined engineering objective into verifiable tickets and execute them serially or with a coordinated Codex/Claude Code worker pool. The runtime owns dispatch, shared-resource reservations, independent review, verification, local integration, and saved status. Separate skill-management commands install AI Hero skills for native agent sessions. Ticket-selected skill invocation, pause/resume, and external ticket closure remain unsupported.
+Use Anvil to turn a defined engineering objective into verifiable tickets and execute them serially or with a coordinated Codex/Claude Code/Muse worker pool. The runtime owns dispatch, shared-resource reservations, independent review, verification, local integration, and saved status. Separate skill-management commands install AI Hero skills for native agent sessions. Ticket-selected skill invocation, pause/resume, and external ticket closure remain unsupported.
 
 ## Prepare or inspect work
 

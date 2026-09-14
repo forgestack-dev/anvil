@@ -29,11 +29,13 @@ class WorkerConfig:
 
     def __post_init__(self) -> None:
         _identifier(self.id, "worker.id")
-        if self.agent not in ("codex", "claude-code"):
-            raise ContractError("worker.agent must be codex or claude-code")
+        if self.agent not in ("codex", "claude-code", "muse"):
+            raise ContractError("worker.agent must be codex, claude-code, or muse")
         binary = self.agent_binary
         if binary is None:
-            binary = "codex" if self.agent == "codex" else "claude"
+            # The Muse adapter never launches an executable; "muse" is only a label.
+            binary = ("codex" if self.agent == "codex"
+                      else "claude" if self.agent == "claude-code" else "muse")
         if not isinstance(binary, str) or not binary.strip() or "\0" in binary:
             raise ContractError("worker.agent_binary must be nonempty text without NUL")
         object.__setattr__(self, "agent_binary", binary)
@@ -77,16 +79,22 @@ class RunConfig:
         if self.adaptive is not None:
             from .routing import validate_config
             validate_config(self.adaptive)
-        if self.agent not in ("codex", "claude-code"):
-            raise ContractError("run configuration.agent must be codex or claude-code")
-        if self.agent == "claude-code" and self.codex_binary != "codex":
+        if self.agent not in ("codex", "claude-code", "muse"):
+            raise ContractError("run configuration.agent must be codex, claude-code, or muse")
+        if self.agent != "codex" and self.codex_binary != "codex":
             raise ContractError("codex_binary is only supported for the codex agent")
         if (self.agent_binary is not None and self.codex_binary != "codex"
                 and self.agent_binary != self.codex_binary):
             raise ContractError("agent_binary conflicts with the legacy codex_binary")
         binary = self.agent_binary
         if binary is None:
-            binary = self.codex_binary if self.agent == "codex" else "claude"
+            if self.agent == "codex":
+                binary = self.codex_binary
+            elif self.agent == "claude-code":
+                binary = "claude"
+            else:
+                # The Muse adapter never launches an executable; "muse" is only a label.
+                binary = "muse"
         if not isinstance(binary, str) or not binary.strip() or "\0" in binary:
             raise ContractError("run configuration.agent_binary must be nonempty text without NUL")
         object.__setattr__(self, "agent_binary", binary)
@@ -158,14 +166,15 @@ class RunConfig:
                     or any(not isinstance(arg, str) or not arg or "\0" in arg for arg in command)):
                 raise ContractError("each verification command must be a nonempty array of arguments")
         agent = value.get("agent", "codex")
-        if agent not in ("codex", "claude-code"):
-            raise ContractError("run configuration.agent must be codex or claude-code")
+        if agent not in ("codex", "claude-code", "muse"):
+            raise ContractError("run configuration.agent must be codex, claude-code, or muse")
         if "codex_binary" in value and "agent_binary" in value:
             raise ContractError("use agent_binary or legacy codex_binary, not both")
         if "codex_binary" in value and agent != "codex":
             raise ContractError("codex_binary is only supported for the codex agent")
         binary_field = "codex_binary" if "codex_binary" in value else "agent_binary"
-        binary = text(binary_field, "codex" if agent == "codex" else "claude")
+        binary = text(binary_field, "codex" if agent == "codex"
+                      else "claude" if agent == "claude-code" else "muse")
         binary = _executable_path(binary, agent, base)
         workers = ()
         if "workers" in value:
