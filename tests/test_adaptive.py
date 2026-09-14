@@ -252,21 +252,29 @@ prompt = sys.stdin.read()''')
         # stays eligible under the same retry limit.
         self.assertEqual(learning_catalog(captured[0]),learning_catalog(cfg))
 
-    def test_benchmark_budget_accounts_for_escalation_profile(self):
+    def test_benchmark_budget_sums_reachable_escalation_paths(self):
         import anvil.benchmark as benchmark_module
         from anvil.contracts import ContractError
         tasks=[{'id':'b1','title':'Low-risk check','objective':'Check','depends_on':[],
                 'acceptance_criteria':['Checked'],'risk':'low'}]
         self.tickets.write_text(json.dumps({'version':1,'tasks':tasks}))
-        options=config_options(attempts=2)
-        options['profiles']['standard']['reserve_usd']=1.0
-        options['profiles']['strong']['reserve_usd']=10.0
-        # Selected-profile math reserves (1+10)*1*2*2+(10+10)*1*2*2=62 and
-        # would pass; escalation-aware math reserves (10+10)*1*2*2*2=80.
-        options['soft_budget_usd']=70.0
-        cfg=replace(self.config,adaptive=options)
+        def options_with_budget(limit):
+            options=config_options(attempts=2)
+            options['profiles']['standard']['reserve_usd']=1.0
+            options['profiles']['strong']['reserve_usd']=10.0
+            options['soft_budget_usd']=limit
+            return replace(self.config,adaptive=options)
+        def fake_run(cfg,**kw):
+            raise RuntimeError('stop after budget check')
+        # Reachable maximum is 31 for standard (1+10 plus two 10 reviews)
+        # plus 20 for strong (10 plus one 10 review): 51. The old
+        # worst-case-per-attempt math reserved 80 and rejected this budget.
+        with patch.object(benchmark_module,'run',fake_run):
+            with self.assertRaisesRegex(RuntimeError,'stop after budget check'):
+                benchmark_module.compare(options_with_budget(79.0),['standard','strong'])
+        # A budget below the reachable maximum is still rejected.
         with self.assertRaisesRegex(ContractError,'aggregate soft budget'):
-            benchmark_module.compare(cfg,['standard','strong'])
+            benchmark_module.compare(options_with_budget(50.0),['standard','strong'])
 
     def test_benchmark_incomplete_telemetry_charges_escalation_path(self):
         import anvil.benchmark as benchmark_module

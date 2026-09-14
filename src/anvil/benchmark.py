@@ -25,11 +25,12 @@ def _escalation_path(profiles, name, attempts):
     return path
 
 
-def _escalation_reserve(profiles, name, attempts):
-    """Worst-case per-attempt reservation for a profile: retries escalate up
-    the same-agent rank chain, so budget for the most expensive reachable
-    profile on every attempt."""
-    return max(profiles[p].get("reserve_usd", 0) for p in _escalation_path(profiles, name, attempts))
+def _path_reserve(profiles, review_reserve, name, attempts):
+    """Total reservation along a profile's bounded escalation path: each
+    reachable attempt reserves its own profile plus the reviewer. Profiles
+    with no escalation headroom contribute fewer attempts."""
+    path = _escalation_path(profiles, name, attempts)
+    return sum(profiles[p].get("reserve_usd", 0) for p in path) + review_reserve * len(path)
 
 
 def compare(config, names):
@@ -54,7 +55,10 @@ def compare(config, names):
     # Retries can escalate to a more expensive profile than the one under
     # comparison, so reserve the worst case per profile for every attempt;
     # otherwise the budget check can pass here and fail midway through.
-    reserve = sum((_escalation_reserve(options["profiles"], n, attempts)+review.get("reserve_usd",0))*len(graph.tasks)*attempts for n in names)
+    # The aggregate budget sums each profile's reachable escalation path, as
+    # the consumption accounting does: a profile with no escalation headroom
+    # cannot run the full attempt count.
+    reserve = sum(_path_reserve(options["profiles"], review.get("reserve_usd",0), n, attempts)*len(graph.tasks) for n in names)
     limit = options.get("soft_budget_usd")
     if limit is not None and reserve > limit:
         raise ContractError("benchmark cannot reserve aggregate soft budget")
@@ -75,9 +79,7 @@ def compare(config, names):
         # Without complete telemetry, charge the actual bounded escalation
         # path: the first attempt reserves the selected profile and each
         # retry reserves the escalated profile, plus the reviewer every time.
-        path = _escalation_path(options["profiles"], name, attempts)
-        reserved = (sum(options["profiles"][p].get("reserve_usd",0) for p in path)
-                    + review.get("reserve_usd",0)*len(path))*len(graph.tasks)
+        reserved = _path_reserve(options["profiles"], review.get("reserve_usd",0), name, attempts)*len(graph.tasks)
         consumed += measured.get("known_cost_usd",0) if measured.get("cost_complete") else max(reserved,measured.get("known_cost_usd",0))
         if result["status"] in ("interrupted", "failed"):
             break
