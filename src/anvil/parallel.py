@@ -230,6 +230,11 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                         return False
                     # Reject reviewer/check mutation before considering an implementation retry.
                     repo.assert_revision(workspace, integration.sha)
+                    # Record the rejection before reserving the next attempt: if
+                    # the invocation or cost budget rejects the reservation, the
+                    # structured failure cause must still reach the final report.
+                    store.record_rejection(item.task.id, attempt_id=item.attempt_id,
+                                           reason=reason, failure_category=failure_category)
                     adaptive.settle(item)
                     new_id = str(uuid.uuid4())
                     decision = adaptive.decide(item.task, item.worker, base, new_id, escalate=profile)

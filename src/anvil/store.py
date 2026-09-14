@@ -333,6 +333,33 @@ class RunStore:
             )
             self._event(connection, timestamp, "task", task_id, attempt_id, old, status, merged)
 
+    def record_rejection(self, task_id, *, attempt_id, reason, failure_category):
+        """Record a review/check rejection on the current attempt.
+
+        The rejection is stored on both the attempt and the task before any
+        retry reservation is made, so the structured failure cause survives
+        even when the invocation or cost budget rejects the next attempt.
+        Recording is idempotent with retry_attempt(): a later successful
+        retry merges the same reason and category again.
+        """
+        _text(reason, "reason")
+        if failure_category not in ("review_rejection", "verification_failure"):
+            raise StoreError("failure_category must be review_rejection or verification_failure")
+        with self._transaction() as connection:
+            task = self._active_task(connection, task_id, attempt_id)
+            if task["status"] not in {"candidate", "reviewed"}:
+                raise StoreError("only rejected review/check attempts can record a rejection")
+            timestamp = _now()
+            details = json.loads(task["details"]) | {"retry_reason": reason,
+                                                     "failure_category": failure_category}
+            encoded = _encode(details)
+            connection.execute("UPDATE attempts SET status='failed', details=?, finished_at=?, updated_at=? WHERE id=?",
+                               (encoded, timestamp, timestamp, attempt_id))
+            connection.execute("UPDATE tasks SET details=?, updated_at=? WHERE id=?",
+                               (encoded, timestamp, task_id))
+            self._event(connection, timestamp, "rejection", task_id, attempt_id,
+                        task["status"], task["status"], details)
+
     def retry_attempt(self, task_id, *, attempt_id, reason, failure_category, new_attempt_id,
                       base_sha, workspace, worker_id=None, agent=None):
         """Retire a rejected attempt and claim its replacement atomically.

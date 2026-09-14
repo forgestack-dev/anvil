@@ -41,7 +41,13 @@ def _invocation_provenance(invocation):
 
 def _provenance_ok(row):
     """Every worker and reviewer invocation behind a sample must confirm the
-    requested model (or report none) and share one CLI version."""
+    requested model (or report none); CLI versions must be consistent per agent.
+
+    A mixed pool naturally reports different CLI versions for different agents
+    (e.g. a Codex worker and a Claude reviewer), so versions are grouped by
+    agent instead of requiring one version string across the whole sample.
+    Invocations without an agent tag share one implicit group.
+    """
     provenance = row.get("provenance")
     if not provenance:
         # Samples recorded before per-invocation provenance keep the
@@ -49,7 +55,7 @@ def _provenance_ok(row):
         return (row.get("requested_model") and
                 row.get("reported_model") in (None, row.get("requested_model")) and
                 row.get("cli_version") and row.get("cli_version") != "injected-test-runner")
-    versions = set()
+    versions = {}
     for entry in provenance:
         worker = entry.get("worker") or {}
         if not worker.get("requested_model"):
@@ -65,8 +71,10 @@ def _provenance_ok(row):
         for invocation in (worker, review) if review else (worker,):
             version = invocation.get("cli_version")
             if version:
-                versions.add(version)
-    return len(versions) == 1 and "injected-test-runner" not in versions
+                versions.setdefault(invocation.get("agent"), set()).add(version)
+    if not versions:
+        return False
+    return all(len(v) == 1 and "injected-test-runner" not in v for v in versions.values())
 
 
 def import_run(repo, result):
@@ -203,6 +211,15 @@ def train(repo, config, *, min_samples, max_quality_loss, min_cost_improvement, 
                 routes[agent+":"+cohort] = name
                 evidence.append({"agent":agent, "cohort":cohort, "baseline":baseline, "candidate":name,
                                  "training":training, "held_out":held_out})
+    # The reviewer CLI is part of policy compatibility too: evidence reviewed
+    # under one reviewer build is not interchangeable with another. Bind its
+    # version when the training rows agree on exactly one.
+    review_agent = profiles[config.adaptive["review_profile"]]["agent"]
+    review_versions = {review.get("cli_version") for row in rows for entry in row.get("provenance") or ()
+                       if (review := entry.get("review")) and review.get("agent") == review_agent}
+    review_versions.discard(None)
+    if len(review_versions) == 1 and review_agent not in versions:
+        versions[review_agent] = next(iter(review_versions))
     policy = {"version":1, "catalog":catalog, "routes":routes, "evidence":evidence, "cli_versions":versions,
               "history_digest":fingerprint(all_rows), "gates":{"min_samples":min_samples,
               "max_quality_loss":max_quality_loss, "min_cost_improvement":min_cost_improvement,

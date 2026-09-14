@@ -252,6 +252,40 @@ prompt = sys.stdin.read()''')
         # stays eligible under the same retry limit.
         self.assertEqual(learning_catalog(captured[0]),learning_catalog(cfg))
 
+    def test_benchmark_budget_accounts_for_escalation_profile(self):
+        import anvil.benchmark as benchmark_module
+        from anvil.contracts import ContractError
+        tasks=[{'id':'b1','title':'Low-risk check','objective':'Check','depends_on':[],
+                'acceptance_criteria':['Checked'],'risk':'low'}]
+        self.tickets.write_text(json.dumps({'version':1,'tasks':tasks}))
+        options=config_options(attempts=2)
+        options['profiles']['standard']['reserve_usd']=1.0
+        options['profiles']['strong']['reserve_usd']=10.0
+        # Selected-profile math reserves (1+10)*1*2*2+(10+10)*1*2*2=62 and
+        # would pass; escalation-aware math reserves (10+10)*1*2*2*2=80.
+        options['soft_budget_usd']=70.0
+        cfg=replace(self.config,adaptive=options)
+        with self.assertRaisesRegex(ContractError,'aggregate soft budget'):
+            benchmark_module.compare(cfg,['standard','strong'])
+
+    def test_benchmark_incomplete_telemetry_reserves_all_attempts(self):
+        import anvil.benchmark as benchmark_module
+        tasks=[{'id':'b1','title':'Low-risk check','objective':'Check','depends_on':[],
+                'acceptance_criteria':['Checked'],'risk':'low'}]
+        self.tickets.write_text(json.dumps({'version':1,'tasks':tasks}))
+        options=config_options(attempts=2)
+        options['profiles']['standard']['reserve_usd']=2.0
+        options['profiles']['strong']['reserve_usd']=2.0
+        def fake_run(cfg,**kw):
+            return {'run_dir':'x','status':'success',
+                    'routing':{'known_cost_usd':1.0}}
+        cfg=replace(self.config,adaptive=options)
+        with patch.object(benchmark_module,'run',fake_run):
+            result=benchmark_module.compare(cfg,['standard','strong'])
+        # Without complete telemetry each profile reserves every attempt:
+        # (2+2)*1 task*2 attempts per profile, two profiles.
+        self.assertEqual(result['known_or_reserved_cost_usd'],16.0)
+
     def test_damaged_history_does_not_erase_accepted_run_report(self):
         history=self.repo/'.git'/'anvil-routing'
         history.mkdir();(history/'history.sqlite').write_bytes(b'not a database')

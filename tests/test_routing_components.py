@@ -57,8 +57,9 @@ class RoutingComponents(unittest.TestCase):
         path.write_text('{}');data=usage(path,'codex',profile)
         self.assertIsNone(data['cost_usd']);self.assertIsNotNone(data['usage_error'])
 
-    def populate(self, *, candidate_success=True, samples=100, attempts=1):
-        options=config_options(attempts=attempts);cfg=replace(self.config,adaptive=options)
+    def populate(self, *, candidate_success=True, samples=100, attempts=1, options=None):
+        options = options if options is not None else config_options(attempts=attempts)
+        cfg = replace(self.config, adaptive=options)
         repo=Repository(self.repo)
         with history(repo) as db:
             for split in (0,1):
@@ -151,6 +152,46 @@ class RoutingComponents(unittest.TestCase):
         self.assertNotEqual(learning_catalog(replace(cfg, agent_timeout=cfg.agent_timeout + 1)), catalog)
         self.assertNotEqual(learning_catalog(replace(cfg, check_timeout=cfg.check_timeout + 1)), catalog)
         self.assertEqual(learning_catalog(replace(cfg, ticket_status=not cfg.ticket_status)), catalog)
+
+    def test_training_groups_cli_versions_by_agent(self):
+        from anvil.learning import _provenance_ok
+        def invocation(agent, cli):
+            return {'agent': agent, 'requested_model': 'm', 'reported_model': 'm',
+                    'cli_version': cli}
+        # A mixed pool (Codex worker, Claude reviewer) naturally reports
+        # different CLI versions per agent; the sample stays eligible.
+        row = {'provenance': [
+            {'worker': invocation('codex', 'codex-v1'),
+             'review': invocation('claude-code', 'claude-v9')},
+            {'worker': invocation('codex', 'codex-v1'),
+             'review': invocation('claude-code', 'claude-v9')}]}
+        self.assertTrue(_provenance_ok(row))
+        # Two versions for the same agent are still rejected.
+        row['provenance'][1]['worker']['cli_version'] = 'codex-v2'
+        self.assertFalse(_provenance_ok(row))
+
+    def test_training_binds_reviewer_cli_version_per_agent(self):
+        options = config_options()
+        options['profiles']['reviewer'] = {'agent': 'claude-code', 'model': 'test-reviewer',
+                                           'effort': 'low', 'rank': 1}
+        options['review_profile'] = 'reviewer'
+        repo, cfg = self.populate(options=options)
+        with history(repo) as db:
+            for run_id, task_id, data in db.execute('SELECT * FROM samples').fetchall():
+                row = json.loads(data)
+                row['provenance'] = [
+                    {'worker': {'agent': 'codex', 'requested_model': row['requested_model'],
+                                'reported_model': row['reported_model'], 'cli_version': 'codex-v1'},
+                     'review': {'agent': 'claude-code', 'requested_model': 'test-reviewer',
+                                'reported_model': 'test-reviewer', 'cli_version': 'claude-v9'}}]
+                db.execute('UPDATE samples SET data=? WHERE run_id=? AND task_id=?',
+                           (json.dumps(row), run_id, task_id))
+        policy = train(repo, cfg, min_samples=20, max_quality_loss=0.1,
+                       min_cost_improvement=0.2, max_latency_ratio=1.1)
+        self.assertTrue(policy['validated'])
+        # Worker and reviewer versions are bound per agent, not collapsed.
+        self.assertEqual(policy['cli_versions'],
+                         {'codex': 'fixture-v1', 'claude-code': 'claude-v9'})
 
     def test_training_rejects_mismatched_invocation_provenance(self):
         def worker(model='test-standard', cli='fixture-v1', reported=None):

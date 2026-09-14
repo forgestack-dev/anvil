@@ -56,6 +56,34 @@ class StoreTests(unittest.TestCase):
             self.assertEqual([task["status"] for task in snapshot["tasks"]], ["done", "running"])
             self.assertEqual(snapshot["attempts"][1]["base_sha"], "integrated")
 
+    def test_recorded_rejection_survives_refused_retry_reservation(self):
+        with RunStore(self.path) as store:
+            self.initialize(store)
+            store.set_run("running")
+            attempt = store.start_attempt("a", "base", "/workspace/a")
+            store.transition("a", "candidate", attempt_id=attempt,
+                             details={"candidate_sha": "candidate",
+                                      "review": {"verdict": "request_changes", "findings": ["bug"]}})
+            with self.assertRaisesRegex(StoreError, "failure_category"):
+                store.record_rejection("a", attempt_id=attempt, reason="r", failure_category="bogus")
+            # The coordinator records the rejection before reserving the next
+            # attempt. If the invocation or cost budget rejects that
+            # reservation, the run fails here with the cause already stored.
+            store.record_rejection("a", attempt_id=attempt, reason="reviewer requested changes",
+                                   failure_category="review_rejection")
+            recorded = next(a for a in store.snapshot()["attempts"] if a["id"] == attempt)
+            self.assertEqual(recorded["status"], "failed")
+            self.assertEqual(recorded["details"]["failure_category"], "review_rejection")
+            self.assertEqual(recorded["details"]["retry_reason"], "reviewer requested changes")
+            # The stop transition must not clobber the recorded cause.
+            store.transition("a", "failed", attempt_id=attempt,
+                             details={"error": "soft cost budget cannot reserve worker and reviewer"})
+            stopped = next(a for a in store.snapshot()["attempts"] if a["id"] == attempt)
+            self.assertEqual(stopped["details"]["failure_category"], "review_rejection")
+            self.assertEqual(stopped["details"]["retry_reason"], "reviewer requested changes")
+            self.assertEqual(stopped["details"]["error"],
+                             "soft cost budget cannot reserve worker and reviewer")
+
     def test_stale_attempt_cannot_change_a_task_or_append_an_event(self):
         with RunStore(self.path) as store:
             self.initialize(store)

@@ -6,6 +6,15 @@ from .planning import TaskGraph
 from .execution import run
 
 
+def _escalation_reserve(profiles, name):
+    """Worst-case reservation for a profile: retries escalate up the same-agent
+    rank chain, so budget for the most expensive reachable profile."""
+    base = profiles[name]
+    chain = [p for p in profiles.values()
+             if p.get("agent") == base.get("agent") and p.get("rank", 0) >= base.get("rank", 0)]
+    return max([p.get("reserve_usd", 0) for p in chain] or [0])
+
+
 def compare(config, names):
     if config.adaptive is None or config.workers:
         raise ContractError("benchmark requires a serial adaptive configuration")
@@ -25,7 +34,10 @@ def compare(config, names):
     if calls > options.get("max_invocations", 100):
         raise ContractError("benchmark exceeds aggregate invocation budget")
     review = options["profiles"][options["review_profile"]]
-    reserve = sum((options["profiles"][n].get("reserve_usd",0)+review.get("reserve_usd",0))*len(graph.tasks)*attempts for n in names)
+    # Retries can escalate to a more expensive profile than the one under
+    # comparison, so reserve the worst case per profile for every attempt;
+    # otherwise the budget check can pass here and fail midway through.
+    reserve = sum((_escalation_reserve(options["profiles"], n)+review.get("reserve_usd",0))*len(graph.tasks)*attempts for n in names)
     limit = options.get("soft_budget_usd")
     if limit is not None and reserve > limit:
         raise ContractError("benchmark cannot reserve aggregate soft budget")
@@ -43,7 +55,7 @@ def compare(config, names):
         result = run(replace(config, adaptive=selected, ticket_status=False))
         results.append({"profile":name, "run_dir":result["run_dir"], "status":result["status"], "routing":result.get("routing")})
         measured = result.get("routing",{})
-        reserved = (options["profiles"][name].get("reserve_usd",0)+review.get("reserve_usd",0))*len(graph.tasks)
+        reserved = (options["profiles"][name].get("reserve_usd",0)+review.get("reserve_usd",0))*len(graph.tasks)*attempts
         consumed += measured.get("known_cost_usd",0) if measured.get("cost_complete") else max(reserved,measured.get("known_cost_usd",0))
         if result["status"] in ("interrupted", "failed"):
             break
