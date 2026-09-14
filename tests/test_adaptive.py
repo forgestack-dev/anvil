@@ -190,3 +190,22 @@ prompt = sys.stdin.read()''')
         from anvil.learning import import_run
         from anvil.workspaces import Repository
         self.assertEqual(import_run(Repository(self.repo),result)['imported_or_existing'],2)
+
+    def test_damaged_history_does_not_erase_accepted_run_report(self):
+        history=self.repo/'.git'/'anvil-routing'
+        history.mkdir();(history/'history.sqlite').write_bytes(b'not a database')
+        result=run_serial(replace(self.config,adaptive=config_options()),runner=FakeRunner())
+        self.assertEqual(result['status'],'success')
+        self.assertEqual(result['learning']['status'],'history_update_pending')
+        saved=json.loads((Path(result['run_dir'])/'report.json').read_text())
+        self.assertEqual(saved['status'],'success')
+
+    def test_corrupt_telemetry_does_not_break_saved_routing_report(self):
+        result=run_serial(replace(self.config,adaptive=config_options()),runner=FakeRunner())
+        artifact=Path(result['run_dir'])/'artifacts'/result['attempts'][0]['id']/'worker'/'invocation.json'
+        artifact.write_text('{"role":"worker","cost_usd":-100,"duration_seconds":1}')
+        from anvil.adaptive_runtime import report
+        report(result)
+        self.assertEqual(result['status'],'success')
+        self.assertFalse(result['routing']['cost_complete'])
+        self.assertGreaterEqual(result['routing']['known_cost_usd'],0)

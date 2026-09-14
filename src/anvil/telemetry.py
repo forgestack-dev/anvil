@@ -102,3 +102,16 @@ class MeasuredRunner:
                     atomic(directory / "invocation.json", encoded(record))
             except (OSError, ValueError):
                 pass
+
+
+def load_record(path, role):
+    """Treat absent or damaged accounting as unknown, never as free execution."""
+    value = json.loads(read_regular(path))
+    if not isinstance(value, dict) or value.get("role") != role or "cost_usd" not in value:
+        raise ValueError("invalid invocation record")
+    cost = value["cost_usd"]
+    if cost is not None and number(cost) is None:
+        raise ValueError("invalid invocation cost")
+    if number(value.get("duration_seconds")) is None:
+        raise ValueError("invalid invocation duration")
+    return value

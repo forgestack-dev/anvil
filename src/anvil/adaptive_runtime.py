@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import shutil
+import sqlite3
 from .adapters import create_runner
 from .contracts import ContractError
 from .routing import Policy, preflight
-from .telemetry import MeasuredRunner
+from .telemetry import MeasuredRunner, load_record
 from .ticket_status import read_regular
 
 
@@ -86,7 +87,7 @@ class Session:
         total, complete = 0.0, True
         for role in ("worker", "review"):
             try:
-                record = json.loads(read_regular(item.artifacts / role / "invocation.json"))
+                record = load_record(item.artifacts / role / "invocation.json", role)
                 if record["cost_usd"] is None:
                     complete = False
                 else:
@@ -107,7 +108,7 @@ def report(result):
         for role in ("worker", "review"):
             path = Path(result["run_dir"]) / "artifacts" / attempt["id"] / role / "invocation.json"
             try:
-                invocations.append(json.loads(read_regular(path)))
+                invocations.append(load_record(path, role))
             except (OSError, ValueError):
                 started = role == "worker" or any(
                     e["attempt_id"] == attempt["id"] and e["details"].get("message_kind") == "review_started"
@@ -151,5 +152,5 @@ def learn(repo, config, result):
                     result["learning"].update(promote(repo, policy["id"], fingerprint(config.adaptive["profiles"])))
                 else:
                     result["learning"].update(rollback(repo))
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, sqlite3.Error, KeyError, TypeError) as exc:
         result["learning"] = {"error": str(exc), "status": "history_update_pending"}
