@@ -61,16 +61,26 @@ class RoutingComponents(unittest.TestCase):
         options = options if options is not None else config_options(attempts=attempts)
         cfg = replace(self.config, adaptive=options)
         repo=Repository(self.repo)
+        review_profile = options['profiles'][options['review_profile']]
         with history(repo) as db:
             for split in (0,1):
                 for name,cost in [('standard',1.0),('strong',0.2)]:
                     for i in range(samples):
+                        profile = options['profiles'][name]
                         value={'catalog':learning_catalog(cfg),'profile':name,'agent':'codex',
                                'assessment':{'cohort':'rank-1','input_digest':f'{i*2+split:08x}'+'0'*56},
                                'cli_version':'fixture-v1','eligible':True,'cost':cost,'duration':1,
-                               'reported_model':options['profiles'][name]['model'],
-                               'requested_model':options['profiles'][name]['model'],
-                               'accepted':True if name=='standard' else candidate_success}
+                               'reported_model':profile['model'],
+                               'requested_model':profile['model'],
+                               'accepted':True if name=='standard' else candidate_success,
+                               'provenance':[{'worker':{'agent':'codex',
+                                                        'requested_model':profile['model'],
+                                                        'reported_model':profile['model'],
+                                                        'cli_version':'fixture-v1'},
+                                              'review':{'agent':review_profile['agent'],
+                                                        'requested_model':review_profile['model'],
+                                                        'reported_model':review_profile['model'],
+                                                        'cli_version':'fixture-v1'}}]}
                         db.execute('INSERT INTO samples VALUES (?,?,?)',(f'{split}-{name}-{i}','t',json.dumps(value)))
         return repo,cfg
 
@@ -219,17 +229,39 @@ class RoutingComponents(unittest.TestCase):
                                min_cost_improvement=0.2, max_latency_ratio=1.1)
                 self.assertFalse(policy['validated'])
 
-    def test_training_accepts_consistent_invocation_provenance(self):
-        repo, cfg = self.populate()
-        with history(repo) as db:
-            for run_id, task_id, data in db.execute('SELECT * FROM samples').fetchall():
-                row = json.loads(data)
-                row['provenance'] = [
-                    {'worker': {'requested_model': row['requested_model'],
-                                'reported_model': row['reported_model'],
-                                'cli_version': row['cli_version']}, 'review': None}]
-                db.execute('UPDATE samples SET data=? WHERE run_id=? AND task_id=?',
-                           (json.dumps(row), run_id, task_id))
-        policy = train(repo, cfg, min_samples=20, max_quality_loss=0.1,
-                       min_cost_improvement=0.2, max_latency_ratio=1.1)
-        self.assertTrue(policy['validated'])
+    def test_training_rejects_missing_or_mixed_reviewer_version(self):
+        # The reviewer version is unknown when provenance lacks review
+        # invocations, and inconsistent when rows disagree: either way the
+        # acceptance labels are not comparable and no route may validate.
+        # The reviewer agent differs from the worker agent so per-row
+        # provenance stays consistent while rows disagree with each other.
+        options = config_options()
+        options['profiles']['reviewer'] = {'agent': 'claude-code', 'model': 'test-reviewer',
+                                           'effort': 'low', 'rank': 1}
+        options['review_profile'] = 'reviewer'
+        repo, cfg = self.populate(options=options)
+        def worker(row):
+            return {'agent': 'codex', 'requested_model': row['requested_model'],
+                    'reported_model': row['reported_model'], 'cli_version': row['cli_version']}
+        def review(cli):
+            return {'agent': 'claude-code', 'requested_model': 'test-reviewer',
+                    'reported_model': 'test-reviewer', 'cli_version': cli}
+        cases = {
+            'missing reviewer version': lambda row, i: [
+                {'worker': worker(row), 'review': None}],
+            'mixed reviewer versions': lambda row, i: [
+                {'worker': worker(row), 'review': review('claude-v9' if i % 2 else 'other-v9')}],
+        }
+        for label, provenance in cases.items():
+            with self.subTest(label=label):
+                with history(repo) as db:
+                    for n, (run_id, task_id, data) in enumerate(
+                            db.execute('SELECT * FROM samples').fetchall()):
+                        row = json.loads(data)
+                        row['provenance'] = provenance(row, n)
+                        db.execute('UPDATE samples SET data=? WHERE run_id=? AND task_id=?',
+                                   (json.dumps(row), run_id, task_id))
+                policy = train(repo, cfg, min_samples=20, max_quality_loss=0.1,
+                               min_cost_improvement=0.2, max_latency_ratio=1.1)
+                self.assertFalse(policy['validated'])
+                self.assertEqual(policy['routes'], {})

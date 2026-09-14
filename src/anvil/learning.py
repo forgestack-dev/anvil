@@ -212,14 +212,24 @@ def train(repo, config, *, min_samples, max_quality_loss, min_cost_improvement, 
                 evidence.append({"agent":agent, "cohort":cohort, "baseline":baseline, "candidate":name,
                                  "training":training, "held_out":held_out})
     # The reviewer CLI is part of policy compatibility too: evidence reviewed
-    # under one reviewer build is not interchangeable with another. Bind its
-    # version when the training rows agree on exactly one.
+    # under one reviewer build is not interchangeable with another. The
+    # contributing rows must pin exactly one reviewer version; a missing or
+    # mixed reviewer version means the acceptance labels are not comparable,
+    # so no route from this evidence may validate.
     review_agent = profiles[config.adaptive["review_profile"]]["agent"]
-    review_versions = {review.get("cli_version") for row in rows for entry in row.get("provenance") or ()
-                       if (review := entry.get("review")) and review.get("agent") == review_agent}
-    review_versions.discard(None)
-    if len(review_versions) == 1 and review_agent not in versions:
-        versions[review_agent] = next(iter(review_versions))
+    known, missing = set(), False
+    for row in rows:
+        row_versions = {review.get("cli_version") for entry in row.get("provenance") or ()
+                        if (review := entry.get("review")) and review.get("agent") == review_agent}
+        row_versions.discard(None)
+        if not row_versions:
+            missing = True
+        known |= row_versions
+    if len(known) == 1 and not missing:
+        if review_agent not in versions:
+            versions[review_agent] = next(iter(known))
+    else:
+        routes = {}
     policy = {"version":1, "catalog":catalog, "routes":routes, "evidence":evidence, "cli_versions":versions,
               "history_digest":fingerprint(all_rows), "gates":{"min_samples":min_samples,
               "max_quality_loss":max_quality_loss, "min_cost_improvement":min_cost_improvement,
