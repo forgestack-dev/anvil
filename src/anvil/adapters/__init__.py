@@ -4,6 +4,11 @@ from anvil.contracts import ContractError
 
 
 AGENT_NAMES = ("codex", "claude-code")
+# Agents usable as harness workers or reviewers. Muse turns are fulfilled by
+# the operator through a staged handoff instead of a local CLI, so Muse has
+# no native skill directory and stays out of AGENT_NAMES (used for skill
+# installation targets).
+EXECUTION_AGENTS = ("codex", "claude-code", "muse")
 
 
 def create_runner(agent: str, executable: str, *, profile=None):
@@ -13,6 +18,9 @@ def create_runner(agent: str, executable: str, *, profile=None):
     if agent == "claude-code":
         from .claude import ClaudeRunner
         return ClaudeRunner(executable, profile=profile)
+    if agent == "muse":
+        from .muse import MuseRunner
+        return MuseRunner(executable, profile=profile)
     raise ContractError(f"unsupported agent: {agent}")
 
 
@@ -23,4 +31,7 @@ def probe_agent(agent: str, executable: str | None = None):
     if agent == "claude-code":
         from .claude import doctor
         return doctor(executable if executable is not None else "claude", probe=True)
+    if agent == "muse":
+        from .muse import doctor
+        return doctor(executable if executable is not None else "muse", probe=True)
     raise ContractError(f"unsupported agent: {agent}")

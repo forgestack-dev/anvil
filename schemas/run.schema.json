@@ -28,13 +28,14 @@
       "type": "string",
       "enum": [
         "codex",
-        "claude-code"
+        "claude-code",
+        "muse"
       ],
       "default": "codex"
     },
     "agent_binary": {
       "$ref": "#/$defs/text",
-      "description": "Trusted executable override. Defaults to codex or claude for the selected agent."
+      "description": "Trusted executable override. Defaults to codex or claude for the selected CLI agent; unused for muse, whose turns are fulfilled by the operator."
     },
     "codex_binary": {
       "$ref": "#/$defs/text",
@@ -383,7 +384,8 @@
           "type": "string",
           "enum": [
             "codex",
-            "claude-code"
+            "claude-code",
+            "muse"
           ]
         },
         "agent_binary": {
