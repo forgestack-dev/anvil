@@ -9,7 +9,7 @@ from typing import Any
 
 _ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
 _TASK_REQUIRED = {"id", "title", "objective", "depends_on", "acceptance_criteria"}
-_TASK_OPTIONAL = {"skills", "worker", "resources", "exclusive"}
+_TASK_OPTIONAL = {"skills", "worker", "resources", "exclusive", "execution", "profile", "risk"}
 
 
 class ContractError(ValueError):
@@ -29,8 +29,18 @@ class Task:
     worker: str | None = None
     resources: tuple[str, ...] = ()
     exclusive: bool = False
+    profile: str | None = None
+    risk: str | None = None
+    execution: dict | None = None
 
     def __post_init__(self) -> None:
+        if self.profile is not None:
+            _identifier(self.profile, "task.profile")
+        if self.risk is not None and self.risk not in ("low", "medium", "high"):
+            raise ContractError("task.risk must be low, medium, or high")
+        if self.execution is not None:
+            from .ticket_status import validate_metadata
+            validate_metadata(self.execution)
         if self.worker is not None:
             _identifier(self.worker, "task.worker")
         if not isinstance(self.resources, tuple):
@@ -51,12 +61,22 @@ class Task:
             "acceptance_criteria": list(self.acceptance_criteria),
             "skills": list(self.skills),
         }
+        if self.profile is not None:
+            _identifier(self.profile, "task.profile")
+        if self.risk is not None and self.risk not in ("low", "medium", "high"):
+            raise ContractError("task.risk must be low, medium, or high")
+        if self.execution is not None:
+            from .ticket_status import validate_metadata
+            validate_metadata(self.execution)
         if self.worker is not None:
             result["worker"] = self.worker
         if self.resources:
             result["resources"] = list(self.resources)
         if self.exclusive:
             result["exclusive"] = True
+        for key in ("profile", "risk", "execution"):
+            if getattr(self, key) is not None:
+                result[key] = getattr(self, key)
         return result
 
 
@@ -108,6 +128,9 @@ def parse_tasks(document: Any) -> tuple[Task, ...]:
     for index, value in enumerate(document["tasks"]):
         label = f"tasks[{index}]"
         _object_fields(value, _TASK_REQUIRED, _TASK_OPTIONAL, label)
+        for optional in ("profile", "risk", "execution"):
+            if optional in value and value[optional] is None:
+                raise ContractError(f"{label}.{optional} cannot be null")
         task_id = _identifier(value["id"], f"{label}.id")
         dependencies = _string_array(value["depends_on"], f"{label}.depends_on")
         for dependency in dependencies:
@@ -132,6 +155,7 @@ def parse_tasks(document: Any) -> tuple[Task, ...]:
                 worker=worker,
                 resources=resources,
                 exclusive=value.get("exclusive", False),
+                profile=value.get("profile"), risk=value.get("risk"), execution=value.get("execution"),
             )
         )
     return tuple(tasks)

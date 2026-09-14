@@ -1,0 +1,110 @@
+from copy import deepcopy
+from dataclasses import replace
+import json
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+import test_execution
+from test_adaptive import config_options
+from anvil.config import RunConfig, WorkerConfig
+from anvil.contracts import ContractError
+from anvil.routing import validate_config, Policy, fingerprint
+from anvil.planning import TaskGraph
+from anvil.workspaces import Repository
+from anvil.telemetry import usage
+from anvil.learning import train, promote, load_policy, history, rollback
+
+
+class RoutingComponents(unittest.TestCase):
+    setUp = test_execution.SerialExecutionTests.setUp
+
+    def test_profiles_reject_invalid_controls_and_unknown_options(self):
+        for field,value in [('effort','bogus'),('rank',True),('model','x\n--unsafe'),('agent','other')]:
+            bad=config_options();bad['profiles']['standard'][field]=value
+            with self.subTest(field=field),self.assertRaises(ContractError):validate_config(bad)
+        for key,value in [('max_attempts',3),('max_invocations',True),('soft_budget_usd',float('nan'))]:
+            bad=config_options();bad[key]=value
+            with self.subTest(key=key),self.assertRaises(ContractError):validate_config(bad)
+
+    def test_override_requires_compatible_worker_and_missing_history_uses_rules(self):
+        options=config_options('adaptive')
+        cfg=replace(self.config,adaptive=options,workers=(WorkerConfig('one'),),max_processes=1)
+        graph=TaskGraph.load(self.tickets);repo=Repository(self.repo)
+        policy=Policy(cfg,graph,repo)
+        self.assertIsNone(policy.learned)
+        task=replace(graph.tasks[0],profile='strong')
+        self.assertEqual(policy.decision(task,cfg.workers[0],repo.head())['profile'],'strong')
+        self.assertFalse(policy.compatible(task,WorkerConfig('claude','claude-code')))
+
+    def test_normalize_claude_terminal_usage_without_message_double_counting(self):
+        path=self.root.resolve()/'events.jsonl'
+        events=[{'type':'assistant','usage':{'input_tokens':999999}},
+                {'type':'result','usage':{'input_tokens':10,'cache_read_input_tokens':20,'cache_creation_input_tokens':30,'output_tokens':5},'total_cost_usd':0.2,'modelUsage':{'test':{}}},
+                {'type':'system','subtype':'task_summary'}]
+        path.write_text('\n'.join(json.dumps(e) for e in events))
+        data=usage(path,'claude-code',{})
+        self.assertEqual(data['cost_usd'],0.2);self.assertEqual(data['input_tokens'],10)
+        self.assertEqual(data['reported_model'],'test')
+
+    def test_codex_cached_tokens_are_not_priced_twice_and_missing_usage_is_unknown(self):
+        path=self.root.resolve()/'events.jsonl'
+        path.write_text(json.dumps({'type':'turn.completed','usage':{'input_tokens':100,'cached_input_tokens':30,'output_tokens':10}}))
+        profile={'price':{'version':'fixture','input':1,'cached_input':0.1,'cache_write':1,'output':5}}
+        data=usage(path,'codex',profile)
+        self.assertEqual(data['input_tokens'],70)
+        self.assertAlmostEqual(data['cost_usd'],123/1_000_000)
+        path.write_text('{}');data=usage(path,'codex',profile)
+        self.assertIsNone(data['cost_usd']);self.assertIsNotNone(data['usage_error'])
+
+    def populate(self, *, candidate_success=True, samples=100):
+        options=config_options();cfg=replace(self.config,adaptive=options)
+        repo=Repository(self.repo)
+        with history(repo) as db:
+            for split in (0,1):
+                for name,cost in [('standard',1.0),('strong',0.2)]:
+                    for i in range(samples):
+                        value={'catalog':fingerprint(options['profiles']),'profile':name,'agent':'codex',
+                               'assessment':{'cohort':'rank-1','input_digest':f'{i*2+split:08x}'+'0'*56},
+                               'cli_version':'fixture-v1','eligible':True,'cost':cost,'duration':1,
+                               'reported_model':options['profiles'][name]['model'],
+                               'requested_model':options['profiles'][name]['model'],
+                               'accepted':True if name=='standard' else candidate_success}
+                        db.execute('INSERT INTO samples VALUES (?,?,?)',(f'{split}-{name}-{i}','t',json.dumps(value)))
+        return repo,cfg
+
+    def test_learning_requires_held_out_quality_and_explicit_promotion(self):
+        repo,cfg=self.populate()
+        policy=train(repo,cfg,min_samples=20,max_quality_loss=0.1,min_cost_improvement=0.2,max_latency_ratio=1.1)
+        self.assertTrue(policy['validated']);self.assertEqual(policy['routes']['codex:rank-1'],'strong')
+        self.assertIsNone(load_policy(repo,None,policy['catalog']))
+        promote(repo,policy['id'],policy['catalog'])
+        self.assertEqual(load_policy(repo,None,policy['catalog'])['id'],policy['id'])
+        rollback(repo);self.assertIsNone(load_policy(repo,None,policy['catalog']))
+        repeated=train(repo,cfg,min_samples=20,max_quality_loss=0.1,min_cost_improvement=0.2,max_latency_ratio=1.1)
+        self.assertEqual(policy['id'],repeated['id'])
+
+    def test_cheaper_failed_model_is_never_promoted(self):
+        repo,cfg=self.populate(candidate_success=False)
+        policy=train(repo,cfg,min_samples=20,max_quality_loss=0.1,min_cost_improvement=0.2,max_latency_ratio=1.1)
+        self.assertFalse(policy['validated'])
+        with self.assertRaises(ContractError):promote(repo,policy['id'],policy['catalog'])
+
+    def test_sparse_history_and_catalog_change_cannot_activate_policy(self):
+        repo,cfg=self.populate(samples=2)
+        policy=train(repo,cfg,min_samples=5,max_quality_loss=0.1,min_cost_improvement=0.2,max_latency_ratio=1.1)
+        self.assertFalse(policy['validated'])
+        with self.assertRaises(ContractError):load_policy(repo,policy['id'],'another-catalog')
+
+    def test_malformed_usage_never_claims_free_work(self):
+        path=self.root.resolve()/'events.jsonl'
+        for value in (None,[],42):
+            path.write_text(json.dumps({'type':'result','usage':value}))
+            data=usage(path,'claude-code',{})
+            self.assertIsNone(data['cost_usd']);self.assertIsNotNone(data['usage_error'])
+
+    def test_profile_null_and_unsupported_haiku_effort_are_rejected(self):
+        value=self.config.to_dict();value['adaptive']=None
+        with self.assertRaises(ContractError):RunConfig.from_document(value,base=self.root)
+        value=config_options();value['profiles']['standard'].update(agent='claude-code',model='claude-haiku-4-5-20251001',effort='low')
+        with self.assertRaises(ContractError):validate_config(value)

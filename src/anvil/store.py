@@ -57,6 +57,7 @@ class RunStore:
                 connection.close()
             raise StoreError(f"cannot open run ledger {self.path}: {exc}") from exc
         self._connection = connection
+        self.after_commit = None
 
     def __enter__(self) -> RunStore:
         return self
@@ -76,6 +77,8 @@ class RunStore:
             if isinstance(exc, sqlite3.Error):
                 raise StoreError(f"run ledger operation failed: {exc}") from exc
             raise
+        if write and self.after_commit is not None:
+            self.after_commit()
 
     def initialize(
         self, *, run_id: str, repo: str, branch: str, base_sha: str,
@@ -98,6 +101,7 @@ class RunStore:
         with self._transaction() as connection:
             if connection.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone():
                 raise StoreError("run ledger already exists; initialize never overwrites it")
+            connection.execute("PRAGMA user_version = 2")
             connection.execute("""
                 CREATE TABLE runs (
                     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -117,7 +121,7 @@ class RunStore:
             """)
             connection.execute("""
                 CREATE TABLE attempts (
-                    id TEXT PRIMARY KEY, task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id),
+                    id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id),
                     base_sha TEXT NOT NULL, workspace TEXT NOT NULL,
                     status TEXT NOT NULL, details TEXT NOT NULL,
                     started_at TEXT NOT NULL, updated_at TEXT NOT NULL, finished_at TEXT
@@ -328,6 +332,24 @@ class RunStore:
                 (status, encoded, timestamp, finished_at, attempt_id),
             )
             self._event(connection, timestamp, "task", task_id, attempt_id, old, status, merged)
+
+    def retry(self, task_id, *, attempt_id, reason):
+        with self._transaction() as connection:
+            task = self._active_task(connection, task_id, attempt_id)
+            config = json.loads(self._run(connection)["config"])
+            maximum = (config.get("adaptive") or {}).get("max_attempts", 1)
+            count = connection.execute("SELECT COUNT(*) FROM attempts WHERE task_id=?", (task_id,)).fetchone()[0]
+            if count >= min(maximum, 2):
+                raise StoreError("configured attempt limit exhausted")
+            if task["status"] not in {"candidate", "reviewed"}:
+                raise StoreError("only rejected review/check attempts can retry")
+            timestamp = _now()
+            details = json.loads(task["details"]) | {"retry_reason": reason}
+            connection.execute("UPDATE attempts SET status='failed', details=?, finished_at=?, updated_at=? WHERE id=?",
+                               (_encode(details), timestamp, timestamp, attempt_id))
+            connection.execute("UPDATE tasks SET status='pending', attempt_id=NULL, details='{}', updated_at=? WHERE id=?",
+                               (timestamp, task_id))
+            self._event(connection, timestamp, "retry", task_id, attempt_id, task["status"], "pending", details)
 
     @staticmethod
     def _snapshot(connection: sqlite3.Connection) -> dict:

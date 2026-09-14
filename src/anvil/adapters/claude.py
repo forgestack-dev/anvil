@@ -173,11 +173,15 @@ def _extract_result(data: bytes) -> dict:
 class ClaudeRunner:
     """Return unverified schema-shaped claims from a fresh Claude Code process.
 
-    No model or authentication override is supplied. The explicit tool set
+    Model controls come only from explicit profiles; authentication is inherited. The explicit tool set
     excludes shell execution and delegation; acceptance belongs to the caller.
     """
 
-    def __init__(self, claude_binary: str = "claude") -> None:
+    def __init__(self, claude_binary: str = "claude", *, profile=None) -> None:
+        if profile is not None:
+            from ..routing import validate_selection
+            validate_selection("claude-code", profile)
+        self.profile = dict(profile) if profile is not None else None
         _validate_binary(claude_binary)
         self.claude_binary = claude_binary
         # Select once in the supervisor's directory, before any worktree runs.
@@ -206,10 +210,20 @@ class ClaudeRunner:
                 stream.write(json.dumps(schema, indent=2, allow_nan=False) + "\n")
         except (OSError, ValueError, TypeError, UnicodeError, RecursionError) as exc:
             raise ProcessError(f"could not prepare Claude Code execution: {exc}") from exc
+        if self.profile is not None:
+            from dataclasses import replace
+            invocation = replace(invocation, argv=(*invocation.argv, "--model", self.profile["model"],
+                                                   "--effort", self.profile["effort"]))
+        if self.profile is not None and "max_budget_usd" in self.profile:
+            invocation = replace(invocation, argv=(*invocation.argv, "--max-budget-usd", str(self.profile["max_budget_usd"])))
+        environment = managed_environment()
+        if self.profile is not None:
+            # Claude's effort environment override takes precedence over the CLI flag.
+            environment["CLAUDE_CODE_EFFORT_LEVEL"] = self.profile["effort"]
         outcome = run_process(
             invocation.argv, cwd=repo, stdin=invocation.stdin,
             stdout_path=artifact_dir / "events.jsonl", stderr_path=artifact_dir / "stderr.log",
-            timeout=timeout, env=managed_environment(),
+            timeout=timeout, env=environment,
         )
         if outcome.timed_out:
             raise ProcessError(f"Claude Code execution timed out after {timeout} seconds; artifacts: {artifact_dir}")

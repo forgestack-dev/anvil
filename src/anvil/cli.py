@@ -14,6 +14,7 @@ from anvil import __version__
 from anvil.adapters import AGENT_NAMES, probe_agent
 from anvil.contracts import ContractError
 from anvil.planning import TaskGraph
+from anvil.processes import ProcessError
 
 
 def parser() -> argparse.ArgumentParser:
@@ -30,6 +31,7 @@ def parser() -> argparse.ArgumentParser:
         subcommand.add_argument("tickets", type=Path)
         subcommand.add_argument("--json", action="store_true", help="Print JSON output.")
     check = subcommands.add_parser("doctor", help="Check Git and the selected agent CLI.")
+    check.add_argument("--config", type=Path, help="Also probe explicit model/effort profile controls in a run configuration.")
     check.add_argument("--agent", choices=AGENT_NAMES, default="codex")
     check.add_argument("--agent-binary", help="Trusted agent executable name or path.")
     check.add_argument("--json", action="store_true", help="Print JSON output.")
@@ -64,6 +66,8 @@ def parser() -> argparse.ArgumentParser:
                                       help="Select an upstream skill; repeat to select multiple skills.")
             skill_action.add_argument("--include-experimental", action="store_true",
                                       help="Include skills from the upstream experimental directory.")
+    from .adaptive_cli import add_parsers
+    add_parsers(subcommands)
     return command
 
 
@@ -111,12 +115,31 @@ def _skill_command(arguments: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = parser().parse_args(argv)
+    if arguments.command in ("route", "routing", "tickets"):
+        from .adaptive_cli import dispatch
+        return dispatch(arguments)
     if arguments.command == "skills":
         return _skill_command(arguments)
     if arguments.command == "doctor":
         try:
+            profiles = None
+            if arguments.config:
+                from .config import RunConfig
+                from .routing import preflight
+                config = RunConfig.load(arguments.config)
+                arguments.agent, arguments.agent_binary = config.agent, config.executable
+                if config.adaptive:
+                    entries = {(worker.agent, worker.executable) for worker in config.workers}
+                    entries.add((config.agent, config.executable))
+                    profiles = []
+                    for selected, binary in sorted(entries):
+                        profile = next((p for p in config.adaptive["profiles"].values()
+                                        if p["agent"] == selected and "max_budget_usd" in p), None)
+                        profiles.append({"agent":selected, "executable":binary,
+                                         "version":preflight(selected, binary, profile),
+                                         "model_access":"not probed"})
             agent = probe_agent(arguments.agent, arguments.agent_binary)
-        except (ContractError, ValueError, OSError) as exc:
+        except (ContractError, ValueError, OSError, ProcessError) as exc:
             if arguments.json:
                 print(json.dumps({"error": str(exc)}))
             else:
@@ -132,6 +155,8 @@ def main(argv: list[str] | None = None) -> int:
             "agent": arguments.agent,
             arguments.agent: asdict(agent),
         }
+        if profiles is not None:
+            result["profile_controls"] = profiles
         if arguments.json:
             print(json.dumps(result, indent=2))
         else:
