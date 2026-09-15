@@ -1,4 +1,4 @@
-# Ticket skill execution: first bounded milestone
+# Ticket skill execution
 
 ## Contract
 
@@ -9,6 +9,11 @@ requested name must exist in that installation. Anvil validates all managed
 copies before starting any agent, then pins the requested files into the run
 directory. Updating or removing the repository installation cannot change an
 active or resumed run.
+
+An opt-in run-level rules policy can select skills for tickets whose array is
+empty. Explicit arrays remain authoritative. See
+[AUTOMATIC_SKILL_SELECTION.md](AUTOMATIC_SKILL_SELECTION.md) for its bounded,
+compatibility-aware contract.
 
 Anvil supplies the exact pinned `SKILL.md` and UTF-8 supporting files inside the
 worker prompt. Before dispatch, it matches each `SKILL.md` hash to the reviewed
@@ -48,7 +53,7 @@ skill workflow.
 
 ## Deferred
 
-Automatic skill selection, model-assisted compatibility classification, binary
+Model-assisted selection and compatibility classification, binary
 asset transport, executable helper invocation, capability attestations,
-interactive human-decision resume, Markdown/spec intake, and catalog-wide live
+interactive human-decision resume, and catalog-wide live
 evaluation remain later parts of the full-skill milestone.

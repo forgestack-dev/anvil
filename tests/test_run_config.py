@@ -230,6 +230,21 @@ class RunConfigTests(unittest.TestCase):
         self.assertEqual(config.verification, (("check", "--all"),))
         self.assertEqual(document, original)
 
+    def test_automatic_skill_selection_is_opt_in_bounded_and_round_trips(self):
+        self.assertIsNone(self.parse(configuration()).skill_selection)
+        config = self.parse(configuration() | {"skill_selection": {"mode": "rules"}})
+        self.assertEqual(config.skill_selection, {"mode": "rules", "max_skills": 2})
+        self.assertEqual(self.parse(config.to_dict()), config)
+        for value in (None, [], "rules", {}, {"mode": "model"},
+                      {"mode": "rules", "unknown": True}):
+            with self.subTest(value=value), self.assertRaises(ContractError):
+                self.parse(configuration() | {"skill_selection": value})
+        for maximum in (None, True, 0, 5, 1.0, "2"):
+            with self.subTest(maximum=maximum), self.assertRaises(ContractError):
+                self.parse(configuration() | {
+                    "skill_selection": {"mode": "rules", "max_skills": maximum},
+                })
+
     def test_worker_pool_keeps_reviewer_selection_and_defaults_process_limit(self):
         document = configuration() | {
             "agent": "claude-code", "agent_binary": "reviewer-claude",

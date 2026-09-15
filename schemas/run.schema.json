@@ -85,6 +85,25 @@
       "type": "boolean",
       "default": false
     },
+    "skill_selection": {
+      "type": "object",
+      "description": "Opt-in deterministic selection for tickets whose skills array is empty. Explicit ticket skills remain unchanged.",
+      "required": [
+        "mode"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "const": "rules"
+        },
+        "max_skills": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4,
+          "default": 2
+        }
+      }
+    },
     "adaptive": {
       "type": "object",
       "required": [

@@ -72,6 +72,7 @@ class RunConfig:
     max_processes: int | None = None
     ticket_status: bool = False
     adaptive: dict | None = None
+    skill_selection: dict | None = None
 
     def __post_init__(self) -> None:
         if type(self.ticket_status) is not bool:
@@ -79,6 +80,16 @@ class RunConfig:
         if self.adaptive is not None:
             from .routing import validate_config
             validate_config(self.adaptive)
+        if self.skill_selection is not None:
+            value = self.skill_selection
+            if not isinstance(value, dict) or set(value) - {"mode", "max_skills"}:
+                raise ContractError("skill_selection must be an object with mode and optional max_skills")
+            if value.get("mode") != "rules":
+                raise ContractError("skill_selection.mode must be rules")
+            maximum = value.get("max_skills", 2)
+            if type(maximum) is not int or not 1 <= maximum <= 4:
+                raise ContractError("skill_selection.max_skills must be an integer between 1 and 4")
+            object.__setattr__(self, "skill_selection", {"mode": "rules", "max_skills": maximum})
         if self.agent not in ("codex", "claude-code", "muse"):
             raise ContractError("run configuration.agent must be codex, claude-code, or muse")
         if self.agent != "codex" and self.codex_binary != "codex":
@@ -133,13 +144,16 @@ class RunConfig:
     def from_document(cls, value: object, *, base: Path) -> RunConfig:
         _object_fields(value, {"version", "repo", "tickets", "verification"},
                        {"state_dir", "codex_binary", "agent", "agent_binary",
-                        "agent_timeout", "check_timeout", "workers", "max_processes", "ticket_status", "adaptive"},
+                        "agent_timeout", "check_timeout", "workers", "max_processes",
+                        "ticket_status", "adaptive", "skill_selection"},
                        "run configuration")
         if type(value["version"]) is not int or value["version"] != 1:
             raise ContractError("run configuration.version must be the integer 1")
 
         if "adaptive" in value and value["adaptive"] is None:
             raise ContractError("adaptive must be an object, not null")
+        if "skill_selection" in value and value["skill_selection"] is None:
+            raise ContractError("skill_selection must be an object, not null")
 
         def text(name: str, default: str | None = None) -> str:
             result = value.get(name, default)
@@ -194,6 +208,7 @@ class RunConfig:
             check_timeout=seconds("check_timeout", 300),
             workers=workers, max_processes=value.get("max_processes"),
             ticket_status=value.get("ticket_status", False), adaptive=value.get("adaptive"),
+            skill_selection=value.get("skill_selection"),
         )
 
     def to_dict(self) -> dict:
@@ -206,6 +221,8 @@ class RunConfig:
             result["ticket_status"] = True
         if self.adaptive is not None:
             result["adaptive"] = self.adaptive
+        if self.skill_selection is not None:
+            result["skill_selection"] = dict(self.skill_selection)
         if self.workers:
             result.update(workers=[worker.to_dict() for worker in self.workers],
                           max_processes=self.max_processes)

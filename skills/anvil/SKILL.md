@@ -5,7 +5,7 @@ description: Prepare ticket graphs, coordinate Codex, Claude Code, and Muse work
 
 # Anvil
 
-Use Anvil to turn a committed Markdown specification into reviewable tickets, or execute an existing ticket graph serially or with a coordinated Codex/Claude Code/Muse worker pool. The runtime owns preparation provenance, dispatch, shared-resource reservations, independent review, verification, local integration, and saved status. Separate skill-management commands install AI Hero skills for native agent sessions and explicit ticket selection. Automatic skill selection during implementation, pause commands, and external ticket closure remain unsupported. Native resume supports interrupted runs created with the recovery protocol.
+Use Anvil to turn a committed Markdown specification into reviewable tickets, or execute an existing ticket graph serially or with a coordinated Codex/Claude Code/Muse worker pool. The runtime owns preparation provenance, dispatch, shared-resource reservations, independent review, verification, local integration, and saved status. Separate skill-management commands install AI Hero skills for native agent sessions, explicit ticket selection, and opt-in deterministic selection for empty ticket skill arrays. Model-assisted selection, pause commands, and external ticket closure remain unsupported. Native resume supports interrupted runs created with the recovery protocol.
 
 ## Prepare or inspect work
 
@@ -23,7 +23,7 @@ For installation, update, or inspection, read the native skill-management sectio
 
 Use `--dry-run` when a change preview is requested or useful; it fetches upstream files but leaves the installation unchanged. `skills status` is offline. Report the selected revision, destinations, and any conflicts. Preserve local changes and retained backups when a conflict or interrupted update needs inspection. Do not bypass the manager with forced copying or delete an installation to change its selection without explicit scope to do so.
 
-Repository installation enables explicit ticket `skills` requests. Execution validates and pins UTF-8 resources, checks their exact instruction hashes against Anvil's reviewed capability registry, then supplies compatible text directly in the worker prompt. It does not prove a compatible skill will succeed. Anvil's Claude worker keeps safe mode and its disabled Skill tool; prompt delivery does not change that boundary. Binary resources, oversized contexts, modified or unclassified instructions, and unavailable declared capabilities fail before model work, and Anvil never executes bundled scripts.
+Repository installation enables explicit ticket `skills` requests and opt-in automatic selection for empty arrays. Execution validates and pins UTF-8 resources, checks their exact instruction hashes against Anvil's reviewed capability registry, then supplies compatible text directly in the worker prompt. It does not prove a compatible skill will succeed. Anvil's Claude worker keeps safe mode and its disabled Skill tool; prompt delivery does not change that boundary. Binary resources, oversized contexts, modified or unclassified instructions, and unavailable declared capabilities fail before model work, and Anvil never executes bundled scripts.
 
 ## Execute authorized work
 

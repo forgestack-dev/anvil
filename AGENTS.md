@@ -1,6 +1,6 @@
 # Working on Anvil
 
-Anvil implements supervised serial and coordinated worker-pool execution using Codex, Claude Code, and Muse, plus explicit AI Hero skill installation, updates, and ticket-selected text instruction contexts. Keep README capabilities and the entry skill aligned with what the CLI actually implements. Distinguish deterministic fake-agent tests from live model acceptance. Native `resume` reconciles interrupted protocol-enabled runs; pause commands and general failure retries remain planned; `anvil status` only reads saved runs.
+Anvil implements supervised serial and coordinated worker-pool execution using Codex, Claude Code, and Muse, plus AI Hero skill installation, updates, and explicit or deterministic automatic ticket instruction contexts. Keep README capabilities and the entry skill aligned with what the CLI actually implements. Distinguish deterministic fake-agent tests from live model acceptance. Native `resume` reconciles interrupted protocol-enabled runs; pause commands and general failure retries remain planned; `anvil status` only reads saved runs.
 
 Use Python 3.11+ and the standard library unless a dependency has a concrete benefit. Keep CLI, contracts, planning, adapters, and future durable scheduling separate. Pass subprocess arguments as lists and prompt text through stdin; do not build shell command strings from tickets.
 
