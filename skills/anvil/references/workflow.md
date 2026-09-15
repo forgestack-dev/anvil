@@ -2,6 +2,21 @@
 
 Use the relevant section when managing native AI Hero skills, preparing a run configuration, executing tickets, or interpreting completion evidence. Check the installed CLI first.
 
+## Prepare a Markdown specification
+
+Commit the specification and all relevant repository context, then require a
+clean repository. Run `anvil prepare SPEC.md --output tickets.json --repo .` with
+the user's chosen agent; add `--agent claude-code` or `--agent muse` when
+requested. The output path must be new and inside the repository. This command
+uses one read-only planning turn and therefore consumes provider usage.
+
+Inspect the generated `source_refs`, scope, dependencies, risks, resources,
+acceptance criteria, and skill arrays. Anvil records source and commit provenance
+and initializes every ticket to `todo`. Validate and plan the result separately.
+Preparation does not authorize or begin implementation. Installed skill choices
+are recommendations limited to exact classified instructions; execution still
+checks them against the configured worker pool.
+
 ## Native skill management
 
 Use `anvil skills install aihero --repo /path/to/project` to install for both agents on macOS/Linux. Repository scope resolves to the Git root; omitting a scope flag uses the current repository. `--global` selects the user's home directory instead and cannot accompany `--repo`. Codex destinations are `.agents/skills`; Claude Code destinations are `.claude/skills`. Global destinations use the same paths under `~`. These match [Codex local discovery](https://learn.chatgpt.com/docs/build-skills) and [Claude Code skill locations](https://code.claude.com/docs/en/skills).

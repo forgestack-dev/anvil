@@ -54,6 +54,7 @@ class MuseHandoff:
     repo: Path
     read_only: bool
     timeout: float
+    role: str
 
 
 @dataclass(frozen=True)
@@ -85,6 +86,7 @@ def build_handoff(
     *,
     read_only: bool = False,
     timeout: float = 900,
+    purpose: str | None = None,
 ) -> MuseHandoff:
     """Stage prompt, schema, and request files without waiting for the operator.
 
@@ -99,6 +101,8 @@ def build_handoff(
         raise ValueError("Muse result schema must be a JSON object")
     if not isinstance(read_only, bool):
         raise ValueError("read_only must be a boolean")
+    if purpose not in (None, "plan"):
+        raise ValueError("Muse handoff purpose must be plan when specified")
     timeout = _validate_timeout(timeout)
 
     repo = Path(repo).expanduser().resolve()
@@ -117,7 +121,7 @@ def build_handoff(
     request_path = artifact_dir / "request.json"
     result_path = artifact_dir / "result.json"
 
-    role = "review" if read_only else "implement"
+    role = purpose or ("review" if read_only else "implement")
     request = {
         "agent": "muse",
         "role": role,
@@ -152,11 +156,13 @@ def build_handoff(
         repo=repo,
         read_only=read_only,
         timeout=timeout,
+        role=role,
     )
 
 
 def _announce(handoff: MuseHandoff) -> None:
-    role = "review the candidate in" if handoff.read_only else "implement the ticket in"
+    role = ("prepare tickets from the specification in" if handoff.role == "plan" else
+            "review the candidate in" if handoff.read_only else "implement the ticket in")
     print(
         f"Anvil Muse handoff: {role} {handoff.repo}\n"
         f"  prompt: {handoff.prompt_path}\n"
@@ -232,10 +238,11 @@ class MuseRunner:
         artifact_dir: Path,
         timeout: float,
         read_only: bool = False,
+        purpose: str | None = None,
     ) -> dict:
         try:
             handoff = build_handoff(repo, prompt, schema, artifact_dir,
-                                    read_only=read_only, timeout=timeout)
+                                    read_only=read_only, timeout=timeout, purpose=purpose)
         except (OSError, ValueError, TypeError, UnicodeError) as exc:
             raise ProcessError(f"could not prepare Muse handoff: {exc}") from exc
         _announce(handoff)

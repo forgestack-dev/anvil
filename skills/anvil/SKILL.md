@@ -5,13 +5,15 @@ description: Prepare ticket graphs, coordinate Codex, Claude Code, and Muse work
 
 # Anvil
 
-Use Anvil to turn a defined engineering objective into verifiable tickets and execute them serially or with a coordinated Codex/Claude Code/Muse worker pool. The runtime owns dispatch, shared-resource reservations, independent review, verification, local integration, and saved status. Separate skill-management commands install AI Hero skills for native agent sessions and explicit ticket selection. Automatic skill selection, pause commands, and external ticket closure remain unsupported. Native resume supports interrupted runs created with the recovery protocol.
+Use Anvil to turn a committed Markdown specification into reviewable tickets, or execute an existing ticket graph serially or with a coordinated Codex/Claude Code/Muse worker pool. The runtime owns preparation provenance, dispatch, shared-resource reservations, independent review, verification, local integration, and saved status. Separate skill-management commands install AI Hero skills for native agent sessions and explicit ticket selection. Automatic skill selection during implementation, pause commands, and external ticket closure remain unsupported. Native resume supports interrupted runs created with the recovery protocol.
 
 ## Prepare or inspect work
 
 Read the supplied spec or tickets and project instructions. Preserve scope, identifiers, and settled decisions. Each ticket needs an objective, dependency IDs, and acceptance criteria. Expose missing requirements instead of inventing a completed specification.
 
 When adapting source material to JSON, use the shipped schema and retain the source relationship in the surrounding plan. Check `anvil --help` and `anvil --version`, then run `anvil validate <tickets.json>` and `anvil plan <tickets.json> --json`. These commands inspect input without implementing it. Dependency waves show possible parallelism; a configured worker pool also respects worker assignments and declared resource reservations.
+
+For a committed Markdown specification, use `anvil prepare <spec.md> --output <tickets.json> --repo <root>` and read the preparation section of [references/workflow.md](references/workflow.md). Preparation uses one provider turn and writes a new file; preserve the user's selected agent and usage constraints. Review the generated scope, source references, dependencies, risks, resources, and skill choices before configuring execution. Never treat successful preparation as authorization to begin the generated work.
 
 If Anvil is unavailable, inspect the checkout or installation instructions supplied by the user. Do not assume a checkout path, install an unrelated package named `anvil`, or register the entry skill in another project automatically.
 
