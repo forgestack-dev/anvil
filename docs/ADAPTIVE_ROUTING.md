@@ -1,6 +1,6 @@
 # Ticket status and adaptive routing
 
-These features are opt-in additions to version-1 run and ticket documents. Existing run configurations retain their original behavior. Run ledgers created by this release use schema version 2; historical ledgers remain readable. No execution resume or crash recovery is added.
+These features are opt-in additions to version-1 run and ticket documents. Existing run configurations retain their original behavior. Run ledgers created by this release use schema version 2; historical ledgers remain readable. Native recovery is described in [RECOVERY.md](RECOVERY.md); ordinary `run` still starts fresh.
 
 ## Publish status on local tickets
 
@@ -71,3 +71,5 @@ anvil routing benchmark /path/to/benchmark-run.json --profile economical --profi
 ```
 
 This starts real model calls. It uses the configured retry limit, fixed profiles and a fixed reviewer, disables automatic promotion, and leaves each comparison on a separate local Anvil branch. It never enables experiments on ordinary tickets automatically. Benchmarks with tight currency limits need provider-enforced caps; the soft budget alone cannot guarantee spend. Full production savings and long-term escaped-defect detection require additional evidence; this release does not claim either.
+
+Native resume restores cumulative reservations and the original frozen routing policy/CLI versions. Interrupted replacements do not grant more review/check escalations. Recovery-affected runs are excluded from learning; their accounting remains in the run report.

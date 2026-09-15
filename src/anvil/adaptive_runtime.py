@@ -12,8 +12,8 @@ from .ticket_status import read_regular
 
 
 class Session:
-    def __init__(self, config, graph, repo, *, injected=False):
-        self.config, self.policy = config, Policy(config, graph, repo)
+    def __init__(self, config, graph, repo, *, injected=False, frozen=None):
+        self.config, self.policy = config, Policy(config, graph, repo, frozen=frozen)
         self.count = 0
         self.committed_cost = 0.0
         self.reservations = {}
@@ -37,11 +37,56 @@ class Session:
             except ProcessError as exc:
                 raise ContractError(f"profile preflight failed: {exc}") from exc
 
+        if frozen is not None:
+            expected = sorted(frozen["versions"])
+            actual = sorted([agent, executable, version] for (agent, executable), version in self.versions.items())
+            if expected != actual or frozen["policy_version"] != self.policy.version:
+                raise ContractError("resume requires the original routing configuration and CLI versions")
         if self.policy.learned:
             expected = self.policy.learned.get("cli_versions", {})
             if any(expected.get(agent) != version for (agent, _), version in self.versions.items()
                    if agent in expected):
                 self.policy.learned = None
+
+    def freeze(self, run_dir, store):
+        from .ticket_status import atomic, encoded
+        from .routing import fingerprint
+        from .store import _now
+        value = {"policy_version": self.policy.version, "learned": self.policy.learned,
+                 "versions": [[a, e, v] for (a, e), v in self.versions.items()]}
+        atomic(Path(run_dir) / "routing-frozen.json", encoded(value))
+        with store._transaction() as db:
+            store._event(db, _now(), "routing_frozen", None, None, None, "running", {"digest": fingerprint(value)})
+
+    def restore(self, run_dir, saved):
+        from types import SimpleNamespace
+        decisions = {e["attempt_id"]: e["details"]["body"] for e in saved["events"]
+                     if e["details"].get("message_kind") == "routing_decision"}
+        self.previous_profiles = {}
+        for attempt in saved["attempts"]:
+            aid = attempt["id"]
+            decision = decisions.get(aid)
+            if decision is None:
+                # Claim may have committed before its decision event. Dispatch follows that event.
+                continue
+            self.count += 2
+            self.reservations[aid] = decision["reservation"]["estimated_usd"]
+            self.settle(SimpleNamespace(attempt_id=aid, artifacts=Path(run_dir) / "artifacts" / aid))
+        # Event order, not wall-clock order, identifies the last selected profile.
+        for event in saved["events"]:
+            if event["details"].get("message_kind") == "routing_decision":
+                self.previous_profiles[event["task_id"]] = event["details"]["body"]["profile"]
+            if event["kind"] == "retry":
+                tid = event["task_id"]
+                self.attempt_counts[tid] = self.attempt_counts.get(tid, 0) + 1
+
+    def record_reuse(self, item):
+        from .ticket_status import atomic, encoded
+        directory = item.artifacts / "worker"
+        directory.mkdir(parents=True, exist_ok=False)
+        atomic(directory / "invocation.json", encoded({
+            "role": "worker", "cost_usd": 0, "cost_kind": "not_started",
+            "duration_seconds": 0, "recovered_candidate": item.candidate}))
 
     def reserve(self, attempt_id, profile):
         # Reserve work plus independent review together; retain unknown usage estimates.
@@ -154,6 +199,8 @@ def learn(repo, config, result):
     from .routing import learning_catalog
     try:
         result["learning"] = import_run(repo, result)
+        if result["learning"].get("status") == "excluded_recovery_evidence":
+            return
         options = config.adaptive.get("learning")
         if options:
             gates = {k:v for k,v in options.items() if k != "auto_promote"}

@@ -19,7 +19,7 @@
 - Deterministic tests exercise successful dependency execution, false success, failed checks, review rejection, interruptions, and Git ownership/integration boundaries.
 - A bounded live two-ticket exercise completed with independent reviews, six accepted criteria, and passing integrated checks; see [validation evidence](VALIDATION.md).
 
-Legacy configurations attempt each ticket once and stops the whole run on a blocker or failure. It does not resolve upstream skills, resume saved runs, or reconcile hard crashes. Verification commands are trusted argument arrays executed directly on the host. Completion means a verified local branch, not publication or tracker closeout.
+Legacy configurations attempt each ticket once and stop the whole run on a blocker or failure. This initial milestone did not resolve upstream skills or recover saved runs; native recovery is covered below. Verification commands are trusted argument arrays executed directly on the host. Completion means a verified local branch, not publication or tracker closeout.
 
 ## 1a. Claude Code adapter — implemented
 
@@ -50,10 +50,11 @@ The implemented contract is in [PARALLEL_EXECUTION.md](PARALLEL_EXECUTION.md). T
 
 These are native skills for ordinary agent sessions. Harness ticket `skills` invocation and catalog-wide behavior compatibility remain part of milestone 4. Install/update previews fetch the source; only status is offline. Normal application errors roll back, while hard termination across multiple skill directories can require manual inspection. See [UPSTREAM.md](UPSTREAM.md).
 
-## 3. Recovery
+## 3. Recovery — bounded native resume implemented
 
-- Pause/resume/stop commands, bounded retries, and backoff.
-- Recover interrupted workers and reject stale results.
+- Native resume for interrupted protocol-enabled runs: preserve accepted tickets, reconcile Git/ledger boundaries, retire old attempts, and revalidate candidates.
+- Pause/stop commands, general failure retries, and backoff remain planned.
+- Restart interrupted workers in fresh workspaces and reject stale results.
 - Reconcile interrupted Git integration with persisted state.
 - Test worker and supervisor failures at each state transition.
 

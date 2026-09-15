@@ -38,6 +38,9 @@ def parser() -> argparse.ArgumentParser:
     run = subcommands.add_parser("run", help="Execute a trusted serial or worker-pool configuration.")
     run.add_argument("config", type=Path)
     run.add_argument("--json", action="store_true", help="Print the final run report as JSON.")
+    resume = subcommands.add_parser("resume", help="Continue an interrupted run from verified saved evidence.")
+    resume.add_argument("run_dir", type=Path)
+    resume.add_argument("--json", action="store_true")
     status = subcommands.add_parser("status", help="Read a saved run directory without resuming it.")
     status.add_argument("run_dir", type=Path)
     status.add_argument("--json", action="store_true", help="Print the saved state as JSON.")
@@ -170,21 +173,25 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{label} compatibility: {'compatible' if agent.compatible else 'unavailable/incompatible'}")
             if agent.error:
                 print(f"{label} detail: {agent.error}")
-            print("Execution requires macOS or Linux. Skill loading and recovery are planned.")
+            print("Execution requires macOS or Linux. Native resume is available for new runs; skill loading remains planned.")
         return 0 if git and agent.compatible and os.name == "posix" else 1
 
-    if arguments.command in ("run", "status"):
+    if arguments.command in ("run", "resume", "status"):
         from .config import RunConfig
         from .store import RunStore, StoreError
         try:
-            if arguments.command == "run":
+            if arguments.command in ("run", "resume"):
                 if os.name != "posix":
                     raise ContractError("execution currently requires macOS or Linux")
                 from .execution import run
                 from .workspaces import WorkspaceError
                 try:
-                    result = run(RunConfig.load(arguments.config),
-                                        progress=lambda message: print(message, file=sys.stderr, flush=True))
+                    progress = lambda message: print(message, file=sys.stderr, flush=True)
+                    if arguments.command == "resume":
+                        from .recovery import resume
+                        result = resume(arguments.run_dir, progress=progress)
+                    else:
+                        result = run(RunConfig.load(arguments.config), progress=progress)
                 except WorkspaceError as exc:
                     raise ContractError(str(exc)) from exc
             else:
