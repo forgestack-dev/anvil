@@ -47,15 +47,19 @@ any worker, Anvil requires a healthy repository-scoped installation, validates
 every managed copy, and pins the requested revision and files into the run
 directory. It supplies the exact UTF-8 instruction and supporting-file text in
 each applicable implementation prompt. Codex, Claude Code, Muse, and mixed pools
-use this same prompt path; reviewers still judge the ticket and resulting change.
+use this same prompt path when their declared capabilities satisfy the reviewed
+requirements for the exact instruction hash. Mixed pools route unpinned tickets
+only to compatible workers; an explicit worker assignment must be compatible.
+Reviewers still judge the ticket and resulting change.
 The installation must be committed or intentionally ignored so the target checkout
 still satisfies Anvil's clean-start requirement.
 
 Do not substitute a global installation or silently remove a requested name.
-Binary files, oversized contexts, missing names, symlinks, hash/mode changes, and
-local edits stop before model work. Bundled scripts are reference text and are not
-executed by Anvil. A worker must report blocked when a skill needs a missing tool
-or human decision. Resume uses the saved pinned snapshot even if the native
+Binary files, oversized contexts, missing names, symlinks, hash/mode changes,
+unreviewed instruction hashes, unavailable declared capabilities, and local edits
+stop before checks or model work. Bundled scripts are reference text and are not
+executed by Anvil. A worker must report blocked when it discovers an undeclared
+missing tool or decision at runtime. Resume uses the saved pinned snapshot even if the native
 installation changes. See `docs/SKILL_EXECUTION.md` in the Anvil repository for
 the full bounded contract.
 

@@ -95,8 +95,10 @@ its installed revision. Catalog counts and available names can change upstream.
 These commands make skills available to normal Codex and Claude Code sessions
 under their native invocation rules. Preserving upstream content does not prove
 that every skill's expected tools, permissions, human decisions, or behavior
-work in both agents. The installer does not execute upstream scripts or invoke
-a model to certify compatibility.
+work in both agents. Harness execution separately checks exact reviewed
+instruction hashes against [SKILL_REQUIREMENTS.md](SKILL_REQUIREMENTS.md). The
+installer does not execute upstream scripts or invoke a model to certify
+compatibility.
 
 ## Harness ticket execution
 
@@ -105,11 +107,13 @@ installation. Anvil pins the exact installed text files into the run directory,
 records their hashes and revision, and supplies them directly in implementation
 prompts. This works while Claude safe mode keeps native loading and the Skill tool
 disabled; native permissions do not change. Binary resources, oversized contexts,
-and modified installations fail before a model turn. See [SKILL_EXECUTION.md](SKILL_EXECUTION.md).
+modified installations, unreviewed instruction hashes, and unavailable declared
+capabilities fail before a model turn. Mixed pools may route an unpinned ticket to
+a compatible worker. See [SKILL_EXECUTION.md](SKILL_EXECUTION.md).
 
-Future compatibility work must preserve user-invoked versus model-invoked
-behavior and improve human-decision and missing-capability handling. Keep adaptations
-separate from upstream files. The experimental
+Compatibility work preserves user-invoked versus model-invoked behavior and keeps
+Anvil adaptations separate from upstream files. Interactive decision continuation
+and additional capability adapters remain planned. The experimental
 `skills/in-progress/implement-spec/SKILL.md` remains a reference for graph
 scheduling, isolated implementers, and integration.
 

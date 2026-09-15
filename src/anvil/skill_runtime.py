@@ -21,6 +21,39 @@ MAX_CONTEXT_BYTES = 512 * 1024
 _PIN_VERSION = 1
 _NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_CAPABILITIES = {"shell", "network", "subagents", "human_dialogue", "issue_tracker",
+                 "conversation_history", "git_control", "review_role"}
+
+
+def _registry() -> dict:
+    path = Path(__file__).with_name("skill_compat.json")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if (set(value) != {"version", "source", "entries"} or value["version"] != 1
+                or value["source"] != SOURCE or not isinstance(value["entries"], dict)):
+            raise ContractError("unsupported skill compatibility registry")
+        for name, entry in value["entries"].items():
+            if (_NAME.fullmatch(name) is None or set(entry) != {"sha256", "requires", "adaptations"}
+                    or not isinstance(entry["sha256"], str)
+                    or _SHA256.fullmatch(entry["sha256"]) is None
+                    or not isinstance(entry["requires"], list)
+                    or any(item not in _CAPABILITIES for item in entry["requires"])
+                    or len(set(entry["requires"])) != len(entry["requires"])
+                    or not isinstance(entry["adaptations"], list)
+                    or any(not isinstance(item, str) or not item.strip() for item in entry["adaptations"])):
+                raise ContractError("invalid skill compatibility registry entry")
+        return value
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        if isinstance(exc, ContractError):
+            raise
+        raise ContractError(f"cannot load skill compatibility registry: {exc}") from exc
+
+
+def _capabilities(agent: str) -> set[str]:
+    if agent not in {"codex", "claude-code", "muse"}:
+        raise ContractError(f"unknown skill execution agent: {agent}")
+    return {"shell"} if agent == "codex" else set()
 
 
 def _relative(value: object) -> str:
@@ -61,21 +94,49 @@ class SkillContext:
     revision: str | None = None
     root: Path | None = None
     records: dict | None = None
+    compatibility: dict | None = None
 
     @property
     def enabled(self) -> bool:
         return self.records is not None
 
-    def evidence(self, task: Task) -> dict | None:
+    def preflight(self, task: Task, agent: str) -> dict:
+        available = _capabilities(agent)
+        skills, missing = [], set()
+        for name in task.skills:
+            entry = self.compatibility[name]
+            required = set(entry["requires"])
+            absent = sorted(required - available)
+            missing.update(absent)
+            skills.append({"name": name, "requires": entry["requires"],
+                           "missing": absent, "adaptations": entry["adaptations"]})
+        return {"agent": agent, "registry_version": 1, "capabilities": sorted(available),
+                "compatible": not missing, "missing": sorted(missing), "skills": skills}
+
+    def require(self, task: Task, agent: str) -> dict:
+        report = self.preflight(task, agent)
+        if not report["compatible"]:
+            raise ContractError(f"task {task.id} skills are incompatible with {agent}; missing capabilities: "
+                                + ", ".join(report["missing"]))
+        return report
+
+    def compatible(self, task: Task, agent: str) -> bool:
+        return self.preflight(task, agent)["compatible"]
+
+    def evidence(self, task: Task, agent: str) -> dict | None:
         if not task.skills:
             return None
         return {"source": self.source, "revision": self.revision,
                 "skills": list(task.skills),
-                "files": {name: self.records[name] for name in task.skills}}
+                "files": {name: self.records[name] for name in task.skills},
+                "preflight": self.require(task, agent)}
 
-    def prompt(self, task: Task) -> str:
+    def prompt(self, task: Task, agent: str) -> str:
         if not task.skills:
             return ""
+        preflight = self.require(task, agent)
+        adaptations = [adaptation for skill in preflight["skills"]
+                       for adaptation in skill["adaptations"]]
         sections = [
             "Pinned AI Hero skill context follows. The ticket explicitly selected these skills. "
             "Apply their relevant workflow within the ticket scope. Project instructions, the "
@@ -85,6 +146,8 @@ class SkillContext:
             "return blocked and explain what is needed.",
             f"Source: {self.source}\nRevision: {self.revision}\nSelected: {', '.join(task.skills)}",
         ]
+        if adaptations:
+            sections.append("Anvil compatibility adaptations:\n- " + "\n- ".join(adaptations))
         for name in task.skills:
             files = self.records[name]
             order = ("SKILL.md", *(path for path in sorted(files) if path != "SKILL.md"))
@@ -104,7 +167,19 @@ class SkillContext:
         return result
 
 
-EMPTY = SkillContext()
+EMPTY = SkillContext(compatibility={})
+
+
+def _classify(records: dict) -> dict:
+    registry = _registry()
+    selected = {}
+    for name, files in records.items():
+        entry = registry["entries"].get(name)
+        digest = files.get("SKILL.md", {}).get("sha256")
+        if entry is None or entry["sha256"] != digest:
+            raise ContractError(f"skill {name} instructions are unclassified; compatibility review is required")
+        selected[name] = entry
+    return selected
 
 
 def pin(repo: Path, graph, run_dir: Path) -> SkillContext:
@@ -138,12 +213,15 @@ def pin(repo: Path, graph, run_dir: Path) -> SkillContext:
                     target.chmod(0o755 if expected["executable"] else 0o644)
     except SkillError as exc:
         raise ContractError(str(exc)) from exc
+    compatibility = _classify(selected)
     value = {"version": _PIN_VERSION, "source": SOURCE, "revision": manifest["revision"],
-             "skills": selected}
+             "skills": selected, "compatibility": compatibility}
     atomic(destination / "pin.json", encoded(value))
-    context = SkillContext(SOURCE, manifest["revision"], destination, selected)
+    context = SkillContext(SOURCE, manifest["revision"], destination, selected, compatibility)
     for task in graph.tasks:
-        context.prompt(task)
+        for agent in ("codex", "claude-code", "muse"):
+            if context.compatible(task, agent):
+                context.prompt(task, agent)
     return context
 
 
@@ -154,7 +232,10 @@ def load(run_dir: Path, graph, *, saved: dict | None = None) -> SkillContext:
     root = Path(run_dir) / "skills"
     try:
         value = json.loads((root / "pin.json").read_text(encoding="utf-8"))
-        if (set(value) != {"version", "source", "revision", "skills"}
+        fields = {"version", "source", "revision", "skills"}
+        if "compatibility" in value:
+            fields.add("compatibility")
+        if (set(value) != fields
                 or value["version"] != _PIN_VERSION or value["source"] != SOURCE
                 or not isinstance(value["revision"], str) or _SHA.fullmatch(value["revision"]) is None
                 or not isinstance(value["skills"], dict)
@@ -170,9 +251,16 @@ def load(run_dir: Path, graph, *, saved: dict | None = None) -> SkillContext:
                         or any(character not in "0123456789abcdef" for character in record["sha256"])
                         or type(record["executable"]) is not bool):
                     raise ContractError("pinned skill snapshot has invalid file records")
-        context = SkillContext(value["source"], value["revision"], root, value["skills"])
+        compatibility = value.get("compatibility")
+        expected = _classify(value["skills"])
+        if compatibility is not None and compatibility != expected:
+            raise ContractError("pinned skill compatibility registry changed")
+        compatibility = expected
+        context = SkillContext(value["source"], value["revision"], root, value["skills"], compatibility)
         for task in graph.tasks:
-            context.prompt(task)
+            for agent in ("codex", "claude-code", "muse"):
+                if context.compatible(task, agent):
+                    context.prompt(task, agent)
     except (OSError, ValueError, TypeError, KeyError) as exc:
         if isinstance(exc, ContractError):
             raise
@@ -190,7 +278,8 @@ def record(store, context: SkillContext) -> None:
     if not context.enabled:
         return
     value = {"version": _PIN_VERSION, "source": context.source,
-             "revision": context.revision, "skills": context.records}
+             "revision": context.revision, "skills": context.records,
+             "compatibility": context.compatibility}
     digest = hashlib.sha256(encoded(value)).hexdigest()
     with store._transaction() as db:
         store._event(db, _now(), "skill_catalog", None, None, None, "running",

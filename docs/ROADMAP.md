@@ -58,10 +58,10 @@ These are native skills for ordinary agent sessions. Ticket-selected text instru
 - Reconcile interrupted Git integration with persisted state.
 - Test worker and supervisor failures at each state transition.
 
-## 4. Full skill integration — ticket-selected text skills implemented
+## 4. Full skill integration — compatibility preflight implemented
 
 - Connect the managed, pinned upstream skill catalog to per-ticket execution. Implemented for explicitly selected UTF-8 text resources across Codex, Claude, Muse, and mixed pools.
-- Resolve invocation requirements, human decisions, and missing tools.
+- Resolve invocation requirements, human decisions, and missing tools. Implemented as an exact-instruction compatibility registry and pre-dispatch capability gate; adapters and interactive continuation for currently unavailable capabilities remain planned.
 - Record the pinned revision, file hashes, and per-attempt instruction delivery. Implemented for the bounded text path.
 - Add Markdown intake and spec-to-ticket preparation.
 - Independently evaluate skill behavior on realistic work.
