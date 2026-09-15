@@ -46,7 +46,7 @@ A blocker, review request for changes, failed check, timeout, or other terminal 
 
 `anvil status <run-directory> --json` reads persisted state without launching workers. Ctrl-C stops the active process group and records interruption. Timeouts also terminate the process group; ordinary child processes are cleaned up after successful commands too. Process groups are lifecycle control, not containment for a deliberately detached program.
 
-A hard crash can leave a saved run marked running. Persistence enables inspection but does not yet implement resume or Git/state reconciliation. Running the configuration again creates a separate run. Preserve previous work and evidence; do not interpret an empty ready queue, a saved running status, or a successful status read as completed work. Publication, pull requests, merging into the user's branch, and external ticket closeout are separate actions outside this runtime.
+A hard crash can leave a saved run marked running. Native `anvil resume <run-directory>` reconciles Git/state and continues interrupted runs created with the recovery protocol. Running the configuration again creates a separate run. Preserve previous work and evidence; do not interpret an empty ready queue, a saved running status, or a successful status read as completed work. Publication, pull requests, merging into the user's branch, and external ticket closeout are separate actions outside this runtime.
 
 ## Ticket status and adaptive execution
 
@@ -55,3 +55,19 @@ A hard crash can leave a saved run marked running. Persistence enables inspectio
 An optional `adaptive` object configures named profiles (agent, model, effort, rank), `defaults`, and a fixed `review_profile`. Use `anvil route <run.json>` for an offline preview and `anvil routing report <run-dir>` for evidence. Modes are off, shadow, rules and adaptive; begin with shadow if effectiveness is not established. Explicit ticket profiles and worker affinity are preserved. `max_attempts` permits at most two attempts, with same-agent escalation only after remediable review/check failure. A new run never resumes an old one.
 
 Usage may be unknown and dollar estimates are not invoices. `soft_budget_usd` is an admission estimate; Claude alone supports per-profile `max_budget_usd`. Do not claim Codex has a hard dollar cap. Learning requires explicit sample/quality/cost/latency gates. Train and promote local immutable policies through `anvil routing`; promotion affects subsequent runs. Benchmark invokes paid agents and requires an authorized budget. Do not promise savings or infer that a successful model was the cheapest adequate choice.
+
+## Native resume
+
+Resume keeps the saved configuration, tickets, run ID, accepted branch and evidence.
+It rejects changed inputs, old ledgers, failed/blocked runs, and live orphaned
+process groups. Unresolved spawn records require inspection; do not delete them
+or kill processes to bypass the check. Stop servicing old Muse handoffs before
+resume; new attempts have different result destinations.
+
+Completed tickets stay accepted. An evidenced branch advance interrupted before
+ledger completion is reconciled once. Eligible immutable candidates are reused
+only on the same accepted base, with fresh independent review and checks; other
+work restarts. Old worktrees and artifacts are preserved. Adaptive configuration,
+CLI versions, cumulative budget and escalation limits remain in effect. Resume
+can spend additional model usage within the existing run budget and authorization.
+Recovered runs are excluded from policy training.

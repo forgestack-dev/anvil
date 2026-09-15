@@ -137,13 +137,15 @@ def assess(task, repo, base):
 
 
 class Policy:
-    def __init__(self, config, graph, repo):
+    def __init__(self, config, graph, repo, *, frozen=None):
         self.config = deepcopy(config.adaptive)
         self.repo = repo
         self.profiles = self.config["profiles"]
         self.version = fingerprint(self.config)
         self.learned = None
-        if self.config.get("mode") == "adaptive":
+        if frozen is not None:
+            self.learned = frozen["learned"]
+        elif self.config.get("mode") == "adaptive":
             from .learning import load_policy
             self.learned = load_policy(repo, self.config.get("policy"), learning_catalog(config))
         self.workers = config.workers

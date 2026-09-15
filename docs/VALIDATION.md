@@ -132,10 +132,16 @@ anvil run /tmp/anvil-live-example/run.json
 
 The last command intentionally launches real Codex turns and uses the configured account. To generate a Claude Code configuration, add `--agent claude-code` to the fixture generator command, using a new destination directory. The generator still launches no agent; the subsequent `anvil run` uses the selected agent. These instructions enable a separate exercise and do not imply a recorded live Claude result.
 
-Each agent turn has a 300-second limit and each verification command a 30-second limit. Use the saved run directory printed by `run` with `anvil status <run-directory> --json`. A new run is a fresh attempt; automatic resume is not available.
+Each agent turn has a 300-second limit and each verification command a 30-second limit. Use the saved run directory printed by `run` with `anvil status <run-directory> --json`. New protocol-enabled interrupted runs support explicit `anvil resume <run-directory>`; these historical exercises predate that protocol.
 
 ## Ticket status and adaptive routing
 
 The adaptive-routing change adds deterministic coverage for source status during implementation/review, conflict preservation, in-repository metadata-only dirtiness, replacement-before-acknowledgement recovery, stale-run publication, failure statuses, explicit provider arguments, mixed-process overlap, fixed shadow execution, bounded review/check escalation, stale attempts, budget admission, cache-aware usage, malformed telemetry, sparse history, held-out quality gates, and immutable policy promotion/rollback. Ordinary tests use fake processes and do not consume model usage.
 
 A live Claude Code 2.1.260 fixture was attempted with `claude-sonnet-5`, low effort, one ticket, two reserved invocations, and native $0.12 caps per invocation ($0.24 reserved against a user-authorized $0.50 total). The worker stopped at the account's session limit before implementation; the provider reported zero input/output tokens and $0 cost. The reviewer was not launched. This validates safe stopping and retained evidence, not live implementation success. No live Codex turn was launched because the adapter cannot enforce an equivalent dollar cap. No empirical cost savings or production-quality improvement is claimed from synthetic policy fixtures.
+
+## Native recovery
+
+The complete 362-test suite passes on Python 3.11 and Python 3.14 on macOS. The 23 new recovery tests use temporary Git repositories and deterministic workers, including a subprocess supervisor that exits immediately after advancing the managed branch. Coverage includes repeated interruption, candidate re-review, stale ownership rejection, orphan process refusal, unchanged completed dependencies, publication ownership, frozen-policy integrity, cumulative budgets, and preserved escalation limits.
+
+Both example ticket graphs validate and plan successfully. The Anvil skill validator passes. The wheel and source distribution build, and the wheel installs into an isolated Python 3.11 environment with working version and resume-help commands. No live model calls were made for this milestone; these results do not establish live-provider recovery reliability or Linux acceptance.

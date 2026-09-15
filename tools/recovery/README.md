@@ -1,7 +1,8 @@
 # Anvil run recovery tools
 
-Operator tooling for surviving supervisor deaths. Anvil has no resume: if the
-supervisor process dies (VM restart, OOM kill), the run cannot be continued.
+Operator tooling for surviving supervisor deaths. For new protocol-enabled runs, prefer `anvil resume RUN_DIRECTORY`; see
+[the native recovery contract](../../docs/RECOVERY.md). These legacy scripts use
+a replacement-run workflow and do not reconcile the original ledger.
 These scripts launch a replacement run over the remaining tickets and carry
 across any implementations that were filed but never integrated.
 

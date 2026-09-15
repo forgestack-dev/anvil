@@ -8,7 +8,7 @@ Anvil is ForgeStack's engineering harness for working through specifications and
 
 Anvil executes a JSON ticket graph serially or with a **coordinated pool of Codex, Claude Code, and Muse workers**. Workers implement ready tickets in isolated Git worktrees. One supervisor owns the SQLite ledger and integration queue, reviews each change on top of the latest accepted branch, runs required checks, and advances that branch only after acceptance evidence, independent review, and verification pass. Muse turns are fulfilled by the operator running Anvil through a staged handoff rather than a local CLI; see [agent adapters](docs/AGENT_ADAPTERS.md).
 
-It also validates ticket graphs, previews dependency waves, checks local prerequisites, reads saved run state, and installs or updates AI Hero skills in both agents' native directories. Pause/resume, crash recovery, upstream skill invocation within harness tickets, Markdown intake, and issue-tracker closeout remain planned. Requests for skills in an execution ticket are rejected rather than silently ignored. Package installation does not register skills or modify an application repository automatically.
+It also validates ticket graphs, previews dependency waves, checks local prerequisites, reads saved run state, and installs or updates AI Hero skills in both agents' native directories. Native resume continues interrupted runs created by this version. Pause commands, general failure retries, upstream skill invocation within harness tickets, Markdown intake, and issue-tracker closeout remain planned. Requests for skills in an execution ticket are rejected rather than silently ignored. Package installation does not register skills or modify an application repository automatically.
 
 ## Install and plan
 
@@ -138,7 +138,7 @@ For each ticket, Anvil:
 
 A worker's success message alone cannot complete a ticket. A blocker, requested review changes, failing check, process timeout, or other terminal failure stops the entire serial run, including independent tickets. Completed work remains on the managed branch; failed candidates, worktrees, logs, and state are preserved for inspection. Ctrl-C terminates the active process group and records interruption. Process groups clean up ordinary child processes; they are not a security boundary against deliberately detached programs.
 
-The saved run directory contains `state.sqlite`, `report.json`, worktrees, and per-ticket artifacts: structured worker/review results, event streams, stderr logs, verification outputs, and associated commit IDs. Workspace and artifact directories use unique attempt IDs; saved attempts map them to the original ticket IDs. A hard crash may leave state recorded as running; automatic reconciliation and resume are not implemented. Inspect preserved work before deciding how to proceed.
+The saved run directory contains `state.sqlite`, `report.json`, worktrees, and per-ticket artifacts: structured worker/review results, event streams, stderr logs, verification outputs, and associated commit IDs. Workspace and artifact directories use unique attempt IDs; saved attempts map them to the original ticket IDs. A hard crash may leave state recorded as running. Explicit native resume validates process quiescence and reconciles the ledger with the managed branch before continuing; see [recovery](docs/RECOVERY.md).
 
 `run` exits with 0 for success, 1 for failure, 2 for invalid input/setup, 3 for blocked work, or 130 for Ctrl-C. `status` exits with 0 when the saved state was read successfully, regardless of the run's recorded outcome. Anvil does not push, open a pull request, merge into a user branch, or close external tickets.
 
@@ -196,7 +196,7 @@ claimed tickets become interrupted; undispatched tickets remain pending.
 This is one coordinated run, not two supervisors operating on the same checkout.
 The repository lock still rejects another run, including from a linked worktree.
 There is no live conversation injected into an active worker turn, lease
-reassignment, or automatic retry/resume. See [coordination details](docs/PARALLEL_EXECUTION.md)
+reassignment, or automatic resume. Explicit native resume is available for interrupted runs; adaptive configurations also support bounded review/check escalation. See [coordination details](docs/PARALLEL_EXECUTION.md)
 and [validation evidence](docs/VALIDATION.md). No live mixed-agent acceptance run
 has been recorded.
 
@@ -244,3 +244,22 @@ Anvil is MIT licensed. Installed AI Hero skills retain their upstream MIT licens
 ## Ticket status and model routing
 
 Opt into source JSON ticket status with `ticket_status: true`. Named model/effort profiles, shadow/rules/adaptive routing, usage reports, one bounded escalation, and local gated policy learning are available through `adaptive` configuration. Existing configurations retain their behavior. See [configuration and limitations](docs/ADAPTIVE_ROUTING.md) and [example](examples/adaptive-run.json). Currency reservations are estimates; live savings require workload evidence.
+
+## Resume interrupted work
+
+```sh
+anvil status /path/to/run-directory --json
+anvil resume /path/to/run-directory --json
+```
+
+Resume preserves the run ID, completed tickets, accepted branch and evidence. It
+uses the saved configuration, requires unchanged ticket inputs, and repeats the
+baseline checks. Unfinished work gets fresh ownership and workspaces. Eligible
+candidate commits are reviewed and verified again; other tickets restart.
+
+Only runs created with the native recovery protocol are supported. Failed or
+blocked runs require operator diagnosis, and live orphaned process groups or an
+unresolved spawn intent block recovery. Adaptive routing keeps its frozen policy,
+CLI versions and cumulative budget; recovered runs are excluded from training.
+See [the recovery contract](docs/RECOVERY.md) for boundaries and the difference
+from the replacement-run scripts in `tools/recovery`.

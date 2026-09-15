@@ -13,7 +13,7 @@ from .contracts import ContractError, Task
 from .environment import managed_environment
 from .evidence import REVIEW_SCHEMA, WORKER_SCHEMA, validate_result
 from .planning import TaskGraph
-from .processes import ProcessError, run_process
+from .processes import ProcessError, ProcessScope, run_process
 from .store import RunStore, StoreError
 from .workspaces import Repository, RepositoryLock, WorkspaceError
 
@@ -101,7 +101,8 @@ def _review_prompt(task: Task, base: str, candidate: str, claims: dict,
 def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
     """Execute serially; adaptive configurations use the bounded pool coordinator.
 
-    Legacy configurations attempt each ticket once. Resume, remote publication,
+    Legacy configurations attempt each ticket once per execution. Native resume
+    delegates interrupted continuation to the pool coordinator; remote publication
     and upstream skill loading remain unsupported. `runner` is injectable for deterministic tests only; the CLI
     selects the configured agent adapter.
     """
@@ -135,13 +136,16 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
     file_tools_only = config.agent == "claude-code"
     notify = progress or (lambda message: None)
 
-    with RepositoryLock(repo):
+    scope = ProcessScope(1)
+    with RepositoryLock(repo), scope.activate():
         repo.assert_clean()
         base = repo.head()
         run_id = uuid.uuid4().hex
         branch = f"anvil/{run_id}"
         run_dir = config.state_dir / run_id
         run_dir.mkdir(parents=True, exist_ok=False)
+        from .recovery import track_commands
+        track_commands(scope, run_dir)
         integration = run_dir / "integration"
         current_task, attempt_id = None, None
         publisher = None
@@ -169,6 +173,8 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
             try:
                 store.initialize(run_id=run_id, repo=str(repo.path), branch=branch, base_sha=base,
                                  tasks=graph.tasks, config=config.to_dict())
+                from .recovery import mark_supported
+                mark_supported(store)
                 publisher = attach(store, config, repo)
                 store.set_run("running")
                 notify(f"Run {run_id}: verifying the baseline")

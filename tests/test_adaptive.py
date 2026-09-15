@@ -367,8 +367,11 @@ prompt = sys.stdin.read()''')
             self.assertEqual(attempt['evaluation'], 'insufficient_evidence')
             self.assertEqual(result['attempts'][0]['details']['review']['verdict'], 'approve')
             with history(Repository(self.repo)) as db:
-                sample = json.loads(db.execute('SELECT data FROM samples WHERE run_id=?', (result['run_id'],)).fetchone()[0])
-            self.assertFalse(sample['eligible'])
+                row = db.execute('SELECT data FROM samples WHERE run_id=?', (result['run_id'],)).fetchone()
+            if isinstance(error, KeyboardInterrupt):
+                self.assertIsNone(row)  # resumable runs cannot be imported as immutable final evidence
+            else:
+                self.assertFalse(json.loads(row[0])['eligible'])
 
     def test_real_check_rejection_remains_eligible_with_bound_execution_conditions(self):
         from anvil.learning import history

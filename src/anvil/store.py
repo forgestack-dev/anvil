@@ -385,7 +385,7 @@ class RunStore:
             task = self._active_task(connection, task_id, attempt_id)
             config = json.loads(self._run(connection)["config"])
             maximum = (config.get("adaptive") or {}).get("max_attempts", 1)
-            count = connection.execute("SELECT COUNT(*) FROM attempts WHERE task_id=?", (task_id,)).fetchone()[0]
+            count = 1 + connection.execute("SELECT COUNT(*) FROM events WHERE task_id=? AND kind='retry'", (task_id,)).fetchone()[0]
             if count >= min(maximum, 2):
                 raise StoreError("configured attempt limit exhausted")
             if task["status"] not in {"candidate", "reviewed"}:

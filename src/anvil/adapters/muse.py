@@ -171,6 +171,10 @@ def _announce(handoff: MuseHandoff) -> None:
 def _await_result(handoff: MuseHandoff) -> None:
     deadline = time.monotonic() + handoff.timeout
     while True:
+        from anvil.processes import _active_scope
+        scope = _active_scope.get()
+        if scope is not None:
+            scope._check_cancelled()
         if not handoff.result_path.is_symlink() and handoff.result_path.is_file():
             return
         if time.monotonic() >= deadline:

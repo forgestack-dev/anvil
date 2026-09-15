@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
 import math
+import uuid
 import os
 from pathlib import Path
 import signal
@@ -48,6 +49,7 @@ class ProcessScope:
         self.max_processes = max_processes
         self._slots = threading.BoundedSemaphore(max_processes)
         self._cancelled = threading.Event()
+        self.command_dir = None
 
     @property
     def cancelled(self) -> bool:
@@ -229,6 +231,11 @@ def run_process(
         except (OSError, ValueError, UnicodeError) as exc:
             raise ProcessError(f"could not start command or create output artifacts: {exc}") from exc
         process = None
+        record = None
+        if scope is not None and scope.command_dir is not None:
+            from .ticket_status import atomic, encoded
+            record = scope.command_dir / (uuid.uuid4().hex + ".json")
+            atomic(record, encoded({"phase": "spawning", "cwd": str(cwd)}))
         timed_out = False
         try:
             check_interrupt()
@@ -246,6 +253,8 @@ def run_process(
                 )
             except (OSError, ValueError, UnicodeError) as exc:
                 raise ProcessError(f"could not start command or create output artifacts: {exc}") from exc
+            if record is not None:
+                atomic(record, encoded({"phase": "running", "pgid": process.pid, "cwd": str(cwd)}))
             deadline = time.monotonic() + timeout
             while True:
                 check_interrupt()
@@ -262,5 +271,7 @@ def run_process(
             # group before propagating any interrupts received during cleanup.
             if process is not None:
                 _stop_group(process)
+            if record is not None:
+                record.unlink()
         check_cancelled()
         return ProcessOutcome(returncode=process.returncode, timed_out=timed_out)

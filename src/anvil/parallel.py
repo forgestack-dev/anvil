@@ -134,7 +134,7 @@ def _stop(store: RunStore, status: str, error: str, culprit: str | None,
 
 
 def run_parallel(config: RunConfig, *, runners: dict | None = None,
-                 review_runner=None, progress=None) -> dict:
+                 review_runner=None, progress=None, resume_dir=None) -> dict:
     """Execute a worker pool with one evidence-gated branch and optional bounded escalation.
 
     Runner injection is for deterministic tests only. Ordinary execution uses
@@ -166,7 +166,11 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
     if review_runner is None:
         review_runner = _runner(config.agent, config.executable)
     from .adaptive_runtime import Session, report as routing_report
-    adaptive = Session(config, graph, repo, injected=injected) if config.adaptive is not None else None
+    frozen = None
+    if resume_dir is not None and config.adaptive is not None:
+        from .recovery import frozen_policy
+        frozen = frozen_policy(resume_dir)
+    adaptive = Session(config, graph, repo, injected=injected, frozen=frozen) if config.adaptive is not None else None
     notify = progress or (lambda message: None)
     scope = ProcessScope(config.max_processes)
 
@@ -176,12 +180,30 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
         run_id = uuid.uuid4().hex
         branch = f"anvil/{run_id}"
         run_dir = config.state_dir / run_id
-        run_dir.mkdir(parents=True, exist_ok=False)
+        if resume_dir is not None:
+            run_dir = Path(resume_dir)
+            saved = RunStore.read(run_dir / "state.sqlite")
+            original = RunConfig.from_document(saved["config"], base=run_dir)
+            from dataclasses import replace
+            if not original.workers:
+                original = replace(original, workers=(WorkerConfig("serial", original.agent, original.executable),), max_processes=1)
+            if original.to_dict() != config.to_dict():
+                raise ContractError("saved recovery configuration changed")
+            run_id, branch = saved["run_id"], saved["branch"]
+            from .recovery import assert_quiescent
+            assert_quiescent(run_dir)
+            if adaptive:
+                adaptive.restore(run_dir, saved)
+        else:
+            run_dir.mkdir(parents=True, exist_ok=False)
+        from .recovery import track_commands, mark_supported, prepare
+        track_commands(scope, run_dir)
         workspace = run_dir / "integration"
         active: dict[str, Assignment] = {}
         candidates: list[Assignment] = []
         completed: dict[str, dict] = {}
         pending = list(graph.tasks)
+        reusable = {}
         integration: Integration | None = None
         current: str | None = None
         pool = ThreadPoolExecutor(max_workers=len(config.workers), thread_name_prefix="anvil")
@@ -216,15 +238,36 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
         with RunStore(run_dir / "state.sqlite") as store:
             failure = None
             result = None
+            recovery_ready = resume_dir is None
             try:
-                store.initialize(run_id=run_id, repo=str(repo.path), branch=branch, base_sha=base,
-                                 tasks=graph.tasks, config=config.to_dict())
-                publisher = attach(store, config, repo)
-                store.set_run("running")
+                if resume_dir is None:
+                    store.initialize(run_id=run_id, repo=str(repo.path), branch=branch, base_sha=base,
+                                     tasks=graph.tasks, config=config.to_dict())
+                    mark_supported(store)
+                    if adaptive:
+                        adaptive.freeze(run_dir, store)
+                    publisher = attach(store, config, repo)
+                    store.set_run("running")
+                else:
+                    # Validation errors must leave the original run untouched.
+                    base, generation, accepted, reusable = prepare(store, config, repo, run_dir)
+                    recovery_ready = True
+                    from .recovery import saved_graph
+                    graph = saved_graph(store)
+                    workspace = run_dir / ("integration-" + generation)
+                    completed = {tid: {"integrated_sha": d["integrated_sha"], "worker": d["worker"]}
+                                 for tid, d in accepted.items()}
+                    pending = [t for t in graph.tasks if t.id not in completed]
+                    if config.ticket_status:
+                        from .ticket_status import Publisher
+                        publisher = Publisher(store, config.tickets, repo)
+                        store.after_commit = publisher.flush
+                        publisher.flush()
                 notify(f"Run {run_id}: verifying the baseline")
                 repo.create_worktree(workspace, base)
-                repo.create_branch(branch, base)
-                verify(config, workspace, run_dir / "baseline")
+                if resume_dir is None:
+                    repo.create_branch(branch, base)
+                verify(config, workspace, run_dir / ("baseline" if resume_dir is None else "baseline-" + generation))
                 repo.assert_revision(workspace, base)
                 heartbeat = time.monotonic()
 
@@ -348,7 +391,9 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                         task = next((task for task in pending
                                      if set(task.depends_on) <= completed.keys()
                                      and _available(task, worker, active)
-                                     and (adaptive is None or adaptive.policy.compatible(task, worker))), None)
+                                     and (adaptive is None or (adaptive.policy.compatible(task, worker)
+                                          and (task.id not in getattr(adaptive, "previous_profiles", {}) or
+                                               adaptive.policy.profiles[adaptive.previous_profiles[task.id]]["agent"] == worker.agent)))), None)
                         if task is None:
                             continue
                         current = task.id
@@ -356,7 +401,8 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                         worker_workspace = run_dir / "workers" / attempt_id
                         item = Assignment(task, worker, attempt_id, base, worker_workspace,
                                           run_dir / "artifacts" / attempt_id)
-                        decision = adaptive.decide(task, worker, base, attempt_id) if adaptive else None
+                        decision = adaptive.decide(task, worker, base, attempt_id,
+                                                   escalate=getattr(adaptive, "previous_profiles", {}).get(task.id)) if adaptive else None
                         store.start_attempt(task.id, base, str(worker_workspace), attempt_id=attempt_id,
                                             worker_id=worker.id, agent=worker.agent)
                         if adaptive:
@@ -364,6 +410,19 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                         active[worker.id] = item
                         pending.remove(task)
                         repo.create_worktree(worker_workspace, base)
+                        saved_candidate = reusable.get(task.id)
+                        if saved_candidate and saved_candidate["base_sha"] == base:
+                            # Only the immutable commit is reused; no old artifacts or mutable files.
+                            item.candidate = repo.prepare_integration(item.workspace, base, saved_candidate["candidate_sha"])
+                            item.claims = saved_candidate["worker"]
+                            store.transition(task.id, "candidate", attempt_id=attempt_id,
+                                             details={"candidate_sha": item.candidate, "worker": item.claims,
+                                                      "recovered_candidate": saved_candidate["candidate_sha"]})
+                            if adaptive:
+                                adaptive.record_reuse(item)
+                            candidates.append(item)
+                            notify(f"{task.id}: recovered candidate; independent review and verification required")
+                            continue
                         handoff = _handoff(task, completed)
                         store.record_message(task.id, attempt_id=attempt_id,
                                              kind="dependency_handoff", body={"dependencies": handoff})
@@ -430,6 +489,8 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                     with _defer_sigint():
                         scope.cancel()
                         pool.shutdown(wait=True, cancel_futures=True)
+                        if not recovery_ready:
+                            raise failure
                         if failure is not None:
                             status = "interrupted" if isinstance(failure, KeyboardInterrupt) else (
                                 "blocked" if isinstance(failure, _Blocked) else "failed")

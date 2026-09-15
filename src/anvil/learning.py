@@ -84,6 +84,8 @@ def import_run(repo, result):
         raise ContractError("only finalized runs can enter history")
     if "routing" not in result:
         raise ContractError("run has no routing telemetry")
+    if result["status"] == "interrupted" or any(e["kind"] == "recovery" for e in result["events"]):
+        return {"imported_or_existing": 0, "status": "excluded_recovery_evidence"}
     catalog = learning_catalog(result["config"])
     samples = []
     for task in result["tasks"]:
