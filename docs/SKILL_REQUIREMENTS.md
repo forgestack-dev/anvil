@@ -47,7 +47,8 @@ Runtime discoveries can still produce a normal blocked result.
 ## Deferred
 
 User-configured capability attestations, interactive decision continuation,
-tracker and network adapters, nested-agent delegation, automatic skill selection,
-and model-assisted classification remain separate milestones. A registry update
+tracker and network adapters, nested-agent delegation, and model-assisted
+selection/classification remain separate milestones. Deterministic automatic
+selection is described in [AUTOMATIC_SKILL_SELECTION.md](AUTOMATIC_SKILL_SELECTION.md). A registry update
 requires review and deterministic tests; it never silently trusts new upstream
 instructions.

@@ -116,7 +116,7 @@ class PlanningTests(unittest.TestCase):
 
     def test_accepts_source_references_and_strict_provenance(self):
         value = ticket("a") | {"source_refs": ["Requirements > A"]}
-        provenance = {"generator": "anvil", "generator_version": "0.1.0.dev9",
+        provenance = {"generator": "anvil", "generator_version": "0.1.0.dev10",
                       "source": "SPEC.md", "source_sha256": "a" * 64,
                       "repo_head": "b" * 40, "prepared_at": "2026-09-15T12:00:00+00:00",
                       "agent": "codex"}

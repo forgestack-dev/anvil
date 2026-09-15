@@ -12,8 +12,10 @@ from anvil.config import WorkerConfig
 from anvil.contracts import ContractError, Task
 from anvil.execution import run_serial
 from anvil.parallel import run_parallel
+from anvil.planning import TaskGraph
 from anvil.recovery import resume
 from anvil.skill_management import SkillScope, install
+from anvil.skill_runtime import load as load_skills
 from anvil.skill_source import Catalog, Skill, SourceFile
 from anvil.store import RunStore
 import test_execution
@@ -114,6 +116,75 @@ class TicketSkillExecutionTests(unittest.TestCase):
                     if event["details"].get("message_kind") == "skill_context"]
         self.assertEqual(catalog[0]["details"]["skills"], ["tdd"])
         self.assertEqual(attempts[0]["details"]["body"]["skills"], ["tdd"])
+
+    def test_rules_select_installed_skills_and_record_reasons(self):
+        self.install_skills()
+        document = json.loads(self.tickets.read_text())
+        document["tasks"] = document["tasks"][:1]
+        document["tasks"][0].update(
+            title="Add regression coverage", objective="Implement tests for the failure",
+            acceptance_criteria=["Regression test passes"], skills=[])
+        self.tickets.write_text(json.dumps(document))
+        runner = CaptureRunner()
+        config = replace(self.config, skill_selection={"mode": "rules", "max_skills": 2})
+        result = run_serial(config, runner=runner)
+        self.assertEqual(result["status"], "success", result["error"])
+        self.assertIn("BEGIN SKILL FILE tdd/SKILL.md", runner.worker_prompts[0])
+        self.assertIn("BEGIN SKILL FILE implement/SKILL.md", runner.worker_prompts[0])
+        evidence = [event["details"]["body"] for event in result["events"]
+                    if event["details"].get("message_kind") == "skill_context"][0]
+        self.assertEqual(evidence["selection"]["origin"], "rules")
+        self.assertEqual(evidence["skills"], ["tdd", "implement"])
+        self.assertIn("regression coverage", evidence["selection"]["reasons"][0])
+
+    def test_explicit_selection_is_not_augmented_by_rules(self):
+        self.install_skills()
+        self.select(("writing-for-agents",))
+        runner = CaptureRunner()
+        config = replace(self.config, skill_selection={"mode": "rules", "max_skills": 4})
+        result = run_serial(config, runner=runner)
+        self.assertEqual(result["status"], "success", result["error"])
+        prompt = runner.worker_prompts[0]
+        self.assertIn("BEGIN SKILL FILE writing-for-agents/SKILL.md", prompt)
+        self.assertNotIn("BEGIN SKILL FILE implement/SKILL.md", prompt)
+
+    def test_rules_filter_by_worker_capability_and_route_mixed_pool(self):
+        self.install_skills()
+        document = json.loads(self.tickets.read_text())
+        document["tasks"] = document["tasks"][:1]
+        document["tasks"][0].update(title="Test regression", objective="Add test coverage",
+                                     acceptance_criteria=["Tests cover the bug"], skills=[])
+        self.tickets.write_text(json.dumps(document))
+        a, b, review = CaptureRunner(), CaptureRunner(), CaptureRunner()
+        config = replace(self.config, workers=(WorkerConfig("a", "claude-code"),
+                                               WorkerConfig("b", "codex")), max_processes=2,
+                         skill_selection={"mode": "rules", "max_skills": 1})
+        result = run_parallel(config, runners={"a": a, "b": b}, review_runner=review)
+        self.assertEqual(result["status"], "success", result["error"])
+        self.assertEqual(a.worker_prompts, [])
+        self.assertIn("BEGIN SKILL FILE tdd/SKILL.md", b.worker_prompts[0])
+
+    def test_rules_fall_back_to_file_only_implement_for_claude(self):
+        self.install_skills()
+        document = json.loads(self.tickets.read_text())
+        document["tasks"] = document["tasks"][:1]
+        document["tasks"][0].update(title="Fix bug", objective="Correct the failure",
+                                     acceptance_criteria=["Regression is fixed"], skills=[])
+        self.tickets.write_text(json.dumps(document))
+        runner = CaptureRunner()
+        config = replace(self.config, agent="claude-code", agent_binary="claude",
+                         skill_selection={"mode": "rules", "max_skills": 2})
+        result = run_serial(config, runner=runner)
+        self.assertEqual(result["status"], "success", result["error"])
+        self.assertIn("BEGIN SKILL FILE implement/SKILL.md", runner.worker_prompts[0])
+        self.assertNotIn("BEGIN SKILL FILE tdd/SKILL.md", runner.worker_prompts[0])
+
+    def test_rules_require_a_healthy_repository_skill_installation(self):
+        runner = CaptureRunner()
+        config = replace(self.config, skill_selection={"mode": "rules", "max_skills": 1})
+        with self.assertRaisesRegex(ContractError, "repository AI Hero installation"):
+            run_serial(config, runner=runner)
+        self.assertEqual(runner.worker_prompts, [])
 
     def test_capability_preflight_routes_shell_skill_to_codex(self):
         self.install_skills()
@@ -259,6 +330,38 @@ class TicketSkillExecutionTests(unittest.TestCase):
         self.assertEqual(result["status"], "success", result["error"])
         self.assertIn("tdd exact guidance", runner.worker_prompts[0])
         self.assertNotIn("later installation change", runner.worker_prompts[0])
+
+    def test_resume_reuses_frozen_automatic_selection(self):
+        self.install_skills()
+        document = json.loads(self.tickets.read_text())
+        document["tasks"] = document["tasks"][:1]
+        document["tasks"][0].update(title="Add test coverage", objective="Test the failure",
+                                     acceptance_criteria=["Regression test passes"], skills=[])
+        self.tickets.write_text(json.dumps(document))
+        config = replace(self.config, skill_selection={"mode": "rules", "max_skills": 1})
+        first = run_serial(config, runner=CaptureRunner("interrupt"))
+        self.assertEqual(first["status"], "interrupted")
+        runner = CaptureRunner()
+        result = resume(Path(first["run_dir"]), runners={"serial": runner}, review_runner=runner)
+        self.assertEqual(result["status"], "success", result["error"])
+        self.assertIn("BEGIN SKILL FILE tdd/SKILL.md", runner.worker_prompts[0])
+        evidence = [event["details"]["body"] for event in result["events"]
+                    if event["details"].get("message_kind") == "skill_context"]
+        self.assertEqual(evidence[-1]["selection"]["origin"], "rules")
+
+    def test_version_one_explicit_snapshot_remains_loadable(self):
+        self.install_skills()
+        self.select()
+        first = run_serial(self.config, runner=CaptureRunner("interrupt"))
+        run_dir = Path(first["run_dir"])
+        pin_path = run_dir / "skills/pin.json"
+        value = json.loads(pin_path.read_text())
+        value["version"] = 1
+        del value["selections"]
+        pin_path.write_text(json.dumps(value))
+        context = load_skills(run_dir, TaskGraph.load(self.tickets))
+        self.assertEqual(context.names(TaskGraph.load(self.tickets).tasks[0]), ("tdd",))
+        self.assertEqual(context.pin_version, 1)
 
     def test_resume_rejects_changed_pinned_skill_bytes(self):
         self.install_skills()

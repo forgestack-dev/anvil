@@ -27,7 +27,7 @@ Use `anvil skills update aihero` with the same scope to update all recorded agen
 
 The repository manifest is `.anvil/aihero.json`; the global manifest is `~/.local/state/anvil/skills/aihero.json`. It records revision, agents, selection, file hashes, and executability. Local edits or unmanaged destination conflicts stop the whole operation before replacement. Normal application failures roll back both agents. A hard termination can leave a mismatch and retained staging backups; inspect saved state and preserve those backups. The manager has no force, adoption, uninstall, or in-place selection-change operation.
 
-Package installation alone does not download or register upstream skills. Native registration makes skills discoverable in ordinary agent sessions under each agent's invocation rules; it does not guarantee behavior compatibility. Explicit harness ticket `skills` requests use the pinned text path below. Anvil's Claude adapter still disables native discovery and the Skill tool in safe mode.
+Package installation alone does not download or register upstream skills. Native registration makes skills discoverable in ordinary agent sessions under each agent's invocation rules; it does not guarantee behavior compatibility. Explicit and automatically selected harness skills use the pinned text path below. Anvil's Claude adapter still disables native discovery and the Skill tool in safe mode.
 
 ## Configuration and prerequisites
 
@@ -41,6 +41,12 @@ Tickets can set `worker` to a configured slot ID, list shared `resources` labels
 
 Other optional fields are `state_dir`, `agent_timeout` (default 900 seconds per implementation or review), and `check_timeout` (default 300 seconds per check). Each timeout must be greater than zero and at most 3,600 seconds. Claude also has a limit of 32 agentic turns per invocation. State defaults to `~/.local/state/anvil` and must remain outside the target checkout and its Git directory.
 
+Set `skill_selection` to `{"mode": "rules", "max_skills": 2}` to opt into
+deterministic selection for tickets with empty `skills` arrays. The limit can be
+1 to 4. Explicit ticket skills remain exact. Selection uses the ticket text,
+requires a healthy repository AI Hero installation, filters by eligible worker
+capabilities, and freezes its names and reasons for resume.
+
 Verification commands run directly on the host in a managed worktree, with literal arguments and no implicit shell. Inspect the trusted configuration and referenced scripts before running them, within existing authorization. Checks run before implementation and after each review. They must pass and leave tracked and untracked files unchanged; ignored test outputs are allowed. Anvil passes prompts through stdin and supplies no model override or permission bypass.
 
 Codex implementation uses `workspace-write`; Codex review uses `read-only`. Claude implementation has `Read`, `Glob`, `Grep`, `Edit`, and `Write`; Claude review has only `Read`, `Glob`, and `Grep`. Neither Claude role has Bash. The supervisor supplies the review diff and runs checks. Claude can write tests but cannot execute them; do not turn its inspection evidence into a claim of test execution. Changes that require an implementation-time command may need another workflow.
@@ -53,7 +59,7 @@ One supervisor holds the repository lock. It creates an `anvil/<run-id>` branch 
 
 The runtime validates worker/reviewer result structure and criterion coverage, runs the configured checks on the reviewed integration revision, and rejects unexpected changes after review. Only the verified revision can advance the managed branch. The task becomes done before its dependents start. Worker declarations alone cannot authorize completion.
 
-A blocker, review request for changes, failed check, timeout, or other terminal failure stops the entire run. A pool cancels active commands and joins workers before releasing the repository lock. Other claimed unfinished tickets become interrupted; undispatched tickets stay pending. Legacy configurations have no automatic retries. Explicit adaptive configuration permits one bounded same-agent retry after a remediable review/check rejection. There is no human-input continuation or multi-ticket atomic staging groups. Automatic skill selection is unsupported.
+A blocker, review request for changes, failed check, timeout, or other terminal failure stops the entire run. A pool cancels active commands and joins workers before releasing the repository lock. Other claimed unfinished tickets become interrupted; undispatched tickets stay pending. Legacy configurations have no automatic retries. Explicit adaptive configuration permits one bounded same-agent retry after a remediable review/check rejection. There is no human-input continuation or multi-ticket atomic staging groups. Model-assisted skill selection is unsupported.
 
 ## Ticket skill context
 

@@ -18,7 +18,7 @@ from .ticket_status import atomic, encoded
 
 
 MAX_CONTEXT_BYTES = 512 * 1024
-_PIN_VERSION = 1
+_PIN_VERSION = 2
 _NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -84,8 +84,58 @@ def _read_file(path: Path, expected: dict) -> bytes:
         raise ContractError(f"cannot read installed skill resource {path}: {exc}") from exc
 
 
-def _requested(graph) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(name for task in graph.tasks for name in task.skills))
+_RULES = (
+    ("prototype", (r"\bprototype\b", r"\bspike\b", r"proof[ -]of[ -]concept"),
+     "ticket requests exploratory or prototype work"),
+    ("tdd", (r"\btest(?:s|ing)?\b", r"\bcoverage\b", r"\btdd\b"),
+     "ticket emphasizes tests or regression coverage"),
+    ("diagnosing-bugs", (r"\bbug\b", r"\bdebug\b", r"\bregression\b", r"\bcrash\b",
+                         r"\bfix(?:es|ed|ing)?\b", r"\bfail(?:ure|ing|s|ed)?\b",
+                         r"\berror\b", r"\bincorrect\b"),
+     "ticket describes a defect or regression"),
+    ("domain-modeling", (r"\bdomain\b", r"\bentity\b", r"\bentities\b", r"\bschema\b",
+                         r"\binvariant\b", r"\bvalue object\b"),
+     "ticket concerns domain concepts or invariants"),
+    ("codebase-design", (r"\barchitecture\b", r"\barchitectural\b", r"\bdesign\b",
+                         r"\brefactor\b", r"\bmodule\b", r"\bboundar(?:y|ies)\b"),
+     "ticket concerns code structure or architecture"),
+    ("writing-for-agents", (r"\bdocumentation\b", r"\bdocs\b", r"\breadme\b",
+                            r"\bguide\b", r"\binstructions?\b", r"\bprompt\b"),
+     "ticket concerns documentation or agent instructions"),
+)
+
+
+def _requested(graph, selections: dict | None = None) -> tuple[str, ...]:
+    choices = selections or {task.id: {"skills": list(task.skills)} for task in graph.tasks}
+    return tuple(dict.fromkeys(name for task in graph.tasks for name in choices[task.id]["skills"]))
+
+
+def _automatic_selection(task: Task, records: dict, registry: dict,
+                         agents: tuple[str, ...], maximum: int) -> dict:
+    text = "\n".join((task.title, task.objective, *task.acceptance_criteria)).lower()
+    proposed = [(name, reason) for name, patterns, reason in _RULES
+                if any(re.search(pattern, text) for pattern in patterns)]
+    proposed.append(("implement", "default engineering implementation workflow"))
+    selected, reasons = [], []
+    for name, reason in proposed:
+        if name in selected or name not in records:
+            continue
+        entry = registry["entries"].get(name)
+        files = records[name].get("files", records[name])
+        digest = files.get("SKILL.md", {}).get("sha256")
+        if entry is None or entry["sha256"] != digest:
+            continue
+        if not any(set(entry["requires"]) <= _capabilities(agent) for agent in agents):
+            continue
+        selected.append(name)
+        reasons.append(reason)
+        if len(selected) == maximum:
+            break
+    if not selected:
+        raise ContractError(
+            f"automatic skill selection found no reviewed, installed skill compatible with task {task.id}"
+        )
+    return {"origin": "rules", "skills": selected, "reasons": reasons}
 
 
 @dataclass(frozen=True)
@@ -95,15 +145,22 @@ class SkillContext:
     root: Path | None = None
     records: dict | None = None
     compatibility: dict | None = None
+    selections: dict | None = None
+    pin_version: int = _PIN_VERSION
 
     @property
     def enabled(self) -> bool:
         return self.records is not None
 
+    def names(self, task: Task) -> tuple[str, ...]:
+        if self.selections is None:
+            return task.skills
+        return tuple(self.selections[task.id]["skills"])
+
     def preflight(self, task: Task, agent: str) -> dict:
         available = _capabilities(agent)
         skills, missing = [], set()
-        for name in task.skills:
+        for name in self.names(task):
             entry = self.compatibility[name]
             required = set(entry["requires"])
             absent = sorted(required - available)
@@ -124,31 +181,35 @@ class SkillContext:
         return self.preflight(task, agent)["compatible"]
 
     def evidence(self, task: Task, agent: str) -> dict | None:
-        if not task.skills:
+        names = self.names(task)
+        if not names:
             return None
         return {"source": self.source, "revision": self.revision,
-                "skills": list(task.skills),
-                "files": {name: self.records[name] for name in task.skills},
+                "selection": self.selections[task.id], "skills": list(names),
+                "files": {name: self.records[name] for name in names},
                 "preflight": self.require(task, agent)}
 
     def prompt(self, task: Task, agent: str) -> str:
-        if not task.skills:
+        names = self.names(task)
+        if not names:
             return ""
         preflight = self.require(task, agent)
         adaptations = [adaptation for skill in preflight["skills"]
                        for adaptation in skill["adaptations"]]
         sections = [
-            "Pinned AI Hero skill context follows. The ticket explicitly selected these skills. "
+            "Pinned AI Hero skill context follows. Anvil selected these skills for this ticket. "
             "Apply their relevant workflow within the ticket scope. Project instructions, the "
             "ticket, and existing authorization take precedence. These instructions do not grant "
             "new tools or permission to commit, publish, contact people, or invent human answers. "
             "Anvil does not execute bundled scripts. If a required tool or decision is unavailable, "
             "return blocked and explain what is needed.",
-            f"Source: {self.source}\nRevision: {self.revision}\nSelected: {', '.join(task.skills)}",
+            f"Source: {self.source}\nRevision: {self.revision}\nSelected: {', '.join(names)}\n"
+            f"Selection: {self.selections[task.id]['origin']} — "
+            + "; ".join(self.selections[task.id]["reasons"]),
         ]
         if adaptations:
             sections.append("Anvil compatibility adaptations:\n- " + "\n- ".join(adaptations))
-        for name in task.skills:
+        for name in names:
             files = self.records[name]
             order = ("SKILL.md", *(path for path in sorted(files) if path != "SKILL.md"))
             for relative in order:
@@ -182,13 +243,31 @@ def _classify(records: dict) -> dict:
     return selected
 
 
-def pin(repo: Path, graph, run_dir: Path) -> SkillContext:
-    names = _requested(graph)
-    if not names:
+def pin(repo: Path, graph, run_dir: Path, *, selection: dict | None = None,
+        task_agents: dict[str, tuple[str, ...]] | None = None) -> SkillContext:
+    if selection is None and not _requested(graph):
         return EMPTY
     scope = SkillScope(repo)
     try:
         with managed_snapshot(scope) as manifest:
+            registry = _registry()
+            selections = {}
+            for task in graph.tasks:
+                if task.skills:
+                    selections[task.id] = {
+                        "origin": "explicit", "skills": list(task.skills),
+                        "reasons": ["ticket explicitly selected this skill" for _ in task.skills],
+                    }
+                elif selection is not None:
+                    agents = (task_agents or {}).get(task.id, ())
+                    if not agents:
+                        raise ContractError(f"task {task.id} has no eligible agent for automatic skill selection")
+                    selections[task.id] = _automatic_selection(
+                        task, manifest["skills"], registry, agents, selection["max_skills"]
+                    )
+                else:
+                    selections[task.id] = {"origin": "none", "skills": [], "reasons": []}
+            names = _requested(graph, selections)
             unknown = [name for name in names if name not in manifest["skills"]]
             if unknown:
                 raise ContractError("ticket requests skills absent from the installed catalog: " + ", ".join(unknown))
@@ -215,9 +294,10 @@ def pin(repo: Path, graph, run_dir: Path) -> SkillContext:
         raise ContractError(str(exc)) from exc
     compatibility = _classify(selected)
     value = {"version": _PIN_VERSION, "source": SOURCE, "revision": manifest["revision"],
-             "skills": selected, "compatibility": compatibility}
+             "skills": selected, "compatibility": compatibility, "selections": selections}
     atomic(destination / "pin.json", encoded(value))
-    context = SkillContext(SOURCE, manifest["revision"], destination, selected, compatibility)
+    context = SkillContext(SOURCE, manifest["revision"], destination, selected, compatibility,
+                           selections, _PIN_VERSION)
     for task in graph.tasks:
         for agent in ("codex", "claude-code", "muse"):
             if context.compatible(task, agent):
@@ -226,21 +306,50 @@ def pin(repo: Path, graph, run_dir: Path) -> SkillContext:
 
 
 def load(run_dir: Path, graph, *, saved: dict | None = None) -> SkillContext:
-    names = _requested(graph)
-    if not names:
-        return EMPTY
     root = Path(run_dir) / "skills"
+    if not root.exists() and not _requested(graph):
+        return EMPTY
     try:
         value = json.loads((root / "pin.json").read_text(encoding="utf-8"))
         fields = {"version", "source", "revision", "skills"}
         if "compatibility" in value:
             fields.add("compatibility")
+        if "selections" in value:
+            fields.add("selections")
+        version = value.get("version")
+        selections = value.get("selections")
+        if version == 1 and selections is None:
+            selections = {task.id: {"origin": "explicit" if task.skills else "none",
+                                     "skills": list(task.skills),
+                                     "reasons": (["ticket explicitly selected this skill" for _ in task.skills]
+                                                 if task.skills else [])}
+                          for task in graph.tasks}
+        names = _requested(graph, selections)
         if (set(value) != fields
-                or value["version"] != _PIN_VERSION or value["source"] != SOURCE
+                or version not in (1, _PIN_VERSION) or value["source"] != SOURCE
                 or not isinstance(value["revision"], str) or _SHA.fullmatch(value["revision"]) is None
                 or not isinstance(value["skills"], dict)
                 or tuple(value["skills"]) != names):
             raise ContractError("pinned skill snapshot does not match the saved tickets")
+        tasks = {task.id: task for task in graph.tasks}
+        if not isinstance(selections, dict) or set(selections) != set(tasks):
+            raise ContractError("pinned skill selections do not match the saved tickets")
+        for task_id, decision in selections.items():
+            if (not isinstance(decision, dict) or set(decision) != {"origin", "skills", "reasons"}
+                    or decision["origin"] not in {"none", "explicit", "rules"}
+                    or not isinstance(decision["skills"], list)
+                    or any(not isinstance(item, str) or _NAME.fullmatch(item) is None
+                           for item in decision["skills"])
+                    or len(set(decision["skills"])) != len(decision["skills"])
+                    or not isinstance(decision["reasons"], list)
+                    or len(decision["skills"]) != len(decision["reasons"])
+                    or any(not isinstance(item, str) or not item for item in decision["reasons"])):
+                raise ContractError("pinned skill snapshot has invalid selections")
+            task = tasks[task_id]
+            if ((decision["origin"] == "explicit" and tuple(decision["skills"]) != task.skills)
+                    or (decision["origin"] == "rules" and (task.skills or not decision["skills"]))
+                    or (decision["origin"] == "none" and (task.skills or decision["skills"]))):
+                raise ContractError("pinned skill selections do not match the saved tickets")
         for name, files in value["skills"].items():
             if _NAME.fullmatch(name) is None or not isinstance(files, dict) or "SKILL.md" not in files:
                 raise ContractError("pinned skill snapshot has invalid skill records")
@@ -256,7 +365,8 @@ def load(run_dir: Path, graph, *, saved: dict | None = None) -> SkillContext:
         if compatibility is not None and compatibility != expected:
             raise ContractError("pinned skill compatibility registry changed")
         compatibility = expected
-        context = SkillContext(value["source"], value["revision"], root, value["skills"], compatibility)
+        context = SkillContext(value["source"], value["revision"], root, value["skills"], compatibility,
+                               selections, version)
         for task in graph.tasks:
             for agent in ("codex", "claude-code", "muse"):
                 if context.compatible(task, agent):
@@ -277,11 +387,14 @@ def load(run_dir: Path, graph, *, saved: dict | None = None) -> SkillContext:
 def record(store, context: SkillContext) -> None:
     if not context.enabled:
         return
-    value = {"version": _PIN_VERSION, "source": context.source,
+    value = {"version": context.pin_version, "source": context.source,
              "revision": context.revision, "skills": context.records,
              "compatibility": context.compatibility}
+    if context.pin_version >= 2:
+        value["selections"] = context.selections
     digest = hashlib.sha256(encoded(value)).hexdigest()
     with store._transaction() as db:
         store._event(db, _now(), "skill_catalog", None, None, None, "running",
-                     {"source": context.source, "revision": context.revision,
-                      "skills": list(context.records), "digest": digest})
+                      {"source": context.source, "revision": context.revision,
+                      "skills": list(context.records), "selections": context.selections,
+                      "digest": digest})

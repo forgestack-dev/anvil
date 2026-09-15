@@ -145,7 +145,10 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
         run_dir = config.state_dir / run_id
         run_dir.mkdir(parents=True, exist_ok=False)
         from .skill_runtime import pin as pin_skills
-        skill_context = pin_skills(repo.path, graph, run_dir)
+        skill_context = pin_skills(
+            repo.path, graph, run_dir, selection=config.skill_selection,
+            task_agents={task.id: (config.agent,) for task in graph.tasks},
+        )
         for task in graph.tasks:
             skill_context.require(task, config.agent)
         from .recovery import track_commands

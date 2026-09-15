@@ -64,6 +64,7 @@ These are native skills for ordinary agent sessions. Ticket-selected text instru
 - Resolve invocation requirements, human decisions, and missing tools. Implemented as an exact-instruction compatibility registry and pre-dispatch capability gate; adapters and interactive continuation for currently unavailable capabilities remain planned.
 - Record the pinned revision, file hashes, and per-attempt instruction delivery. Implemented for the bounded text path.
 - Add Markdown intake and spec-to-ticket preparation. Implemented for committed UTF-8 specifications through one read-only Codex, Claude, or Muse planning turn, with atomic validated output and source provenance.
+- Select reviewed, installed skills automatically for empty ticket skill arrays. Implemented as opt-in deterministic rules with worker-capability filtering, recorded reasons, and recovery-safe frozen decisions.
 - Independently evaluate skill behavior on realistic work.
 
 ## 5. Integrations

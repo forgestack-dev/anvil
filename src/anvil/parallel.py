@@ -195,8 +195,15 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
         else:
             run_dir.mkdir(parents=True, exist_ok=False)
         from .skill_runtime import pin as pin_skills, load as load_skills
+        task_agents = {
+            task.id: tuple(worker.agent for worker in config.workers
+                           if task.worker in (None, worker.id))
+            for task in graph.tasks
+        }
         skill_context = (load_skills(run_dir, graph, saved=saved) if resume_dir is not None
-                         else pin_skills(repo.path, graph, run_dir))
+                         else pin_skills(repo.path, graph, run_dir,
+                                         selection=config.skill_selection,
+                                         task_agents=task_agents))
         for task in graph.tasks:
             eligible = [worker for worker in config.workers
                         if task.worker in (None, worker.id)

@@ -181,3 +181,15 @@ The complete 386-test suite passes on Python 3.11 and Python 3.14 on macOS. The
 entry skill validates, both example graphs still validate and plan, and the wheel
 contains the preparation module and updated schema. No live planning turn was
 made, so this milestone does not establish real-model decomposition quality.
+
+## Automatic runtime skill selection
+
+Deterministic tests cover opt-in selection for empty ticket skill arrays, exact
+preservation of explicit selections, recorded reasons, mixed-pool routing of a
+shell-dependent skill to Codex, compatible fallback for Claude Code, failure
+before checks or agents when the managed installation is absent, and reuse of the
+frozen decision through native resume. Legacy configurations remain skill-free
+when the option is omitted. The selector makes no model call, and no live agent
+turn was used for this milestone. The complete 394-test suite passes on Python
+3.11 and Python 3.14 on macOS; the skill validator, configuration schema, source
+distribution, wheel contents, and isolated wheel installation also pass.
