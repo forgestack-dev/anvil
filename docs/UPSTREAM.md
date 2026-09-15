@@ -98,15 +98,17 @@ that every skill's expected tools, permissions, human decisions, or behavior
 work in both agents. The installer does not execute upstream scripts or invoke
 a model to certify compatibility.
 
-## Remaining harness integration
+## Harness ticket execution
 
-Nonempty ticket `skills` requests remain rejected by the executor. Anvil's
-Claude adapter still uses safe mode with native skill loading and the Skill tool
-disabled. Native installation does not alter those worker permissions. Resolving
-skills for bounded ticket attempts and recording their use remain planned.
+Nonempty ticket `skills` requests select names from a healthy repository-scoped
+installation. Anvil pins the exact installed text files into the run directory,
+records their hashes and revision, and supplies them directly in implementation
+prompts. This works while Claude safe mode keeps native loading and the Skill tool
+disabled; native permissions do not change. Binary resources, oversized contexts,
+and modified installations fail before a model turn. See [SKILL_EXECUTION.md](SKILL_EXECUTION.md).
 
-Future harness adaptations must preserve user-invoked versus model-invoked
-behavior, human decision requirements, and source snapshots. Keep adaptations
+Future compatibility work must preserve user-invoked versus model-invoked
+behavior and improve human-decision and missing-capability handling. Keep adaptations
 separate from upstream files. The experimental
 `skills/in-progress/implement-spec/SKILL.md` remains a reference for graph
 scheduling, isolated implementers, and integration.

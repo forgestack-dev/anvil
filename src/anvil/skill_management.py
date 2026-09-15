@@ -290,6 +290,19 @@ def status(scope: SkillScope) -> dict:
                        conflicts=conflicts)
 
 
+@contextmanager
+def managed_snapshot(scope: SkillScope):
+    """Hold the installation lock while a healthy manifest and its files are consumed."""
+    with _locked(scope, create=False):
+        manifest = _read_manifest(scope)
+        if manifest is None:
+            raise SkillError("ticket skills require a repository AI Hero installation; run anvil skills install aihero")
+        conflicts = _conflicts(scope, manifest)
+        if conflicts:
+            raise SkillError("installed AI Hero skills have local changes:\n" + "\n".join(conflicts))
+        yield manifest
+
+
 def _catalog_manifest(scope: SkillScope, catalog: Catalog, agents, selection):
     if not _SHA.fullmatch(catalog.revision) or not catalog.skills:
         raise SkillError("source catalog must contain skills at an exact commit")

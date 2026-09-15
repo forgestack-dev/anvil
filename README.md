@@ -8,7 +8,7 @@ Anvil is ForgeStack's engineering harness for working through specifications and
 
 Anvil executes a JSON ticket graph serially or with a **coordinated pool of Codex, Claude Code, and Muse workers**. Workers implement ready tickets in isolated Git worktrees. One supervisor owns the SQLite ledger and integration queue, reviews each change on top of the latest accepted branch, runs required checks, and advances that branch only after acceptance evidence, independent review, and verification pass. Muse turns are fulfilled by the operator running Anvil through a staged handoff rather than a local CLI; see [agent adapters](docs/AGENT_ADAPTERS.md).
 
-It also validates ticket graphs, previews dependency waves, checks local prerequisites, reads saved run state, and installs or updates AI Hero skills in both agents' native directories. Native resume continues interrupted runs created by this version. Pause commands, general failure retries, upstream skill invocation within harness tickets, Markdown intake, and issue-tracker closeout remain planned. Requests for skills in an execution ticket are rejected rather than silently ignored. Package installation does not register skills or modify an application repository automatically.
+It also validates ticket graphs, previews dependency waves, checks local prerequisites, reads saved run state, and installs or updates AI Hero skills in both agents' native directories. Tickets can explicitly select installed AI Hero text skills; Anvil pins their exact files and supplies them to Codex, Claude, or Muse implementation turns. Native resume continues interrupted runs created by this version. Pause commands, general failure retries, automatic skill selection, Markdown intake, and issue-tracker closeout remain planned. Package installation does not register skills or modify an application repository automatically.
 
 ## Install and plan
 
@@ -87,11 +87,15 @@ may require inspection of the saved manifest and retained backups. There is no
 force, adoption, uninstall, or in-place agent/selection-change command.
 
 These skills are available to normal Codex and Claude Code sessions under each
-agent's discovery and invocation rules. **Harness ticket `skills` requests remain
-unsupported**, and Anvil's Claude worker still disables native skill loading in
-safe mode. Installing the catalog does not establish behavioral compatibility
-for every upstream skill. See [upstream management](docs/UPSTREAM.md) for the
-source contract and remaining integration work.
+agent's discovery and invocation rules. A ticket `skills` array also selects
+repository-installed skills for bounded harness execution. Anvil validates and
+pins their text resources, then supplies the exact instructions in the worker
+prompt so Codex, Claude, Muse, and mixed pools share one path. Binary resources
+and oversized contexts fail before model work; bundled scripts are not executed.
+The managed installation must not leave the target checkout dirty: commit it or
+add its owned paths to the repository's ignore policy intentionally.
+See [ticket skill execution](docs/SKILL_EXECUTION.md) and
+[upstream management](docs/UPSTREAM.md).
 
 ## Run tickets
 
@@ -220,7 +224,7 @@ Use a new `anvil-demo` directory and your existing Git identity. The example con
 
 ## Tickets and entry skill
 
-The input is JSON with `version: 1` and a nonempty `tasks` array. Each task has an `id`, `title`, `objective`, `depends_on`, and nonempty `acceptance_criteria`; see the [ticket schema](schemas/tickets.schema.json). Optional scheduling fields are `worker`, `resources`, and `exclusive`. The planner rejects duplicate IDs, missing prerequisites, self-dependencies, cycles, and malformed fields. Optional `skills` names can be planned, but nonempty skill requests cannot yet execute.
+The input is JSON with `version: 1` and a nonempty `tasks` array. Each task has an `id`, `title`, `objective`, `depends_on`, and nonempty `acceptance_criteria`; see the [ticket schema](schemas/tickets.schema.json). Optional scheduling fields are `worker`, `resources`, and `exclusive`. The planner rejects duplicate IDs, missing prerequisites, self-dependencies, cycles, and malformed fields. Optional `skills` names select skills from the repository's healthy managed AI Hero installation. Their pinned source revision and per-attempt delivery are recorded in the run ledger.
 
 The Codex entry skill lives at [skills/anvil/SKILL.md](skills/anvil/SKILL.md). Install the CLI first, then copy the complete `skills/anvil` directory into your chosen agent skill directory, inspecting any existing skill before replacing it. Python distributions include it under `share/anvil/skills/anvil` in the installation prefix. Package installation does not register the skill automatically.
 

@@ -5,7 +5,7 @@ description: Prepare ticket graphs, coordinate Codex, Claude Code, and Muse work
 
 # Anvil
 
-Use Anvil to turn a defined engineering objective into verifiable tickets and execute them serially or with a coordinated Codex/Claude Code/Muse worker pool. The runtime owns dispatch, shared-resource reservations, independent review, verification, local integration, and saved status. Separate skill-management commands install AI Hero skills for native agent sessions. Ticket-selected skill invocation, pause commands, and external ticket closure remain unsupported. Native resume supports interrupted runs created with the recovery protocol.
+Use Anvil to turn a defined engineering objective into verifiable tickets and execute them serially or with a coordinated Codex/Claude Code/Muse worker pool. The runtime owns dispatch, shared-resource reservations, independent review, verification, local integration, and saved status. Separate skill-management commands install AI Hero skills for native agent sessions and explicit ticket selection. Automatic skill selection, pause commands, and external ticket closure remain unsupported. Native resume supports interrupted runs created with the recovery protocol.
 
 ## Prepare or inspect work
 
@@ -21,7 +21,7 @@ For installation, update, or inspection, read the native skill-management sectio
 
 Use `--dry-run` when a change preview is requested or useful; it fetches upstream files but leaves the installation unchanged. `skills status` is offline. Report the selected revision, destinations, and any conflicts. Preserve local changes and retained backups when a conflict or interrupted update needs inspection. Do not bypass the manager with forced copying or delete an installation to change its selection without explicit scope to do so.
 
-Native installation does not enable ticket `skills` requests or prove every skill behaves correctly in both agents. Anvil's Claude worker keeps safe mode and its disabled Skill tool; do not claim that installing native skills changes that execution boundary.
+Repository installation enables explicit ticket `skills` requests. Execution validates and pins UTF-8 resources, then supplies their exact text directly in the worker prompt. It does not prove every skill behaves correctly in every agent. Anvil's Claude worker keeps safe mode and its disabled Skill tool; prompt delivery does not change that boundary. Binary resources, oversized contexts, and modified installations fail before model work, and Anvil never executes bundled scripts.
 
 ## Execute authorized work
 
@@ -29,7 +29,7 @@ Read [references/workflow.md](references/workflow.md) before preparing or runnin
 
 Confirm the installed CLI exposes `run`. Preserve the user's agent choices; an omitted top-level `agent` defaults to Codex. For mixed execution, use one `workers` pool under one supervisor; top-level `agent` selects its reviewer. Check the installed doctor's `worker_pools_available` capability before preparing pool execution. Probe each distinct configured agent/executable with `anvil doctor --agent <agent>`, passing `--agent-binary` for custom executables. The supported entry point is `anvil run <run.json>`.
 
-Choose dependencies for prerequisite changes, `resources` for known shared work, and `exclusive: true` when a ticket must run alone. Keep the process cap within the user's intended concurrency and account capacity. Do not launch separate Anvil supervisors as a substitute for a pool. Nonempty ticket `skills` requests are rejected; report the unavailable capability rather than silently removing an explicit request. Missing decisions, review findings, and terminal failures stop the entire run and cancel active peers.
+Choose dependencies for prerequisite changes, `resources` for known shared work, and `exclusive: true` when a ticket must run alone. Keep the process cap within the user's intended concurrency and account capacity. Do not launch separate Anvil supervisors as a substitute for a pool. Use ticket `skills` only for names already present in a healthy repository-scoped AI Hero installation; read the ticket skill section of [references/workflow.md](references/workflow.md). Missing decisions, review findings, and terminal failures stop the entire run and cancel active peers.
 
 Report the saved run directory and managed integration branch. Distinguish implemented, blocked, failed, interrupted, and still-pending work using recorded state. A worker claim is not acceptance: completion requires criterion evidence, approval for the exact integration revision, and passing checks. Local completion does not imply publication, merging into the user's branch, or external ticket closure.
 

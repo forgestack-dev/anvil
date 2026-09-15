@@ -12,7 +12,7 @@ Use `anvil skills update aihero` with the same scope to update all recorded agen
 
 The repository manifest is `.anvil/aihero.json`; the global manifest is `~/.local/state/anvil/skills/aihero.json`. It records revision, agents, selection, file hashes, and executability. Local edits or unmanaged destination conflicts stop the whole operation before replacement. Normal application failures roll back both agents. A hard termination can leave a mismatch and retained staging backups; inspect saved state and preserve those backups. The manager has no force, adoption, uninstall, or in-place selection-change operation.
 
-Package installation alone does not download or register upstream skills. Native registration makes skills discoverable in ordinary agent sessions under each agent's invocation rules; it does not guarantee behavior compatibility. Nonempty harness ticket `skills` requests remain rejected. Anvil's Claude adapter still disables native skills and the Skill tool in safe mode.
+Package installation alone does not download or register upstream skills. Native registration makes skills discoverable in ordinary agent sessions under each agent's invocation rules; it does not guarantee behavior compatibility. Explicit harness ticket `skills` requests use the pinned text path below. Anvil's Claude adapter still disables native discovery and the Skill tool in safe mode.
 
 ## Configuration and prerequisites
 
@@ -38,7 +38,26 @@ One supervisor holds the repository lock. It creates an `anvil/<run-id>` branch 
 
 The runtime validates worker/reviewer result structure and criterion coverage, runs the configured checks on the reviewed integration revision, and rejects unexpected changes after review. Only the verified revision can advance the managed branch. The task becomes done before its dependents start. Worker declarations alone cannot authorize completion.
 
-A blocker, review request for changes, failed check, timeout, or other terminal failure stops the entire run. A pool cancels active commands and joins workers before releasing the repository lock. Other claimed unfinished tickets become interrupted; undispatched tickets stay pending. Legacy configurations have no automatic retries. Explicit adaptive configuration permits one bounded same-agent retry after a remediable review/check rejection. There is no human-input continuation, multi-ticket atomic staging groups, or upstream skill resolution. Nonempty `skills` requests are rejected before execution; do not describe catalog skills as invoked.
+A blocker, review request for changes, failed check, timeout, or other terminal failure stops the entire run. A pool cancels active commands and joins workers before releasing the repository lock. Other claimed unfinished tickets become interrupted; undispatched tickets stay pending. Legacy configurations have no automatic retries. Explicit adaptive configuration permits one bounded same-agent retry after a remediable review/check rejection. There is no human-input continuation or multi-ticket atomic staging groups. Automatic skill selection is unsupported.
+
+## Ticket skill context
+
+A ticket may explicitly list installed AI Hero names in `skills`. Before launching
+any worker, Anvil requires a healthy repository-scoped installation, validates
+every managed copy, and pins the requested revision and files into the run
+directory. It supplies the exact UTF-8 instruction and supporting-file text in
+each applicable implementation prompt. Codex, Claude Code, Muse, and mixed pools
+use this same prompt path; reviewers still judge the ticket and resulting change.
+The installation must be committed or intentionally ignored so the target checkout
+still satisfies Anvil's clean-start requirement.
+
+Do not substitute a global installation or silently remove a requested name.
+Binary files, oversized contexts, missing names, symlinks, hash/mode changes, and
+local edits stop before model work. Bundled scripts are reference text and are not
+executed by Anvil. A worker must report blocked when a skill needs a missing tool
+or human decision. Resume uses the saved pinned snapshot even if the native
+installation changes. See `docs/SKILL_EXECUTION.md` in the Anvil repository for
+the full bounded contract.
 
 ## Inspection and interruption
 

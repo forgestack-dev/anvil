@@ -622,11 +622,11 @@ class SerialExecutionTests(unittest.TestCase):
             with self.assertRaises(WorkspaceError):
                 run_serial(self.config, runner=FakeRunner())
 
-    def test_unavailable_skills_fail_before_execution(self):
+    def test_ticket_skills_require_an_installed_catalog(self):
         document = json.loads(self.tickets.read_text())
         document["tasks"][0]["skills"] = ["implement"]
         self.tickets.write_text(json.dumps(document))
-        with self.assertRaisesRegex(ContractError, "skill resolution"):
+        with self.assertRaisesRegex(ContractError, "AI Hero installation"):
             run_serial(self.config, runner=FakeRunner())
 
 

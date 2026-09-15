@@ -93,6 +93,7 @@
         "skills": {
           "type": "array",
           "uniqueItems": true,
+          "description": "AI Hero skills to pin from the repository's managed installation and supply to this ticket's implementation turn.",
           "items": {
             "$ref": "#/$defs/text"
           }

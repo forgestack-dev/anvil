@@ -48,7 +48,7 @@ The implemented contract is in [PARALLEL_EXECUTION.md](PARALLEL_EXECUTION.md). T
 - Record installation selection, revision, and file hashes; update every recorded agent target together after checking for local changes and destination conflicts.
 - Preview install/update changes and inspect installed files without network access through `skills status`.
 
-These are native skills for ordinary agent sessions. Harness ticket `skills` invocation and catalog-wide behavior compatibility remain part of milestone 4. Install/update previews fetch the source; only status is offline. Normal application errors roll back, while hard termination across multiple skill directories can require manual inspection. See [UPSTREAM.md](UPSTREAM.md).
+These are native skills for ordinary agent sessions. Ticket-selected text instruction execution is implemented in milestone 4; catalog-wide behavior compatibility remains. Install/update previews fetch the source; only status is offline. Normal application errors roll back, while hard termination across multiple skill directories can require manual inspection. See [UPSTREAM.md](UPSTREAM.md).
 
 ## 3. Recovery — bounded native resume implemented
 
@@ -58,11 +58,11 @@ These are native skills for ordinary agent sessions. Harness ticket `skills` inv
 - Reconcile interrupted Git integration with persisted state.
 - Test worker and supervisor failures at each state transition.
 
-## 4. Full skill integration
+## 4. Full skill integration — ticket-selected text skills implemented
 
-- Connect the managed, pinned upstream skill catalog to per-ticket execution.
+- Connect the managed, pinned upstream skill catalog to per-ticket execution. Implemented for explicitly selected UTF-8 text resources across Codex, Claude, Muse, and mixed pools.
 - Resolve invocation requirements, human decisions, and missing tools.
-- Record skill use and compatibility adaptations per attempt.
+- Record the pinned revision, file hashes, and per-attempt instruction delivery. Implemented for the bounded text path.
 - Add Markdown intake and spec-to-ticket preparation.
 - Independently evaluate skill behavior on realistic work.
 
