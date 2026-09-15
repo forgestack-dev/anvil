@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "forgestack-anvil"
-version = "0.1.0.dev7"
+version = "0.1.0.dev8"
 description = "A skills-driven engineering harness for coordinated ticket and spec execution."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -29,6 +29,9 @@ anvil = "anvil.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 namespaces = false
+
+[tool.setuptools.package-data]
+anvil = ["skill_compat.json"]
 
 [tool.setuptools.data-files]
 "share/anvil/skills/anvil" = ["skills/anvil/SKILL.md"]

@@ -21,7 +21,7 @@ For installation, update, or inspection, read the native skill-management sectio
 
 Use `--dry-run` when a change preview is requested or useful; it fetches upstream files but leaves the installation unchanged. `skills status` is offline. Report the selected revision, destinations, and any conflicts. Preserve local changes and retained backups when a conflict or interrupted update needs inspection. Do not bypass the manager with forced copying or delete an installation to change its selection without explicit scope to do so.
 
-Repository installation enables explicit ticket `skills` requests. Execution validates and pins UTF-8 resources, then supplies their exact text directly in the worker prompt. It does not prove every skill behaves correctly in every agent. Anvil's Claude worker keeps safe mode and its disabled Skill tool; prompt delivery does not change that boundary. Binary resources, oversized contexts, and modified installations fail before model work, and Anvil never executes bundled scripts.
+Repository installation enables explicit ticket `skills` requests. Execution validates and pins UTF-8 resources, checks their exact instruction hashes against Anvil's reviewed capability registry, then supplies compatible text directly in the worker prompt. It does not prove a compatible skill will succeed. Anvil's Claude worker keeps safe mode and its disabled Skill tool; prompt delivery does not change that boundary. Binary resources, oversized contexts, modified or unclassified instructions, and unavailable declared capabilities fail before model work, and Anvil never executes bundled scripts.
 
 ## Execute authorized work
 

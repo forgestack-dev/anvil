@@ -146,6 +146,8 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
         run_dir.mkdir(parents=True, exist_ok=False)
         from .skill_runtime import pin as pin_skills
         skill_context = pin_skills(repo.path, graph, run_dir)
+        for task in graph.tasks:
+            skill_context.require(task, config.agent)
         from .recovery import track_commands
         track_commands(scope, run_dir)
         integration = run_dir / "integration"
@@ -195,14 +197,14 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
                         attempt_id = store.start_attempt(task.id, base, str(workspace),
                                                          attempt_id=reserved_id)
                         repo.create_worktree(workspace, base)
-                        evidence = skill_context.evidence(task)
+                        evidence = skill_context.evidence(task, config.agent)
                         if evidence is not None:
                             store.record_message(task.id, attempt_id=attempt_id,
                                                  kind="skill_context", body=evidence)
                         notify(f"{task.id}: implementing")
                         claims = runner.run(repo=workspace,
                                             prompt=_worker_prompt(task, base, file_tools_only=file_tools_only,
-                                                                  skill_context=skill_context.prompt(task)),
+                                                                  skill_context=skill_context.prompt(task, config.agent)),
                                             schema=WORKER_SCHEMA, artifact_dir=artifacts / "worker",
                                             timeout=config.agent_timeout)
                         validate_result(claims, task)

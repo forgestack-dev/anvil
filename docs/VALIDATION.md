@@ -148,17 +148,20 @@ Both example ticket graphs validate and plan successfully. The Anvil skill valid
 
 ## Ticket-selected AI Hero skills
 
-Deterministic tests cover exact pinned instruction delivery in serial Codex,
-Claude Code, and Muse configurations and in a mixed Claude/Muse pool. They also
-cover per-attempt ledger evidence, missing and modified installations, unknown
-names, binary and oversized resources, human-decision blockers, pinned-snapshot
-tampering, and resume after the native installation changes. Review prompts do
-not receive implementation skill instructions. The complete 370-test suite passes
-on Python 3.11 and Python 3.14 on macOS.
+Deterministic tests cover exact pinned instruction delivery, compatible file-only
+skills across Codex, Claude Code, and Muse, and shell-dependent dispatch to Codex
+in a mixed pool. They also cover incompatible pinned workers, the full missing
+capability vocabulary, implementation adaptations, per-attempt preflight evidence,
+unclassified hashes, missing and modified installations, unknown names, binary and
+oversized resources, runtime blockers, pinned-snapshot tampering, and resume after
+the native installation changes. Review prompts do not receive implementation
+skill instructions. The complete 375-test suite passes on Python 3.11 and Python
+3.14 on macOS.
 
 A read-only source check resolved the current AI Hero `main` to
 `959a8e9f1edc3adbe2f7e3054bb6fbefa6696260`: all 25 stable selected skills had
 UTF-8 resources and each fit the 512 KiB per-ticket context limit (202,855 bytes
-in aggregate across the catalog, excluding repeated license files). This checks
-transport compatibility, not behavior, tool availability, or human-decision
-requirements. No model was invoked.
+in aggregate across the catalog, excluding repeated license files). All 25 exact
+`SKILL.md` hashes are classified in the version 1 compatibility registry. This is
+a static requirements review and transport check, not live behavior validation.
+No model was invoked.
