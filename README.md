@@ -8,7 +8,17 @@ Anvil is ForgeStack's engineering harness for working through specifications and
 
 Anvil executes a JSON ticket graph serially or with a **coordinated pool of Codex, Claude Code, and Muse workers**. Workers implement ready tickets in isolated Git worktrees. One supervisor owns the SQLite ledger and integration queue, reviews each change on top of the latest accepted branch, runs required checks, and advances that branch only after acceptance evidence, independent review, and verification pass. Muse turns are fulfilled by the operator running Anvil through a staged handoff rather than a local CLI; see [agent adapters](docs/AGENT_ADAPTERS.md).
 
-It also validates ticket graphs, previews dependency waves, checks local prerequisites, reads saved run state, and installs or updates AI Hero skills in both agents' native directories. Tickets can explicitly select installed AI Hero text skills; Anvil pins their exact files, checks reviewed tool and interaction requirements, and supplies compatible instructions to Codex, Claude, or Muse implementation turns. Native resume continues interrupted runs created by this version. Pause commands, general failure retries, automatic skill selection, Markdown intake, and issue-tracker closeout remain planned. Package installation does not register skills or modify an application repository automatically.
+It also validates ticket graphs, prepares committed Markdown specifications as reviewable JSON tickets, previews dependency waves, checks local prerequisites, reads saved run state, and installs or updates AI Hero skills in both agents' native directories. Tickets can explicitly select installed AI Hero text skills; Anvil pins their exact files, checks reviewed tool and interaction requirements, and supplies compatible instructions to Codex, Claude, or Muse implementation turns. Native resume continues interrupted runs created by this version. Pause commands, general failure retries, automatic skill selection, and issue-tracker closeout remain planned. Package installation does not register skills or modify an application repository automatically.
+
+Prepare a specification before execution:
+
+```sh
+anvil prepare SPEC.md --output tickets.json --repo .
+anvil validate tickets.json
+anvil plan tickets.json --json
+```
+
+Preparation uses one read-only turn from the selected Codex, Claude Code, or Muse adapter. It records the source hash and repository commit, requires a source reference on every ticket, initializes ticket status to `todo`, and writes the result atomically. It does not start implementation. See [spec preparation](docs/SPEC_PREPARATION.md).
 
 ## Install and plan
 

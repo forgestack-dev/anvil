@@ -165,3 +165,19 @@ in aggregate across the catalog, excluding repeated license files). All 25 exact
 `SKILL.md` hashes are classified in the version 1 compatibility registry. This is
 a static requirements review and transport check, not live behavior validation.
 No model was invoked.
+
+## Markdown specification preparation
+
+Deterministic planner tests cover committed Markdown input, clean-repository and
+path boundaries, read-only adapter invocation, source and Git provenance,
+per-ticket source references, initial `todo` status, installed classified skill
+choices, graph validation, the 100-ticket bound, unavailable skills, atomic
+output, CLI JSON behavior, and Muse's distinct planning handoff role. Invalid
+planner results never create the requested ticket file. Existing ticket documents
+remain valid; provenance and source references are optional outside generated
+documents and are preserved as immutable ticket inputs.
+
+The complete 386-test suite passes on Python 3.11 and Python 3.14 on macOS. The
+entry skill validates, both example graphs still validate and plan, and the wheel
+contains the preparation module and updated schema. No live planning turn was
+made, so this milestone does not establish real-model decomposition quality.

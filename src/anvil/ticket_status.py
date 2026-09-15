@@ -60,8 +60,11 @@ def document(data):
 
 
 def inputs(doc):
-    return {"version": doc["version"], "tasks": [
+    result = {"version": doc["version"], "tasks": [
         {k: v for k, v in task.items() if k != "execution"} for task in doc["tasks"]]}
+    if "provenance" in doc:
+        result["provenance"] = doc["provenance"]
+    return result
 
 
 def atomic(path, data):

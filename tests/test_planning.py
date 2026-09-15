@@ -100,6 +100,8 @@ class PlanningTests(unittest.TestCase):
             {"id": "a" * 81}, {"depends_on": ["../escape"]},
             {"title": "bad\0title"}, {"objective": "bad\0objective"},
             {"acceptance_criteria": ["bad\0criterion"]}, {"skills": ["tdd\0"]},
+            {"source_refs": []}, {"source_refs": [""]},
+            {"source_refs": ["Requirement A", "Requirement A"]},
         ]
         for changeset in changes:
             value = ticket("valid") | changeset
@@ -111,6 +113,20 @@ class PlanningTests(unittest.TestCase):
             TaskGraph.from_document(document(value))
         with self.assertRaisesRegex(ContractError, "must be an object"):
             TaskGraph.from_document({"version": 1, "tasks": ["ticket"]})
+
+    def test_accepts_source_references_and_strict_provenance(self):
+        value = ticket("a") | {"source_refs": ["Requirements > A"]}
+        provenance = {"generator": "anvil", "generator_version": "0.1.0.dev9",
+                      "source": "SPEC.md", "source_sha256": "a" * 64,
+                      "repo_head": "b" * 40, "prepared_at": "2026-09-15T12:00:00+00:00",
+                      "agent": "codex"}
+        graph = TaskGraph.from_document(document(value) | {"provenance": provenance})
+        self.assertEqual(graph.tasks[0].source_refs, ("Requirements > A",))
+        for field, replacement in (("source_sha256", "bad"), ("repo_head", "bad"),
+                                   ("prepared_at", "yesterday"), ("agent", "other")):
+            with self.subTest(field=field), self.assertRaises(ContractError):
+                TaskGraph.from_document(document(value) | {
+                    "provenance": provenance | {field: replacement}})
 
     def test_load_rejects_ambiguous_or_invalid_json_and_missing_files(self):
         with tempfile.TemporaryDirectory() as directory:

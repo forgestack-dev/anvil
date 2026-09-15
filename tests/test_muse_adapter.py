@@ -81,6 +81,12 @@ class HandoffTests(unittest.TestCase):
         self.assertTrue(request["read_only"])
         self.assertTrue(handoff.read_only)
 
+    def test_planning_role_is_recorded_separately_from_review(self):
+        handoff = self.stage(read_only=True, purpose="plan")
+        request = json.loads(handoff.request_path.read_text(encoding="utf-8"))
+        self.assertEqual(request["role"], "plan")
+        self.assertEqual(handoff.role, "plan")
+
     def test_prompt_newline_is_normalized(self):
         handoff = self.stage(prompt="Do it\n")
         self.assertEqual(handoff.prompt_path.read_text(encoding="utf-8"), "Do it\n")

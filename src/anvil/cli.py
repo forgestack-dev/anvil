@@ -44,6 +44,15 @@ def parser() -> argparse.ArgumentParser:
     status = subcommands.add_parser("status", help="Read a saved run directory without resuming it.")
     status.add_argument("run_dir", type=Path)
     status.add_argument("--json", action="store_true", help="Print the saved state as JSON.")
+    prepare = subcommands.add_parser("prepare", help="Generate validated JSON tickets from a committed Markdown specification.")
+    prepare.add_argument("source", type=Path)
+    prepare.add_argument("--output", "-o", type=Path, required=True)
+    prepare.add_argument("--repo", type=Path, default=Path.cwd())
+    prepare.add_argument("--agent", choices=EXECUTION_AGENTS, default="codex")
+    prepare.add_argument("--agent-binary", help="Trusted agent executable name or path.")
+    prepare.add_argument("--timeout", type=float, default=900)
+    prepare.add_argument("--artifact-root", type=Path)
+    prepare.add_argument("--json", action="store_true", help="Print JSON output.")
     skills = subcommands.add_parser("skills", help="Install, update, or inspect managed agent skills.")
     skill_actions = skills.add_subparsers(dest="skill_action", required=True)
     for action, help_text in (
@@ -123,6 +132,28 @@ def main(argv: list[str] | None = None) -> int:
         return dispatch(arguments)
     if arguments.command == "skills":
         return _skill_command(arguments)
+    if arguments.command == "prepare":
+        try:
+            from .preparation import prepare
+            from .workspaces import WorkspaceError
+            result = prepare(arguments.source, arguments.output, repo=arguments.repo,
+                             agent=arguments.agent, executable=arguments.agent_binary,
+                             timeout=arguments.timeout, artifact_root=arguments.artifact_root)
+        except (ContractError, WorkspaceError, ProcessError, OSError) as exc:
+            if arguments.json:
+                print(json.dumps({"error": str(exc)}))
+            else:
+                print(f"anvil: {exc}", file=sys.stderr)
+            return 2
+        if arguments.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"Prepared {result['task_count']} tickets in {result['wave_count']} waves.")
+            print(f"Output: {result['output']}")
+            print(f"Evidence: {result['artifact_dir']}")
+            if result["unclassified_skills"]:
+                print("Unclassified installed skills omitted: " + ", ".join(result["unclassified_skills"]))
+        return 0
     if arguments.command == "doctor":
         try:
             profiles = None
@@ -155,6 +186,7 @@ def main(argv: list[str] | None = None) -> int:
             "ticket_execution_available": os.name == "posix",
             "worker_pools_available": os.name == "posix",
             "ticket_skills_available": os.name == "posix",
+            "spec_preparation_available": os.name == "posix",
             "git": git,
             "agent": arguments.agent,
             arguments.agent: asdict(agent),
