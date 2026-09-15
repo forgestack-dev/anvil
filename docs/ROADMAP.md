@@ -67,10 +67,17 @@ These are native skills for ordinary agent sessions. Ticket-selected text instru
 - Select reviewed, installed skills automatically for empty ticket skill arrays. Implemented as opt-in deterministic rules with worker-capability filtering, recorded reasons, and recovery-safe frozen decisions.
 - Independently evaluate skill behavior on realistic work.
 
-## 5. Integrations
+## 5. Repository delivery, issue synchronization, and dashboard — specified
 
-- Pilot Anvil in an application repository after the serial milestone is accepted.
-- Add the preferred live issue tracker and external closeout semantics.
+- Publish accepted runs as draft/ready pull requests on GitHub.com or Bitbucket Cloud.
+- Import and synchronize Jira Cloud, Linear, or GitHub Issues independently of the code host; cover all six combinations.
+- Preserve local acceptance semantics and close external issues only after confirmed delivery merge.
+- Reconcile durable delivery/status operations after interruption and expose their evidence in a local read-only run dashboard.
+
+See [the delivery and dashboard specification](DELIVERY_DASHBOARD_PLAN.md) for the proposed contracts, provider boundaries, six implementation slices, and acceptance matrix. This milestone is not implemented; its commands and configuration are design targets.
+
+## Later integrations
+
 - Add further coding-agent adapters based on usage.
 - Evaluate plugin distribution and remote execution based on usage.
 

@@ -248,6 +248,10 @@ The Codex entry skill lives at [skills/anvil/SKILL.md](skills/anvil/SKILL.md). I
 
 See the [build plan](docs/PLAN.md), [implementation milestones](docs/ROADMAP.md), and [upstream integration notes](docs/UPSTREAM.md) for the broader design.
 
+The proposed [delivery and dashboard milestone](docs/DELIVERY_DASHBOARD_PLAN.md)
+covers GitHub/Bitbucket pull requests, Jira/Linear/GitHub issue synchronization,
+and a local run dashboard. These integrations are specified, not implemented.
+
 ## Development
 
 ```sh
