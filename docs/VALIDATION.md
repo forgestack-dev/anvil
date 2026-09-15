@@ -145,3 +145,20 @@ A live Claude Code 2.1.260 fixture was attempted with `claude-sonnet-5`, low eff
 The complete 362-test suite passes on Python 3.11 and Python 3.14 on macOS. The 23 new recovery tests use temporary Git repositories and deterministic workers, including a subprocess supervisor that exits immediately after advancing the managed branch. Coverage includes repeated interruption, candidate re-review, stale ownership rejection, orphan process refusal, unchanged completed dependencies, publication ownership, frozen-policy integrity, cumulative budgets, and preserved escalation limits.
 
 Both example ticket graphs validate and plan successfully. The Anvil skill validator passes. The wheel and source distribution build, and the wheel installs into an isolated Python 3.11 environment with working version and resume-help commands. No live model calls were made for this milestone; these results do not establish live-provider recovery reliability or Linux acceptance.
+
+## Ticket-selected AI Hero skills
+
+Deterministic tests cover exact pinned instruction delivery in serial Codex,
+Claude Code, and Muse configurations and in a mixed Claude/Muse pool. They also
+cover per-attempt ledger evidence, missing and modified installations, unknown
+names, binary and oversized resources, human-decision blockers, pinned-snapshot
+tampering, and resume after the native installation changes. Review prompts do
+not receive implementation skill instructions. The complete 370-test suite passes
+on Python 3.11 and Python 3.14 on macOS.
+
+A read-only source check resolved the current AI Hero `main` to
+`959a8e9f1edc3adbe2f7e3054bb6fbefa6696260`: all 25 stable selected skills had
+UTF-8 resources and each fit the 512 KiB per-ticket context limit (202,855 bytes
+in aggregate across the catalog, excluding repeated license files). This checks
+transport compatibility, not behavior, tool availability, or human-decision
+requirements. No model was invoked.

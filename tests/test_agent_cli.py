@@ -24,6 +24,7 @@ class AgentDoctorCliTests(unittest.TestCase):
         result = json.loads(output)
         self.assertEqual(result["agent"], "codex")
         self.assertEqual(result["codex"]["executable"], "/tools/codex")
+        self.assertTrue(result["ticket_skills_available"])
         probe.assert_called_once_with("codex", probe=True)
         self.assertEqual(error, "")
 

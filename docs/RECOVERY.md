@@ -40,6 +40,10 @@ consume the remaining run budget. The one review/check escalation limit is prese
 Recovery-affected runs are excluded from policy training to avoid rewriting imported
 samples or treating interruptions as model-quality evidence.
 
+Runs with ticket-selected skills retain the pinned catalog revision and exact file
+hashes recorded at startup. Resume validates that snapshot and supplies it to fresh
+implementation attempts; changes to the repository installation do not alter the run.
+
 ## Acceptance tests
 
 - Interrupt at implementation, review, verification, before/after branch advance,

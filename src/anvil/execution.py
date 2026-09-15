@@ -47,7 +47,8 @@ def verify(config: RunConfig, workspace: Path, artifacts: Path) -> list[dict]:
     return records
 
 
-def _worker_prompt(task: Task, base: str, *, file_tools_only: bool = False) -> str:
+def _worker_prompt(task: Task, base: str, *, file_tools_only: bool = False,
+                   skill_context: str = "") -> str:
     capabilities = (
         "You have file reading and editing tools only, with no shell tool. Add tests but do not "
         "claim to have executed them: Anvil will run the configured verification commands after "
@@ -67,6 +68,7 @@ def _worker_prompt(task: Task, base: str, *, file_tools_only: bool = False) -> s
         "the reason instead of assuming an answer. Report concrete evidence for each criterion; "
         "your result will be independently reviewed and checked. A completed result must have "
         "blockers: []; put explanatory notes in summary, not in blockers. Base commit: " + base + "\n\n"
+        + ((skill_context + "\n\n") if skill_context else "") +
         "Ticket:\n" + json.dumps({k: v for k, v in task.to_dict().items() if k != "execution"}, indent=2)
     )
 
@@ -103,7 +105,7 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
 
     Legacy configurations attempt each ticket once per execution. Native resume
     delegates interrupted continuation to the pool coordinator; remote publication
-    and upstream skill loading remain unsupported. `runner` is injectable for deterministic tests only; the CLI
+    remains unsupported. `runner` is injectable for deterministic tests only; the CLI
     selects the configured agent adapter.
     """
     if config.adaptive is not None:
@@ -124,8 +126,6 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
         raise ContractError("ticket profiles require an adaptive configuration")
     if any(task.worker is not None for task in graph.tasks):
         raise ContractError("ticket worker assignments require a workers configuration")
-    if any(task.skills for task in graph.tasks):
-        raise ContractError("skill resolution is not implemented; remove skill requests or use planning only")
     repo = Repository(config.repo)
     from .ticket_status import prepare_repo, attach
     prepare_repo(repo, config)
@@ -144,6 +144,8 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
         branch = f"anvil/{run_id}"
         run_dir = config.state_dir / run_id
         run_dir.mkdir(parents=True, exist_ok=False)
+        from .skill_runtime import pin as pin_skills
+        skill_context = pin_skills(repo.path, graph, run_dir)
         from .recovery import track_commands
         track_commands(scope, run_dir)
         integration = run_dir / "integration"
@@ -173,6 +175,8 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
             try:
                 store.initialize(run_id=run_id, repo=str(repo.path), branch=branch, base_sha=base,
                                  tasks=graph.tasks, config=config.to_dict())
+                from .skill_runtime import record as record_skills
+                record_skills(store, skill_context)
                 from .recovery import mark_supported
                 mark_supported(store)
                 publisher = attach(store, config, repo)
@@ -191,9 +195,14 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
                         attempt_id = store.start_attempt(task.id, base, str(workspace),
                                                          attempt_id=reserved_id)
                         repo.create_worktree(workspace, base)
+                        evidence = skill_context.evidence(task)
+                        if evidence is not None:
+                            store.record_message(task.id, attempt_id=attempt_id,
+                                                 kind="skill_context", body=evidence)
                         notify(f"{task.id}: implementing")
                         claims = runner.run(repo=workspace,
-                                            prompt=_worker_prompt(task, base, file_tools_only=file_tools_only),
+                                            prompt=_worker_prompt(task, base, file_tools_only=file_tools_only,
+                                                                  skill_context=skill_context.prompt(task)),
                                             schema=WORKER_SCHEMA, artifact_dir=artifacts / "worker",
                                             timeout=config.agent_timeout)
                         validate_result(claims, task)

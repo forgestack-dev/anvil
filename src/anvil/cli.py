@@ -154,6 +154,7 @@ def main(argv: list[str] | None = None) -> int:
             "stage": "coordinated-execution",
             "ticket_execution_available": os.name == "posix",
             "worker_pools_available": os.name == "posix",
+            "ticket_skills_available": os.name == "posix",
             "git": git,
             "agent": arguments.agent,
             arguments.agent: asdict(agent),
@@ -173,7 +174,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{label} compatibility: {'compatible' if agent.compatible else 'unavailable/incompatible'}")
             if agent.error:
                 print(f"{label} detail: {agent.error}")
-            print("Execution requires macOS or Linux. Native resume is available for new runs; skill loading remains planned.")
+            print("Execution requires macOS or Linux. Native resume and ticket-selected text skill contexts are available for new runs.")
         return 0 if git and agent.compatible and os.name == "posix" else 1
 
     if arguments.command in ("run", "resume", "status"):
