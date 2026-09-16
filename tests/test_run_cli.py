@@ -153,11 +153,6 @@ class RunCliTests(unittest.TestCase):
             store.transition("a", "failed", attempt_id=attempt, details={"error": "required check failed"})
             store.set_run("failed", "required check failed")
         before = path.read_bytes()
-        # The ledger is a write-ahead log database, so its directory also holds
-        # the -wal and -shm sidecars. Compare against what was there before
-        # rather than a literal listing: the assertion is that status adds and
-        # changes nothing, not which files a journal mode happens to use.
-        before_files = sorted(item.name for item in run_dir.iterdir())
         with patch("anvil.execution.run_serial") as run, patch("anvil.config.RunConfig.load") as load:
             code, stdout, stderr = self.invoke(["status", str(run_dir), "--json"])
         self.assertEqual(code, 0)
@@ -168,8 +163,16 @@ class RunCliTests(unittest.TestCase):
         self.assertEqual(snapshot["run_dir"], str(run_dir))
         self.assertEqual(stderr, "")
         self.assertEqual(path.read_bytes(), before)
-        self.assertEqual(sorted(item.name for item in run_dir.iterdir()), before_files)
-        self.assertIn("state.sqlite", before_files)
+        # The ledger is a write-ahead log database. Reading one needs its
+        # shared-memory index, and SQLite creates that file when it is absent,
+        # so a read can add state.sqlite-shm and state.sqlite-wal beside the
+        # ledger. Whether they are already there when status runs differs by
+        # platform. What must hold is that status resumes nothing, writes no
+        # run artifacts, and leaves the ledger's own bytes untouched.
+        self.assertEqual(
+            sorted(item.name for item in run_dir.iterdir()
+                   if not item.name.startswith("state.sqlite-")),
+            ["state.sqlite"])
         run.assert_not_called()
         load.assert_not_called()
 

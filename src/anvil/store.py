@@ -70,10 +70,12 @@ class RunStore:
 
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
         # Fold the write-ahead log back into the ledger so the log does not
-        # grow without bound across a long run. The ledger stays in WAL mode:
-        # switching back needs a brief exclusive lock, which momentarily fails
-        # concurrent read-only opens, and a reader must never be disrupted by
-        # the supervisor finishing. Best effort; never mask the real error.
+        # grow without bound across a long run. The ledger stays in WAL mode.
+        # Reverting to a rollback journal here would make the mode non-sticky:
+        # the next open has to convert back, that conversion fails while any
+        # reader holds a lock, and the ledger silently returns to the rollback
+        # journal this change exists to escape. Best effort; never mask the
+        # real error.
         try:
             self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         except sqlite3.Error:
