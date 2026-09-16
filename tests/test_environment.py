@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+import json
 import os
+from pathlib import Path
+import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -56,3 +61,87 @@ class ManagedEnvironmentTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CredentialExclusionReachesEverySubprocess(unittest.TestCase):
+    """The configured names must not reach any subprocess a run launches."""
+
+    SECRET = "ANVIL_TEST_CREDENTIAL"
+    VALUE = "leaked-value-should-never-appear"
+
+    def setUp(self):
+        self.patch = patch.dict(os.environ, {self.SECRET: self.VALUE}, clear=False)
+        self.patch.start()
+        self.addCleanup(self.patch.stop)
+
+    def config(self, root):
+        from anvil.config import RunConfig
+        tickets = root / "tickets.json"
+        tickets.write_text(json.dumps({"version": 1, "tasks": [
+            {"id": "t", "title": "T", "objective": "O", "depends_on": [],
+             "acceptance_criteria": ["a"]}]}))
+        return RunConfig(root, tickets, (("true",),), root / "state",
+                         credential_exclusion=(self.SECRET,))
+
+    def test_runner_factories_withhold_the_value_from_both_agents(self):
+        from anvil.adapters import create_runner
+        for agent, binary in (("claude-code", "claude"), ("codex", "codex")):
+            with self.subTest(agent=agent):
+                runner = create_runner(agent, binary, exclude=(self.SECRET,))
+                self.assertEqual(runner.exclude, (self.SECRET,))
+                self.assertNotIn(self.SECRET, managed_environment(runner.exclude))
+
+    def test_verification_commands_never_see_the_value(self):
+        from anvil.execution import verify
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name).resolve()
+            probe = root / "seen.txt"
+            config = self.config(root)
+            config = replace(config, verification=((
+                sys.executable, "-c",
+                f"import os,pathlib;pathlib.Path({str(probe)!r}).write_text("
+                f"os.environ.get({self.SECRET!r}, 'ABSENT'))"),))
+            verify(config, root, root / "artifacts")
+            self.assertEqual(probe.read_text(), "ABSENT")
+
+    def test_preflight_probes_never_see_the_value(self):
+        from anvil.routing import preflight
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name).resolve()
+            fake = root / "fake-agent"
+            probe = root / "seen.txt"
+            # preflight launches the probe more than once. Append rather than
+            # overwrite, so a leak in any single launch stays visible instead of
+            # being masked by a later one.
+            fake.write_text(
+                "#!/bin/sh\n"
+                f'printf "%s\\n" "${{{self.SECRET}:-ABSENT}}" >> {probe}\n'
+                'echo "--model --effort --max-budget-usd"\n'
+                'echo "2.1.260 (Claude Code)"\n')
+            fake.chmod(0o755)
+            try:
+                preflight("claude-code", str(fake), None, exclude=(self.SECRET,))
+            except Exception:
+                pass  # The probe's own contract is not what this test asserts.
+            self.assertTrue(probe.exists(), "preflight never launched the probe")
+            seen = probe.read_text().split()
+            self.assertTrue(seen, "preflight never launched the probe")
+            self.assertEqual(set(seen), {"ABSENT"}, f"a probe launch saw the value: {seen}")
+
+    def test_the_value_is_absent_from_argv_and_recorded_artifacts(self):
+        from anvil.adapters.claude import build_invocation
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name).resolve()
+            (root / ".git").mkdir()
+            invocation = build_invocation(root, "implement the ticket", {"type": "object"},
+                                          "claude", turns=8)
+            self.assertNotIn(self.VALUE, " ".join(invocation.argv))
+            self.assertNotIn(self.SECRET, " ".join(invocation.argv))
+            self.assertNotIn(self.VALUE, invocation.stdin)
+
+    def test_the_frozen_configuration_records_names_and_never_values(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name).resolve()
+            recorded = json.dumps(self.config(root).to_dict())
+            self.assertIn(self.SECRET, recorded)
+            self.assertNotIn(self.VALUE, recorded)

@@ -132,7 +132,8 @@ class CodexRunner:
     or approval policy. Its executable must come from trusted configuration.
     """
 
-    def __init__(self, codex_binary: str = "codex", *, profile=None) -> None:
+    def __init__(self, codex_binary: str = "codex", *, profile=None, exclude=()) -> None:
+        self.exclude = tuple(exclude)
         if profile is not None:
             from ..routing import validate_selection
             validate_selection("codex", profile)
@@ -184,7 +185,7 @@ class CodexRunner:
             stdout_path=artifact_dir / "events.jsonl",
             stderr_path=artifact_dir / "stderr.log",
             timeout=timeout,
-            env=managed_environment(),
+            env=managed_environment(self.exclude),
         )
         if outcome.timed_out:
             raise ProcessError(f"Codex execution timed out after {timeout} seconds; artifacts: {artifact_dir}")

@@ -170,7 +170,8 @@ def main(argv: list[str] | None = None) -> int:
                         profile = next((p for p in config.adaptive["profiles"].values()
                                         if p["agent"] == selected and "max_budget_usd" in p), None)
                         profiles.append({"agent":selected, "executable":binary,
-                                         "version":preflight(selected, binary, profile),
+                                         "version":preflight(selected, binary, profile,
+                                                             exclude=config.credential_exclusion),
                                          "model_access":"not probed"})
             agent = probe_agent(arguments.agent, arguments.agent_binary)
         except (ContractError, ValueError, OSError, ProcessError) as exc:

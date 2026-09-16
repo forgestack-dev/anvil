@@ -59,17 +59,17 @@ class _Blocked(Exception):
         self.details = details
 
 
-def _runner(agent: str, executable: str, *, turns: int | None = None):
+def _runner(agent: str, executable: str, *, turns: int | None = None, exclude=()):
     if agent == "muse":
         # Muse turns are fulfilled by the operator through a staged handoff;
         # there is no CLI entrypoint to locate.
-        return create_runner(agent, executable, turns=turns)
+        return create_runner(agent, executable, turns=turns, exclude=exclude)
     # Select every entrypoint before dispatch, including Codex's PATH lookup.
     # Keep aliases intact for wrappers which dispatch on their invoked basename.
     selected = shutil.which(executable)
     if selected is None:
         raise ContractError(f"{agent} executable was not found: {executable}")
-    return create_runner(agent, str(Path(selected).absolute()), turns=turns)
+    return create_runner(agent, str(Path(selected).absolute()), turns=turns, exclude=exclude)
 
 
 @contextmanager
@@ -159,12 +159,14 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
             raise ContractError("state_dir must be outside the target checkout and its Git directory")
     injected = runners is not None
     if runners is None:
-        runners = {worker.id: _runner(worker.agent, worker.executable, turns=config.agent_turns)
+        runners = {worker.id: _runner(worker.agent, worker.executable, turns=config.agent_turns,
+                                  exclude=config.credential_exclusion)
                    for worker in config.workers}
     elif set(runners) != worker_ids:
         raise ContractError("injected runners must match the configured worker IDs")
     if review_runner is None:
-        review_runner = _runner(config.agent, config.executable, turns=config.agent_turns)
+        review_runner = _runner(config.agent, config.executable, turns=config.agent_turns,
+                                exclude=config.credential_exclusion)
     from .adaptive_runtime import Session, report as routing_report
     frozen = None
     if resume_dir is not None and config.adaptive is not None:
