@@ -622,6 +622,96 @@ class SerialExecutionTests(unittest.TestCase):
             with self.assertRaises(WorkspaceError):
                 run_serial(self.config, runner=FakeRunner())
 
+    def credential_fixture(self, traces):
+        """A fake Codex CLI that records the environment of every turn it runs."""
+        binary = self.root / "fake codex credentials"
+        binary.write_text(
+            f"#!{sys.executable}\nTRACES = {str(traces)!r}\n"
+            + dedent("""\
+                import json
+                import os
+                from pathlib import Path
+                import sys
+                import time
+
+                args = sys.argv[1:]
+                prompt = sys.stdin.read()
+                output = Path(args[args.index('-o') + 1])
+                role = 'review' if args[args.index('--sandbox') + 1] == 'read-only' else 'worker'
+                Path(TRACES, role + '-' + str(time.time_ns()) + '.json').write_text(json.dumps(
+                    {'role': role, 'environment': dict(os.environ), 'argv': args, 'prompt': prompt}))
+                value = Path('value.txt')
+                if role == 'review':
+                    result = {'verdict': 'approve', 'summary': 'Inspected value', 'findings': [],
+                              'acceptance': [{'criterion': 1, 'satisfied': True, 'evidence': 'Value inspected'}]}
+                else:
+                    previous = int(value.read_text()) if value.exists() else 0
+                    value.write_text(str(previous + 1))
+                    result = {'status': 'completed', 'summary': 'Updated value', 'blockers': [],
+                              'acceptance': [{'criterion': 1, 'evidence': 'Value updated'}]}
+                output.write_text(json.dumps(result))
+                print(json.dumps({'event': 'fake agent complete'}))
+                """),
+            encoding="utf-8",
+        )
+        binary.chmod(0o755)
+        return binary
+
+    def test_configured_credentials_never_reach_turns_checks_or_recorded_artifacts(self):
+        secrets = {"ANVIL_TEST_GITHUB_TOKEN": "ghp-leak-canary-github",
+                   "ANVIL_TEST_JIRA_TOKEN": "jira-leak-canary-token"}
+        traces, check_traces = self.root / "agent environments", self.root / "check environments"
+        traces.mkdir()
+        check_traces.mkdir()
+        check = self.root / "dump_environment.py"
+        check.write_text(
+            dedent("""\
+                import json
+                import os
+                from pathlib import Path
+                import sys
+                import time
+
+                Path(sys.argv[1], str(os.getpid()) + '-' + str(time.time_ns()) + '.json').write_text(
+                    json.dumps({'environment': dict(os.environ), 'argv': sys.argv[1:]}))
+                """),
+            encoding="utf-8",
+        )
+        config = RunConfig(self.repo, self.tickets,
+                           ((sys.executable, str(check), str(check_traces)),),
+                           self.root / "credential-state",
+                           agent_binary=str(self.credential_fixture(traces)),
+                           agent_timeout=10, check_timeout=10,
+                           credential_exclusion=tuple(secrets))
+
+        with patch.dict(os.environ, secrets | {"ANVIL_TEST_PROJECT_SETTING": "preserved"}):
+            result = run_serial(config)
+            # The supervisor keeps the credentials it withholds from its children.
+            self.assertEqual({name: os.environ[name] for name in secrets}, secrets)
+
+        self.assertEqual(result["status"], "success", result["error"])
+        self.assertEqual(result["config"]["credential_exclusion"], list(secrets))
+        turns = [json.loads(path.read_text()) for path in traces.iterdir()]
+        checks = [json.loads(path.read_text()) for path in check_traces.iterdir()]
+        self.assertEqual(sorted(turn["role"] for turn in turns),
+                         ["review", "review", "worker", "worker"])
+        self.assertEqual(len(checks), 3)  # the baseline plus one per integrated ticket
+        for observed in turns + checks:
+            recorded = json.dumps(observed)
+            for name, value in secrets.items():
+                self.assertNotIn(name, observed["environment"])
+                self.assertNotIn(value, observed["environment"].values())
+                self.assertFalse([argument for argument in observed["argv"]
+                                  if name in argument or value in argument])
+                # Nothing reaches a child by another route: prompt or any other recorded field.
+                self.assertNotIn(value, recorded)
+            self.assertEqual(observed["environment"]["ANVIL_TEST_PROJECT_SETTING"], "preserved")
+
+        leaked = [str(path) for path in sorted(Path(result["run_dir"]).rglob("*"))
+                  if path.is_file() and not path.is_symlink()
+                  and any(value.encode() in path.read_bytes() for value in secrets.values())]
+        self.assertEqual(leaked, [])
+
     def test_ticket_skills_require_an_installed_catalog(self):
         document = json.loads(self.tickets.read_text())
         document["tasks"][0]["skills"] = ["implement"]

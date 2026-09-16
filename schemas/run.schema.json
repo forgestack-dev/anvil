@@ -338,6 +338,16 @@
       "type": "string",
       "minLength": 1,
       "description": "Path to a UTF-8 repository orientation file supplied verbatim in implementation prompts so workers do not spend turns locating context."
+    },
+    "credential_exclusion": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "description": "Environment variable names stripped from agent, review, and verification subprocess environments. Names only: never a secret value. Matching is case-sensitive and naming an absent variable changes nothing.",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+      }
     }
   },
   "allOf": [

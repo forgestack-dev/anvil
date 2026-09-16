@@ -15,7 +15,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-from anvil.environment import managed_environment
+from anvil.environment import exclusion_set, managed_environment
 from anvil.processes import ProcessError, run_process
 
 
@@ -130,13 +130,15 @@ class CodexRunner:
     The caller owns result-schema validation and acceptance decisions. The
     adapter applies only explicitly configured profiles, never enables network access, or bypasses sandbox
     or approval policy. Its executable must come from trusted configuration.
+    `exclude` names environment variables withheld from every launched process.
     """
 
-    def __init__(self, codex_binary: str = "codex", *, profile=None) -> None:
+    def __init__(self, codex_binary: str = "codex", *, profile=None, exclude=()) -> None:
         if profile is not None:
             from ..routing import validate_selection
             validate_selection("codex", profile)
         self.profile = dict(profile) if profile is not None else None
+        self.exclude = exclusion_set(exclude)
         _validate_binary(codex_binary)
         self.codex_binary = codex_binary
 
@@ -184,7 +186,7 @@ class CodexRunner:
             stdout_path=artifact_dir / "events.jsonl",
             stderr_path=artifact_dir / "stderr.log",
             timeout=timeout,
-            env=managed_environment(),
+            env=managed_environment(self.exclude),
         )
         if outcome.timed_out:
             raise ProcessError(f"Codex execution timed out after {timeout} seconds; artifacts: {artifact_dir}")

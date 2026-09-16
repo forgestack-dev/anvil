@@ -431,3 +431,13 @@ class AdaptiveRunLevelSettings(unittest.TestCase):
         worker_kwargs, review_kwargs = self.runner_kwargs()
         self.assertIsNone(worker_kwargs["turns"])
         self.assertIsNone(review_kwargs["turns"])
+
+    def test_credential_exclusion_reaches_both_roles_under_adaptive_routing(self):
+        worker_kwargs, review_kwargs = self.runner_kwargs(credential_exclusion=("GITHUB_TOKEN",))
+        self.assertEqual(worker_kwargs["exclude"], ("GITHUB_TOKEN",))
+        self.assertEqual(review_kwargs["exclude"], ("GITHUB_TOKEN",))
+
+    def test_absent_credential_exclusion_withholds_nothing(self):
+        worker_kwargs, review_kwargs = self.runner_kwargs()
+        self.assertEqual(worker_kwargs["exclude"], ())
+        self.assertEqual(review_kwargs["exclude"], ())

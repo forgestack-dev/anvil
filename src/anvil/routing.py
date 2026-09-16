@@ -199,8 +199,12 @@ class Policy:
         return choices[0] if choices else None
 
 
-def preflight(agent, executable, profile):
-    """Probe advertised controls; no model invocation or entitlement claim."""
+def preflight(agent, executable, profile, *, exclude=()):
+    """Probe advertised controls; no model invocation or entitlement claim.
+
+    `exclude` withholds the run's configured credential variables from the
+    probes, exactly as from the agent turns they precede.
+    """
     import tempfile
     from .processes import run_process
     from .environment import managed_environment
@@ -208,7 +212,7 @@ def preflight(agent, executable, profile):
         stdout, stderr = Path(tmp)/"out", Path(tmp)/"err"
         args = [executable] + (["exec"] if agent == "codex" else []) + ["--help"]
         result = run_process(args, cwd=Path.cwd(), stdin=None, stdout_path=stdout,
-                             stderr_path=stderr, timeout=5, env=managed_environment())
+                             stderr_path=stderr, timeout=5, env=managed_environment(exclude))
         flags = stdout.read_text(errors="replace")
         needed = ("--model", "--config") if agent == "codex" else ("--model", "--effort")
         if profile and "max_budget_usd" in profile:
@@ -217,7 +221,8 @@ def preflight(agent, executable, profile):
             raise ContractError(f"{agent} does not advertise required profile controls: {needed}")
         stdout, stderr = Path(tmp)/"version-out", Path(tmp)/"version-err"
         result = run_process([executable, "--version"], cwd=Path.cwd(), stdin=None,
-                             stdout_path=stdout, stderr_path=stderr, timeout=5, env=managed_environment())
+                             stdout_path=stdout, stderr_path=stderr, timeout=5,
+                             env=managed_environment(exclude))
         if result.returncode or result.timed_out:
             raise ContractError(f"cannot probe {agent} version")
         return stdout.read_text(errors="replace").strip()[:500]
