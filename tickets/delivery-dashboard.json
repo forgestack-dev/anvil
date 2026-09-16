@@ -1,0 +1,326 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "id": "strip-integration-credentials",
+      "title": "Strip integration credentials from managed subprocess environments",
+      "objective": "Let callers exclude a named set of credential variables from the environment handed to agent and verification subprocesses, so tracker and code-host tokens can never reach a worker, a check command, or command artifacts.",
+      "depends_on": [],
+      "acceptance_criteria": [
+        "The managed environment builder accepts an explicit exclusion set and omits those variables while preserving all other non-Git variables and PATH.",
+        "Agent launches and verification check commands both receive the exclusion-filtered environment.",
+        "Leakage tests prove excluded variables are absent from subprocess environments, subprocess argv, and recorded command artifacts.",
+        "Existing serial and parallel execution tests remain green with an empty exclusion set."
+      ],
+      "source_refs": ["DELIVERY_DASHBOARD_PLAN.md section 9 Authentication and credential isolation"],
+      "risk": "low"
+    },
+    {
+      "id": "ledger-query-layer",
+      "title": "Bounded ledger query layer",
+      "objective": "Provide paginated, bounded read queries over a run's execution ledger so a consumer can list runs, tasks, attempts, and events after a cursor without loading the whole event history or the final-only report.",
+      "depends_on": [],
+      "acceptance_criteria": [
+        "Queries exist for run summaries, per-run task summaries, ticket attempts, and events after a given event ID.",
+        "Pages default to 100 rows and reject requests above 500 rows.",
+        "Reads succeed and stay consistent while a supervisor is actively committing events to the same ledger.",
+        "Runs created by earlier Anvil versions are readable through the same queries."
+      ],
+      "source_refs": ["DELIVERY_DASHBOARD_PLAN.md section 2 Existing constraints and extension points", "DELIVERY_DASHBOARD_PLAN.md section 11 Dashboard specification"],
+      "risk": "low"
+    },
+    {
+      "id": "integration-config-and-freeze",
+      "title": "Integration configuration, credential references, and run-time freeze",
+      "objective": "Introduce the versioned integration configuration and optional run-level integrations object, resolve credential references to typed records, and freeze the effective non-secret configuration into the run at creation so resume and later delivery use an audited snapshot.",
+      "depends_on": ["strip-integration-credentials"],
+      "acceptance_criteria": [
+        "A versioned integration configuration and a run-level integrations object validate against packaged JSON Schemas and matching runtime checks; runs without the object behave exactly as before.",
+        "Environment, credential-helper, and OS credential store references resolve to typed records with authentication scheme and required identity metadata; a Bitbucket API token without its Atlassian email is rejected without trying another scheme.",
+        "Run creation freezes connection identities, workflow policy, credential reference names, and publication policy into run artifacts and binds the snapshot digest to a committed ledger event.",
+        "Configured credential variables are passed to the subprocess exclusion set and never appear in run config, ledger payloads, or reports.",
+        "Editing the repository configuration after run creation does not change the frozen snapshot that resume reads."
+      ],
+      "source_refs": ["DELIVERY_DASHBOARD_PLAN.md section 4 Configuration and frozen inputs", "DELIVERY_DASHBOARD_PLAN.md section 9 Authentication and credential isolation"],
+      "risk": "medium"
+    },
+    {
+      "id": "integrations-doctor-github",
+      "title": "Integrations doctor against GitHub",
+      "objective": "Deliver the code-host contract, the GitHub read paths, a fake-provider test harness, and a read-only doctor command that reports what a configured GitHub connection can and cannot do.",
+      "depends_on": ["integration-config-and-freeze"],
+      "acceptance_criteria": [
+        "A code-host contract exposes repository resolution and capability/permission discovery, and the GitHub adapter implements the read paths against a fake HTTP provider with documented API version.",
+        "The doctor command resolves the configured repository to its canonical identity, reports missing grants and unsupported capabilities explicitly, and performs no remote writes or model calls.",
+        "HTTP requests carry a pinned API version, respect a 15-second timeout, and refuse to forward authorization to a redirect outside the expected host.",
+        "Doctor output is available as JSON and contains no credential values."
+      ],
+      "source_refs": ["DELIVERY_DASHBOARD_PLAN.md section 3 User workflow and proposed commands", "DELIVERY_DASHBOARD_PLAN.md section 8 Provider-specific contracts"],
+      "risk": "medium"
+    },
+    {
+      "id": "integration-journal-and-outbox",
+      "title": "Integration journal, projection, and outbox",
+      "objective": "Add the per-run integration journal owned by a separate coordinator so committed execution events become durable external intents that survive crashes without an unreliable dual write.",
+      "depends_on": ["integration-config-and-freeze"],
+      "acceptance_criteria": [
+        "A versioned per-run integration journal exists beside the execution ledger, and only the integration coordinator writes it under an OS advisory lock; it never writes execution state.",
+        "Committed execution events are projected into outbox intents and the projection cursor advances in the same journal transaction.",
+        "Outbox operations carry a semantic dedupe key, ownership generation, expected state, payload digest, and move through pending, in-flight, confirmed, reconciling, conflict, and auth-required states with receipts.",
+        "Deterministic tests show a crash before projection replays events and a crash after projection loses no intent, and superseded unstarted intents coalesce while keeping audit history.",
+        "Journal failures never change task acceptance, reset attempts, invoke agents, or affect adaptive learning."
+      ],
+      "source_refs": ["DELIVERY_DASHBOARD_PLAN.md section 10 Persistence, ownership, and recovery"],
+      "risk": "high"
+    },
+    {
+      "id": "issue-ownership-registry",
+      "title": "Issue ownership registry",
+      "objective": "Bind each canonical external issue to one active run generation under the Anvil state root so two runs or repositories cannot both act as an issue's status sink.",
+      "depends_on": ["integration-journal-and-outbox"],
+      "acceptance_criteria": [
+        "A state-root registry records the owning run and generation for each canonical tenant/issue identity.",
+        "An issue-operation lock spans ownership verification, mutation, and receipt persistence.",
+        "A second run attempting to bind an owned issue is refused; explicit handoff waits for in-flight writes and retires the old generation.",
+        "Pending operations from a retired generation are rejected rather than applied to the new owner's issue."
+      ],
+      "source_refs": ["DELIVERY_DASHBOARD_PLAN.md section 10 Persistence, ownership, and recovery"],
+      "risk": "medium"
+    },
+    {
+      "id": "github-issues-import",
+      "title": "Import GitHub Issues into frozen tickets",
+      "objective": "Deliver the issue-import command end to end for one tracker so selected GitHub Issues become reviewable local tickets with frozen content, scope digests, and explicitly mapped dependencies.",
+      "depends_on": ["integrations-doctor-github"],
+      "acceptance_criteria": [
+        "The import command accepts repeated explicit issue identifiers or one bounded query, resolves stable repository and issue IDs plus global node IDs, and excludes pull request objects returned by issue endpoints.",
+        "Each ticket carries an immutable external-issue binding with connection alias, canonical identity, display identifier, URL, import timestamp, source revision, content digest, and a normalized scope digest excluding workflow state, comments, links, and timestamps.",
+        "A missing acceptance-criteria section produces a review-needed report and no executable ticket file; criteria are never invented.",
+        "Only dependency edges with an explicit mapping are imported, parent/child relations are not treated as blocking, and dependencies outside the imported set are reported rather than assumed satisfied.",
+        "Exceeding the issue bound, cycles, duplicate identities, invalid references, or an existing output file fail before any output is written, and successful output is written atomically.",
+        "Import performs no remote writes and no model calls."
+      ],
+      "source_refs": ["DELIVERY_DASHBOARD_PLAN.md section 5 Issue intake and identity", "DELIVERY_DASHBOARD_PLAN.md section 8 Issue adapters"],
+      "risk": "medium"
+    },
+    {
+      "id": "jira-import",
+      "title": "Import Jira Cloud issues",
+      "objective": "Add the Jira Cloud tracker adapter to the import pipeline and doctor so Jira issues import with faithful rich-text conversion and discoverable workflow transitions.",
+      "depends_on": ["github-issues-import"],
+      "acceptance_criteria": [
+        "Import uses enhanced JQL search with token pagination and records stable site and issue IDs.",
+        "Atlassian Document Format converts to Markdown preserving lists, code, links, and criteria; unsupported nodes produce warnings and the bounded source representation is retained locally.",
+        "Doctor fetches available transitions per issue, distinguishes transition IDs from status IDs, and reports required transition fields and missing permissions without creating workflow states.",
+        "The Jira adapter passes the same import contract tests as the GitHub Issues adapter."
+      ],
+      "source_refs": ["DELIVERY_DASHBOARD_PLAN.md section 5 Issue intake and identity", "DELIVERY_DASHBOARD_PLAN.md section 8 Issue adapters"],
+      "risk": "medium"
+    },
+    {
+      "id": "linear-import",
+      "title": "Import Linear issues",
+      "objective": "Add the Linear tracker adapter to the import pipeline and doctor so Linear issues import through bounded GraphQL queries with correct workspace and workflow identities.",
+      "depends_on": ["github-issues-import"],
+      "acceptance_criteria": [
+        "Import uses cursor-paginated GraphQL queries and records workspace and issue UUIDs.",
+        "Doctor discovers team-specific workflow state IDs and does not infer a review state from a category shared by several states.",
+        "GraphQL errors and rate-limit errors returned with HTTP 200 or 400 are detected and classified rather than treated as success.",
+        "The Linear adapter passes the same import contract tests as the GitHub Issues adapter."
+      ],
+      "source_refs": ["DELIVERY_DASHBOARD_PLAN.md section 5 Issue intake and identity", "DELIVERY_DASHBOARD_PLAN.md section 8 Issue adapters"],
+      "risk": "medium"
+    },
+    {
+      "id": "group-import-and-membership",
+      "title": "Group membership and import by group",
+      "objective": "Record epic, project, milestone, initiative, and similar group memberships as a read-only lens across all three trackers, and let one group be imported as a bounded set of member issues.",
+      "depends_on": ["issue-ownership-registry", "jira-import", "linear-import"],
+      "acceptance_criteria": [
+        "Group and group-membership records store canonical group identity, provider-native kind, display name, URL, optional parent group, and observation time; an issue may hold several memberships and unknown kinds are kept under their provider name.",
+        "The import command accepts one group and expands it to current members under the existing issue bound; an oversized group fails before output, nested groups are not expanded transitively, and unresolvable members are reported.",
+        "Membership is refreshed by sync reads as observations only and never creates dependencies, alters run scope, suspends writes, or changes scope digests.",
+        "A cross-run group index in the state-root registry lists which runs touched each member.",
+        "Coverage exists for Jira parent, sprint, and fix version; Linear project, initiative, cycle, milestone, and parent; and GitHub milestone, sub-issue parent, and issue type."
+      ],
+      "source_refs": ["DELIVERY_DASHBOARD_PLAN.md section 5 Grouping constructs", "DELIVERY_DASHBOARD_PLAN.md section 13 items 13 and 14"],
+      "risk": "medium"
+    },
+    {
+      "id": "delivery-manifest-and-plan",
+      "title": "Delivery manifest and read-only delivery plan",
+      "objective": "Produce an immutable delivery manifest for a fully successful run and a read-only plan command that shows exactly what publication would do, plus the run preflight that ties the local start revision to the fetched target.",
+      "depends_on": ["integration-journal-and-outbox"],
+      "acceptance_criteria": [
+        "A successful run yields a manifest with run and repository identities, source branch, base branch and SHA, accepted tip, per-task accepted commits and evidence references, complete issue binding groups, disclosure policy, and digest, verified against Git using the existing recovery invariants.",
+        "A run that is not fully successful, has missing review evidence, or whose managed branch diverged cannot produce a manifest.",
+        "The plan command lists repositories, refs, SHAs, PR actions, issue targets, and externally visible text with an evidence digest and expiry, and contains no credentials.",
+        "Closing keywords in accepted commit messages are detected and reported without rewriting commits.",
+        "For delivery-enabled runs, preflight fetches the configured target and fails before model work when the local starting revision differs, without altering the user's checkout."
+      ],
+      "source_refs": ["DELIVERY_DASHBOARD_PLAN.md section 7 Delivery manifest and publication", "DELIVERY_DASHBOARD_PLAN.md section 4 Configuration and frozen inputs"],
+      "risk": "medium"
+    },
+    {
+      "id": "github-draft-publication",
+      "title": "Publish branch and draft pull request on GitHub",
+      "objective": "Push a successful run's accepted work to its own remote ref and open one draft pull request on GitHub, with every write authorized, recorded, and reconcilable.",
+      "depends_on": ["integrations-doctor-github", "delivery-manifest-and-plan"],
+      "acceptance_criteria": [
+        "Publication acquires the repository lock, confirms no active supervisor, verifies the managed branch matches the manifest, resolves the Git remote and provider repository to the same identity, and records authorization durably before its first remote write.",
+        "The run ref is pushed with an atomic create-only precondition; an existing ref at the expected tip is idempotent success and any other tip, including a fast-forwardable ancestor, is a conflict; the remote tip is read back after an uncertain push.",
+        "Rewritten or unrelated target history is rejected with a base-changed condition; no rebase, model call, or transplant occurs.",
+        "One draft PR is created with a persisted delivery marker and an Anvil-owned body section honoring the disclosure policy; on create timeout the marker is searched across PR states, multiple matches require attention, and a PR is never adopted by branch name alone.",
+        "The publish command and the explicitly enabled on-success foreground pass both work against a fake GitHub and a real temporary Git remote, and a crash between execution cleanup and publication leaves publication pending for later sync."
+      ],
+      "source_refs": ["DELIVERY_DASHBOARD_PLAN.md section 7 Delivery manifest and publication", "DELIVERY_DASHBOARD_PLAN.md section 10 Persistence, ownership, and recovery"],
+      "risk": "high"
+    },
+    {
+      "id": "github-ready-merge-and-sync",
+      "title": "Ready promotion, merge observation, and delivery sync on GitHub",
+      "objective": "Promote a draft PR to ready only when configured checks pass on the expected head, observe reviews and merges without acting on them, and provide the sync command that reconciles pending delivery work with bounded watching and stable exit codes.",
+      "depends_on": ["github-draft-publication"],
+      "acceptance_criteria": [
+        "Required checks are identified by producer and context, must belong to the expected head, and pending, unknown, or ambiguous results block promotion; Anvil's own evidence is published as a commit status but cannot satisfy an external check requirement.",
+        "Ready promotion uses the documented GraphQL mutation, requires current mergeability with no conflicts, and is invalidated when the source head or base changes; the ready command applies the same gates as automatic promotion.",
+        "Merge is confirmed only from provider evidence tying the merged PR to the recorded source head and target commit; otherwise the state is merged-unverified, a closed PR is closed-unmerged, and a human push to the source invalidates delivery evidence.",
+        "The sync command reconciles authorized operations, cannot turn a manual publication policy into automatic publication, and in watch mode runs in the foreground with a finite timeout leaving pending work durable.",
+        "Exit codes are 0 for confirmed or nothing due, 1 for pending at deadline, 2 for invalid configuration or authorization, and 3 for a conflict requiring a decision; waiting for human merge is not a failure."
+      ],
+      "source_refs": ["DELIVERY_DASHBOARD_PLAN.md section 7 Delivery manifest and publication", "DELIVERY_DASHBOARD_PLAN.md section 3 User workflow and proposed commands"],
+      "risk": "high"
+    },
+    {
+      "id": "bitbucket-code-host",
+      "title": "Bitbucket Cloud code host",
+      "objective": "Add Bitbucket Cloud as a second code host that passes the identical delivery contract, so delivery behavior is proven provider-independent.",
+      "depends_on": ["github-ready-merge-and-sync"],
+      "acceptance_criteria": [
+        "Doctor, draft creation, ready promotion via native flags, source and destination commit observation, participant and change-request display, keyed build statuses, and merge reconciliation are implemented against a fake Bitbucket provider.",
+        "Draft lookup and update recover correctly when a PR has already closed.",
+        "Authentication supports scoped API tokens and access tokens; no onboarding path uses retired app passwords.",
+        "The Bitbucket adapter passes the same contract suite as GitHub, including uncertain-write reconciliation and manifest-bound publication."
+      ],
+      "source_refs": ["DELIVERY_DASHBOARD_PLAN.md section 8 Code-host adapters", "DELIVERY_DASHBOARD_PLAN.md section 9 Authentication and credential isolation"],
+      "risk": "medium"
+    },
+    {
+      "id": "github-issues-lifecycle-sync",
+      "title": "GitHub Issues lifecycle sync",
+      "objective": "Move bound GitHub Issues through started, review-ready, and done using owned labels and verified delivery evidence, during and after a run, without ever reversing a human decision.",
+      "depends_on": ["issue-ownership-registry", "github-issues-import", "github-ready-merge-and-sync"],
+      "acceptance_criteria": [
+        "Workflow mappings bind started, ready-for-review, and done to pre-existing Anvil-owned labels with permitted source states; doctor reports missing labels and never creates them.",
+        "During a run the bounded integration loop marks an issue started on first attempt claim, performs tracker sync only, never waits on the repository lock, and leaves remaining intents durable on shutdown.",
+        "Review-ready follows delivery ready promotion and done follows verified merge; partial-issue bindings publish links only and cannot change workflow state.",
+        "Every mutation re-reads current state first, treats an already-converged target as an observation, adds or removes only owned labels, and records cancellation, reopen, transfer outside approved scope, or scope-digest change as conflicts without auto-reopening or replaying stale started events.",
+        "With links enabled, one ordinary PR link or one managed link comment is upserted using reconciled markers; progress comments stay off by default."
+      ],
+      "source_refs": ["DELIVERY_DASHBOARD_PLAN.md section 6 Three distinct lifecycles", "DELIVERY_DASHBOARD_PLAN.md section 8 Issue adapters", "DELIVERY_DASHBOARD_PLAN.md section 10 Persistence, ownership, and recovery"],
+      "risk": "high"
+    },
+    {
+      "id": "jira-lifecycle-sync",
+      "title": "Jira lifecycle sync",
+      "objective": "Extend lifecycle sync to Jira Cloud using real transition IDs, trusted required fields, and deterministic remote links.",
+      "depends_on": ["jira-import", "github-issues-lifecycle-sync"],
+      "acceptance_criteria": [
+        "Transitions are applied by transition ID from the currently available set, never by status ID; required transition fields come from trusted configuration or the operation stops with a precise missing-field conflict.",
+        "PR links are upserted as remote links with a deterministic global ID so retries do not duplicate.",
+        "Human moves to unmapped states, cancellations, and reopens produce conflicts; nothing is reverted.",
+        "The Jira adapter passes the same lifecycle contract tests as GitHub Issues."
+      ],
+      "source_refs": ["DELIVERY_DASHBOARD_PLAN.md section 8 Issue adapters", "DELIVERY_DASHBOARD_PLAN.md section 6 Three distinct lifecycles"],
+      "risk": "medium"
+    },
+    {
+      "id": "linear-lifecycle-sync",
+      "title": "Linear lifecycle sync",
+      "objective": "Extend lifecycle sync to Linear using team-scoped workflow state IDs and PR attachments.",
+      "depends_on": ["linear-import", "github-issues-lifecycle-sync"],
+      "acceptance_criteria": [
+        "State changes update the issue state ID using the configured team-specific state; a wrong-team state ID is a precise conflict.",
+        "PR links are upserted as attachments without duplication on retry.",
+        "Mutation results are inspected for GraphQL errors and success flags even on HTTP 200.",
+        "The Linear adapter passes the same lifecycle contract tests as GitHub Issues."
+      ],
+      "source_refs": ["DELIVERY_DASHBOARD_PLAN.md section 8 Issue adapters", "DELIVERY_DASHBOARD_PLAN.md section 6 Three distinct lifecycles"],
+      "risk": "medium"
+    },
+    {
+      "id": "six-way-contract-matrix",
+      "title": "Six-way contract matrix and failure injection",
+      "objective": "Prove every code-host and tracker pairing, every write-point crash, and every provider failure mode against the same end-to-end contract using fake providers and real temporary Git repositories.",
+      "depends_on": ["bitbucket-code-host", "jira-lifecycle-sync", "linear-lifecycle-sync"],
+      "acceptance_criteria": [
+        "A parametrized suite runs import, started, publish, review-ready, merge observation, and whole-issue completion for all six host and tracker combinations.",
+        "Crash injection at projection, intent commit, push, PR create, link or comment create, workflow transition, and receipt commit converges or exposes uncertainty without duplicating PRs or comments or losing accepted work.",
+        "Two concurrent sync processes, an active run plus manual sync, native resume, and cross-run ownership preserve single-writer rules and reject stale operations.",
+        "Lost responses, 401, 403, 404, 409, 429, 5xx, GraphQL rate-limit errors, and revoked credentials retain actionable pending state; provider downtime never reruns models or changes local acceptance or learning.",
+        "Squash, rebase, and merge commits, deleted merged branches, closed-unmerged PRs, unknown mergeability, and a synthetic merge SHA are distinguished from a confirmed merge."
+      ],
+      "source_refs": ["DELIVERY_DASHBOARD_PLAN.md section 13 Acceptance and failure matrix"],
+      "risk": "medium"
+    },
+    {
+      "id": "dashboard-run-views",
+      "title": "Dashboard server with run list, overview, and ticket views",
+      "objective": "Ship the local read-only dashboard so a user can watch current and historical runs in a browser with no integrations configured and no cloud dependency.",
+      "depends_on": ["ledger-query-layer"],
+      "acceptance_criteria": [
+        "A standard-library HTTP server binds to loopback, picks a free port when asked for port 0, prints the session URL, runs in the foreground, and exits on interrupt without affecting workers or evidence.",
+        "A per-session local token is exchanged for a scoped HTTP-only session; Host and Origin are validated, no permissive CORS is served, a restrictive content policy applies, and only packaged assets are served.",
+        "Run list, run overview with dependency waves and active slots, and ticket detail with attempts, model and effort reasons, and selected skills render from the bounded query layer, polling about every two seconds for the active run and slower for the list.",
+        "All routes are read-only; no endpoint runs, resumes, syncs, merges, or mutates anything, and useful CLI commands appear only as selectable text.",
+        "Legacy runs without integration records render, unknown cost data is labeled unknown, and keyboard navigation, visible focus, accessible state labels, contrast, and a table alternative to the dependency graph are verified in a browser."
+      ],
+      "source_refs": ["DELIVERY_DASHBOARD_PLAN.md section 11 Dashboard specification"],
+      "risk": "medium"
+    },
+    {
+      "id": "dashboard-delivery-evidence-views",
+      "title": "Dashboard delivery and evidence views",
+      "objective": "Show where a run's PR is, why an issue is still open, and the evidence behind every state, with untrusted content rendered safely and projection lag made visible.",
+      "depends_on": ["github-ready-merge-and-sync", "dashboard-run-views"],
+      "acceptance_criteria": [
+        "The delivery view shows host, source and base refs and SHAs, PR URL, draft, review, check, and merge state, and the issue synchronization backlog and conflicts, keeping execution progress and delivered progress visually separate.",
+        "The evidence view shows independent review findings, verification outcomes, the event timeline, and usage provenance, with artifacts resolved through allowlisted opaque IDs, traversal and symlinks rejected, and excerpts streamed up to 256 KiB.",
+        "Issue text, comments, and logs render as escaped text or sanitized Markdown with raw HTML disabled; stored markup injection tests pass.",
+        "The execution ledger and integration journal cursors are labeled so projection lag reads as lag, not contradiction, and stale observations show their last evidence time.",
+        "Responses contain no credentials, authorization headers, environment contents, or hidden external content, and dashboard polling never triggers provider requests."
+      ],
+      "source_refs": ["DELIVERY_DASHBOARD_PLAN.md section 11 Dashboard specification"],
+      "risk": "medium"
+    },
+    {
+      "id": "dashboard-group-view",
+      "title": "Dashboard group view",
+      "objective": "Let a user see how far along an epic, project, milestone, or initiative is across every run that touched it, with honest rollup that never infers completion.",
+      "depends_on": ["group-import-and-membership", "dashboard-delivery-evidence-views"],
+      "acceptance_criteria": [
+        "A group view lists each group's identity and kind, member issues with local, delivery, and tracker states, computed rollup counts, and the runs that touched each member, reading the state-root group index.",
+        "Members never imported under this state root are shown as unknown and are never counted complete because their external status is Done.",
+        "No group is shown or recorded as complete on the basis of external status alone.",
+        "The view meets the same accessibility and read-only requirements as the other views."
+      ],
+      "source_refs": ["DELIVERY_DASHBOARD_PLAN.md section 5 Grouping constructs", "DELIVERY_DASHBOARD_PLAN.md section 11 Dashboard specification"],
+      "risk": "low"
+    },
+    {
+      "id": "packaging-docs-live-acceptance",
+      "title": "Packaging, setup documentation, entry skill, and live sandbox acceptance",
+      "objective": "Make the milestone installable and operable: package schemas and dashboard assets, document setup for each provider, extend the Anvil entry skill, and record authorized sandbox acceptance for every adapter.",
+      "depends_on": ["six-way-contract-matrix", "dashboard-group-view"],
+      "acceptance_criteria": [
+        "Package installation includes the integration schemas, labeled example configurations, and dashboard assets.",
+        "Setup documentation covers each provider's credential options, the Jira OAuth broker prerequisite, competing-automation disclosure, and every proposed command with its exit codes.",
+        "The Anvil entry skill describes the shipped delivery and dashboard capabilities.",
+        "Authorized sandbox repositories and issues have exercised both code hosts and all three tracker adapters, with a record of which of the six combinations ran live.",
+        "The full regression suite, including all existing serial, parallel, recovery, routing, status, and skill tests, is green on supported Python versions and CI platforms."
+      ],
+      "source_refs": ["DELIVERY_DASHBOARD_PLAN.md section 12 Delivery slices and implementation order", "DELIVERY_DASHBOARD_PLAN.md section 14 Completion definition and later work"],
+      "risk": "low"
+    }
+  ]
+}
