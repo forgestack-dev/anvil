@@ -383,3 +383,51 @@ prompt = sys.stdin.read()''')
         self.assertTrue(sample['eligible'])
         self.assertFalse(sample['accepted'])
         self.assertEqual(sample['catalog'], learning_catalog(result['config']))
+
+
+class AdaptiveRunLevelSettings(unittest.TestCase):
+    """agent_turns is a run-level setting; routing must not drop it."""
+
+    setUp = test_execution.SerialExecutionTests.setUp
+
+    def session(self, **overrides):
+        from dataclasses import replace
+        from anvil.adaptive_runtime import Session
+        from anvil.config import WorkerConfig
+        from anvil.planning import TaskGraph
+        from anvil.workspaces import Repository
+        config = replace(self.config, agent="codex",
+                         workers=(WorkerConfig("only", "codex", "codex"),),
+                         max_processes=1, adaptive=config_options(), **overrides)
+        graph = TaskGraph.load(config.tickets)
+        return Session(config, graph, Repository(self.repo), injected=True), graph, config
+
+    def runner_kwargs(self, **overrides):
+        from unittest.mock import patch
+        session, graph, config = self.session(**overrides)
+        task = graph.tasks[0]
+        worker = config.workers[0]
+        session.decide(task, worker, self.base, "attempt-1")
+
+        class Item:
+            attempt_id = "attempt-1"
+
+        item = Item()
+        item.worker = worker
+        item.task = task
+        with patch("anvil.adaptive_runtime.create_runner") as create:
+            session.runner(item)
+            worker_call = create.call_args
+            session.runner(item, review=True)
+            review_call = create.call_args
+        return worker_call.kwargs, review_call.kwargs
+
+    def test_agent_turns_reaches_both_roles_under_adaptive_routing(self):
+        worker_kwargs, review_kwargs = self.runner_kwargs(agent_turns=96)
+        self.assertEqual(worker_kwargs["turns"], 96)
+        self.assertEqual(review_kwargs["turns"], 96)
+
+    def test_absent_agent_turns_leaves_the_adapter_default(self):
+        worker_kwargs, review_kwargs = self.runner_kwargs()
+        self.assertIsNone(worker_kwargs["turns"])
+        self.assertIsNone(review_kwargs["turns"])

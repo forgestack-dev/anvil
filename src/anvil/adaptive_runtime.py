@@ -119,7 +119,10 @@ class Session:
         agent = self.config.agent if review else item.worker.agent
         executable = self.config.executable if review else item.worker.executable
         key = (agent, executable)
-        runner = injected if injected is not None else create_runner(agent, self.executables[key], profile=profile)
+        # agent_turns is a run-level setting, not part of a routing profile: an
+        # adaptive run must honor it exactly as a non-adaptive one does.
+        runner = injected if injected is not None else create_runner(
+            agent, self.executables[key], profile=profile, turns=self.config.agent_turns)
         return MeasuredRunner(runner, agent, profile, self.versions[key], decision | {"invocation_profile": name})
 
     def next_profile(self, item):
