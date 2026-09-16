@@ -14,7 +14,10 @@
       "source_refs": [
         "DELIVERY_DASHBOARD_PLAN.md section 9 Authentication and credential isolation"
       ],
-      "risk": "low"
+      "risk": "low",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "apply-credential-exclusion",
@@ -31,7 +34,10 @@
       "source_refs": [
         "DELIVERY_DASHBOARD_PLAN.md section 9 Authentication and credential isolation"
       ],
-      "risk": "low"
+      "risk": "low",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "ledger-query-layer",
@@ -48,7 +54,16 @@
         "DELIVERY_DASHBOARD_PLAN.md section 2 Existing constraints and extension points",
         "DELIVERY_DASHBOARD_PLAN.md section 11 Dashboard specification"
       ],
-      "risk": "low"
+      "risk": "low",
+      "execution": {
+        "status": "done",
+        "run_id": "264bebce5fb546d69bf75daa490fa6b4",
+        "attempt_id": "7866a528-c5ef-44ae-aa5c-0f9edc4c2e06",
+        "worker": "serial",
+        "updated_at": "2026-09-16T16:20:18.661784+00:00",
+        "candidate_sha": "378ca62e22216b75b9ccc819a1ab7f26069c8ebe",
+        "evidence": "/Users/christian/.local/state/anvil/264bebce5fb546d69bf75daa490fa6b4"
+      }
     },
     {
       "id": "integration-config-and-freeze",
@@ -68,7 +83,10 @@
         "DELIVERY_DASHBOARD_PLAN.md section 4 Configuration and frozen inputs",
         "DELIVERY_DASHBOARD_PLAN.md section 9 Authentication and credential isolation"
       ],
-      "risk": "medium"
+      "risk": "medium",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "integrations-doctor-github",
@@ -87,7 +105,10 @@
         "DELIVERY_DASHBOARD_PLAN.md section 3 User workflow and proposed commands",
         "DELIVERY_DASHBOARD_PLAN.md section 8 Provider-specific contracts"
       ],
-      "risk": "medium"
+      "risk": "medium",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "integration-journal-schema",
@@ -105,7 +126,10 @@
       "source_refs": [
         "DELIVERY_DASHBOARD_PLAN.md section 10 Persistence, ownership, and recovery"
       ],
-      "risk": "medium"
+      "risk": "medium",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "event-projection-and-outbox",
@@ -124,7 +148,10 @@
       "source_refs": [
         "DELIVERY_DASHBOARD_PLAN.md section 10 Persistence, ownership, and recovery"
       ],
-      "risk": "high"
+      "risk": "high",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "issue-ownership-registry",
@@ -142,7 +169,10 @@
       "source_refs": [
         "DELIVERY_DASHBOARD_PLAN.md section 10 Persistence, ownership, and recovery"
       ],
-      "risk": "medium"
+      "risk": "medium",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "issue-tracker-contract-and-github-reads",
@@ -161,7 +191,10 @@
         "DELIVERY_DASHBOARD_PLAN.md section 8 Issue adapters",
         "DELIVERY_DASHBOARD_PLAN.md section 5 Issue intake and identity"
       ],
-      "risk": "medium"
+      "risk": "medium",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "issue-intake-to-tickets",
@@ -180,7 +213,10 @@
       "source_refs": [
         "DELIVERY_DASHBOARD_PLAN.md section 5 Issue intake and identity"
       ],
-      "risk": "medium"
+      "risk": "medium",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "jira-import",
@@ -199,7 +235,10 @@
         "DELIVERY_DASHBOARD_PLAN.md section 5 Issue intake and identity",
         "DELIVERY_DASHBOARD_PLAN.md section 8 Issue adapters"
       ],
-      "risk": "medium"
+      "risk": "medium",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "linear-import",
@@ -218,7 +257,10 @@
         "DELIVERY_DASHBOARD_PLAN.md section 5 Issue intake and identity",
         "DELIVERY_DASHBOARD_PLAN.md section 8 Issue adapters"
       ],
-      "risk": "medium"
+      "risk": "medium",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "group-import-and-membership",
@@ -240,7 +282,10 @@
         "DELIVERY_DASHBOARD_PLAN.md section 5 Grouping constructs",
         "DELIVERY_DASHBOARD_PLAN.md section 13 items 13 and 14"
       ],
-      "risk": "medium"
+      "risk": "medium",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "delivery-manifest-and-plan",
@@ -260,7 +305,10 @@
         "DELIVERY_DASHBOARD_PLAN.md section 7 Delivery manifest and publication",
         "DELIVERY_DASHBOARD_PLAN.md section 4 Configuration and frozen inputs"
       ],
-      "risk": "medium"
+      "risk": "medium",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "publication-preconditions-and-push",
@@ -280,7 +328,10 @@
       "source_refs": [
         "DELIVERY_DASHBOARD_PLAN.md section 7 Delivery manifest and publication"
       ],
-      "risk": "high"
+      "risk": "high",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "draft-pr-create-and-reconcile",
@@ -299,7 +350,10 @@
       "source_refs": [
         "DELIVERY_DASHBOARD_PLAN.md section 7 Delivery manifest and publication"
       ],
-      "risk": "high"
+      "risk": "high",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "ready-promotion-and-checks",
@@ -318,7 +372,10 @@
       "source_refs": [
         "DELIVERY_DASHBOARD_PLAN.md section 7 Delivery manifest and publication"
       ],
-      "risk": "high"
+      "risk": "high",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "merge-observation-and-sync",
@@ -338,7 +395,10 @@
         "DELIVERY_DASHBOARD_PLAN.md section 7 Delivery manifest and publication",
         "DELIVERY_DASHBOARD_PLAN.md section 3 User workflow and proposed commands"
       ],
-      "risk": "high"
+      "risk": "high",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "bitbucket-code-host",
@@ -357,7 +417,10 @@
         "DELIVERY_DASHBOARD_PLAN.md section 8 Code-host adapters",
         "DELIVERY_DASHBOARD_PLAN.md section 9 Authentication and credential isolation"
       ],
-      "risk": "medium"
+      "risk": "medium",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "issue-mappings-and-started",
@@ -378,7 +441,10 @@
         "DELIVERY_DASHBOARD_PLAN.md section 6 Three distinct lifecycles",
         "DELIVERY_DASHBOARD_PLAN.md section 10 Persistence, ownership, and recovery"
       ],
-      "risk": "high"
+      "risk": "high",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "issue-review-ready-and-completion",
@@ -400,7 +466,10 @@
         "DELIVERY_DASHBOARD_PLAN.md section 6 Three distinct lifecycles",
         "DELIVERY_DASHBOARD_PLAN.md section 8 Issue adapters"
       ],
-      "risk": "high"
+      "risk": "high",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "jira-lifecycle-sync",
@@ -420,7 +489,10 @@
         "DELIVERY_DASHBOARD_PLAN.md section 8 Issue adapters",
         "DELIVERY_DASHBOARD_PLAN.md section 6 Three distinct lifecycles"
       ],
-      "risk": "medium"
+      "risk": "medium",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "linear-lifecycle-sync",
@@ -440,7 +512,10 @@
         "DELIVERY_DASHBOARD_PLAN.md section 8 Issue adapters",
         "DELIVERY_DASHBOARD_PLAN.md section 6 Three distinct lifecycles"
       ],
-      "risk": "medium"
+      "risk": "medium",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "six-way-contract-matrix",
@@ -461,7 +536,10 @@
       "source_refs": [
         "DELIVERY_DASHBOARD_PLAN.md section 13 Acceptance and failure matrix"
       ],
-      "risk": "medium"
+      "risk": "medium",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "dashboard-run-views",
@@ -480,7 +558,10 @@
       "source_refs": [
         "DELIVERY_DASHBOARD_PLAN.md section 11 Dashboard specification"
       ],
-      "risk": "medium"
+      "risk": "medium",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "dashboard-delivery-evidence-views",
@@ -500,7 +581,10 @@
       "source_refs": [
         "DELIVERY_DASHBOARD_PLAN.md section 11 Dashboard specification"
       ],
-      "risk": "medium"
+      "risk": "medium",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "dashboard-group-view",
@@ -520,7 +604,10 @@
         "DELIVERY_DASHBOARD_PLAN.md section 5 Grouping constructs",
         "DELIVERY_DASHBOARD_PLAN.md section 11 Dashboard specification"
       ],
-      "risk": "low"
+      "risk": "low",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "packaging-docs-live-acceptance",
@@ -541,7 +628,10 @@
         "DELIVERY_DASHBOARD_PLAN.md section 12 Delivery slices and implementation order",
         "DELIVERY_DASHBOARD_PLAN.md section 14 Completion definition and later work"
       ],
-      "risk": "low"
+      "risk": "low",
+      "execution": {
+        "status": "todo"
+      }
     }
   ]
 }
