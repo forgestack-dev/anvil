@@ -52,6 +52,12 @@ class RunStore:
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA foreign_keys = ON")
             connection.execute("PRAGMA synchronous = FULL")
+            # Write-ahead logging so a read-only observer never blocks the
+            # supervisor. Under the rollback journal a reader's SHARED lock
+            # prevents the EXCLUSIVE lock a commit needs, and a poller such as
+            # the run dashboard could fail a live run. WAL is persistent in the
+            # file, so opening an older ledger for writing migrates it once.
+            connection.execute("PRAGMA journal_mode = WAL")
         except (OSError, sqlite3.Error) as exc:
             if connection is not None:
                 connection.close()
@@ -63,7 +69,17 @@ class RunStore:
         return self
 
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
-        self._connection.close()
+        # Fold the write-ahead log back into the ledger so the log does not
+        # grow without bound across a long run. The ledger stays in WAL mode:
+        # switching back needs a brief exclusive lock, which momentarily fails
+        # concurrent read-only opens, and a reader must never be disrupted by
+        # the supervisor finishing. Best effort; never mask the real error.
+        try:
+            self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except sqlite3.Error:
+            pass
+        finally:
+            self._connection.close()
 
     @contextmanager
     def _transaction(self, *, write: bool = True) -> Iterator[sqlite3.Connection]:

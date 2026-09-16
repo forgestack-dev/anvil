@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sqlite3
+import threading
 import tempfile
 import unittest
 
@@ -254,6 +255,73 @@ class StoreTests(unittest.TestCase):
                     store.transition("a", "candidate", attempt_id=attempt,
                                      details={"candidate_sha": "candidate", "invalid": value})
             self.assertEqual(store.snapshot(), before)
+
+
+class WriteAheadLogging(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.path = Path(self.directory.name) / "state.sqlite"
+
+    def initialize(self, count: int = 1):
+        with RunStore(self.path) as store:
+            store.initialize(run_id="r", repo="/repo", branch="anvil/r", base_sha="base",
+                             tasks=[Task(f"t{index}", "T", "O", (), ("a",))
+                                    for index in range(count)],
+                             config={})
+
+    def mode(self) -> str:
+        connection = sqlite3.connect(self.path)
+        try:
+            return connection.execute("PRAGMA journal_mode").fetchone()[0]
+        finally:
+            connection.close()
+
+    def test_new_ledgers_use_write_ahead_logging(self):
+        self.initialize()
+        self.assertEqual(self.mode(), "wal")
+
+    def test_a_rollback_journal_ledger_migrates_when_opened_for_writing(self):
+        self.initialize()
+        connection = sqlite3.connect(self.path)
+        connection.execute("PRAGMA journal_mode = DELETE")
+        connection.close()
+        self.assertEqual(self.mode(), "delete")
+        with RunStore(self.path) as store:
+            store.set_run("running")
+        self.assertEqual(self.mode(), "wal")
+
+    def test_a_reader_never_fails_the_supervisor(self):
+        self.initialize(count=30)
+        failures: list[Exception] = []
+        stop = threading.Event()
+
+        def supervisor():
+            try:
+                with RunStore(self.path) as store:
+                    store.set_run("running")
+                    for index in range(30):
+                        attempt = store.start_attempt(f"t{index}", "base", f"/workspace/{index}")
+                        store.record_message(f"t{index}", attempt_id=attempt,
+                                             kind="progress", body={"index": index})
+            except Exception as exc:  # pragma: no cover - surfaced via failures
+                failures.append(exc)
+
+        def observer():
+            while not stop.is_set():
+                try:
+                    RunStore.read(self.path)
+                except Exception as exc:  # pragma: no cover - surfaced via failures
+                    failures.append(exc)
+
+        watcher = threading.Thread(target=observer)
+        watcher.start()
+        writer = threading.Thread(target=supervisor)
+        writer.start()
+        writer.join()
+        stop.set()
+        watcher.join()
+        self.assertEqual([str(failure) for failure in failures], [])
 
 
 if __name__ == "__main__":
