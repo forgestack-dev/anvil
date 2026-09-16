@@ -39,7 +39,7 @@ def _read_only(path: Path) -> Iterator[sqlite3.Connection]:
         connection.execute("PRAGMA query_only = ON")
         connection.execute("BEGIN")
         yield connection
-    except (OSError, sqlite3.Error) as exc:
+    except (OSError, sqlite3.Error, json.JSONDecodeError) as exc:
         raise StoreError(f"cannot read run ledger {path}: {exc}") from exc
     finally:
         if connection is not None:
@@ -73,6 +73,12 @@ def list_runs(state_dir: Path, *, after: str | None = None,
 
     Pages are ordered by run directory name (the run ID) so pagination is
     stable across calls even as new runs are created.
+
+    A run whose ledger cannot be read still occupies its place in the page as
+    ``{"run_id": ..., "unreadable": ...}``. One crashed or unreadable run must
+    not hide every other run from a consumer listing them. The key is not
+    ``error``: the runs table has its own nullable ``error`` column, and a run
+    that recorded a failure is not the same as a ledger that cannot be read.
     """
     limit = _bounded(limit)
     state_dir = Path(state_dir)
@@ -85,7 +91,12 @@ def list_runs(state_dir: Path, *, after: str | None = None,
     if after is not None:
         run_ids = [run_id for run_id in run_ids if run_id > after]
     page = run_ids[:limit]
-    items = [run_summary(state_dir / run_id) for run_id in page]
+    items = []
+    for run_id in page:
+        try:
+            items.append(run_summary(state_dir / run_id))
+        except StoreError as exc:
+            items.append({"run_id": run_id, "unreadable": str(exc)})
     next_after = page[-1] if len(run_ids) > limit else None
     return {"items": items, "next_after": next_after}
 

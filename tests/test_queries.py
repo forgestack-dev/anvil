@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -171,6 +172,58 @@ class QueriesTests(unittest.TestCase):
         self.assertEqual(reader_errors, [])
         final = run_summary(run_dir)
         self.assertEqual(final["task_counts"], {"running": 20})
+
+    def test_one_unreadable_ledger_does_not_hide_other_runs(self):
+        self.make_run("run-a")
+        self.make_run("run-c")
+        crashed = self.state_dir / "run-b"
+        crashed.mkdir()
+        sqlite3.connect(crashed / "state.sqlite").close()
+
+        items = list_runs(self.state_dir)["items"]
+        self.assertEqual([item["run_id"] for item in items], ["run-a", "run-b", "run-c"])
+        self.assertIn("unreadable", items[1])
+        self.assertNotIn("unreadable", items[0])
+        self.assertNotIn("unreadable", items[2])
+
+    def test_unreadable_is_distinct_from_a_recorded_run_error(self):
+        run_dir = self.make_run("run-failed")
+        with RunStore(run_dir / "state.sqlite") as store:
+            store.set_run("failed", error="a check failed")
+        summary = run_summary(run_dir)
+        self.assertEqual(summary["error"], "a check failed")
+        self.assertNotIn("unreadable", summary)
+
+    def test_corrupt_json_payload_raises_store_error(self):
+        run_dir = self.make_run("run-corrupt")
+        connection = sqlite3.connect(run_dir / "state.sqlite")
+        connection.execute("UPDATE events SET details = '{not json'")
+        connection.commit()
+        connection.close()
+        with self.assertRaises(StoreError):
+            run_events(run_dir)
+
+    def test_version_one_ledgers_are_readable(self):
+        # Schema version 1 declared no user_version pragma and used identical
+        # table definitions, so a genuine v1 ledger is a current ledger whose
+        # user_version is 0. The queries must not gate on that value.
+        run_dir = self.make_run("run-v1")
+        with RunStore(run_dir / "state.sqlite") as store:
+            store.set_run("running")
+            store.start_attempt("a", "base", "/workspace/a")
+        connection = sqlite3.connect(run_dir / "state.sqlite")
+        connection.execute("PRAGMA user_version = 0")
+        connection.commit()
+        connection.close()
+        self.assertEqual(
+            sqlite3.connect(run_dir / "state.sqlite").execute("PRAGMA user_version").fetchone()[0],
+            0)
+
+        self.assertEqual(run_summary(run_dir)["run_id"], "run-v1")
+        self.assertTrue(run_tasks(run_dir)["items"])
+        self.assertTrue(run_attempts(run_dir)["items"])
+        self.assertTrue(run_events(run_dir)["items"])
+        self.assertNotIn("unreadable", list_runs(self.state_dir)["items"][0])
 
     def test_runs_created_by_earlier_anvil_versions_are_readable(self):
         # Earlier ticket documents omitted every optional task field, and
