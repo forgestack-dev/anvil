@@ -11,13 +11,13 @@ AGENT_NAMES = ("codex", "claude-code")
 EXECUTION_AGENTS = ("codex", "claude-code", "muse")
 
 
-def create_runner(agent: str, executable: str, *, profile=None):
+def create_runner(agent: str, executable: str, *, profile=None, turns=None):
     if agent == "codex":
         from .codex import CodexRunner
         return CodexRunner(executable, profile=profile)
     if agent == "claude-code":
         from .claude import ClaudeRunner
-        return ClaudeRunner(executable, profile=profile)
+        return ClaudeRunner(executable, profile=profile, turns=turns)
     if agent == "muse":
         from .muse import MuseRunner
         return MuseRunner(executable, profile=profile)

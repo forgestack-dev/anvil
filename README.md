@@ -141,7 +141,7 @@ Set `agent` to `"claude-code"` to use Claude Code; omitting it preserves the Cod
 
 Managed Git, agent, and verification commands discard inherited `GIT_*` environment variables so Git uses the managed worktree. Other environment settings are preserved.
 
-`agent_timeout` applies separately to each implementation and review turn; `check_timeout` applies to each verification command. Both must be greater than zero and at most 3,600 seconds. Claude Code also has a limit of 32 agentic turns per invocation. Optional `state_dir` must be outside the target checkout and its Git directory; its default is `~/.local/state/anvil`.
+`agent_timeout` applies separately to each implementation and review turn; `check_timeout` applies to each verification command. Both must be greater than zero and at most 3,600 seconds. Claude Code also limits agentic turns per invocation, 32 by default; optional `agent_turns` (1 to 1,000) raises or lowers that limit and other adapters ignore it. Optional `orientation` names a UTF-8 file of at most 64 KiB whose text is supplied verbatim in implementation prompts, so workers spend no turns locating repository context; see [the observed turn budget](docs/CLAUDE_TURN_BUDGET.md). Optional `state_dir` must be outside the target checkout and its Git directory; its default is `~/.local/state/anvil`.
 
 ```sh
 anvil run /path/to/run.json

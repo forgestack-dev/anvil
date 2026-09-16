@@ -327,6 +327,17 @@
           }
         }
       }
+    },
+    "agent_turns": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000,
+      "description": "Maximum agentic turns per Claude Code invocation; other adapters ignore it. Defaults to the adapter's own limit."
+    },
+    "orientation": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path to a UTF-8 repository orientation file supplied verbatim in implementation prompts so workers do not spend turns locating context."
     }
   },
   "allOf": [

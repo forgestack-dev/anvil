@@ -73,10 +73,15 @@ class RunConfig:
     ticket_status: bool = False
     adaptive: dict | None = None
     skill_selection: dict | None = None
+    agent_turns: int | None = None
+    orientation: Path | None = None
 
     def __post_init__(self) -> None:
         if type(self.ticket_status) is not bool:
             raise ContractError("ticket_status must be boolean")
+        if self.agent_turns is not None and (type(self.agent_turns) is not int
+                                             or not 1 <= self.agent_turns <= 1000):
+            raise ContractError("agent_turns must be an integer between 1 and 1000")
         if self.adaptive is not None:
             from .routing import validate_config
             validate_config(self.adaptive)
@@ -145,7 +150,8 @@ class RunConfig:
         _object_fields(value, {"version", "repo", "tickets", "verification"},
                        {"state_dir", "codex_binary", "agent", "agent_binary",
                         "agent_timeout", "check_timeout", "workers", "max_processes",
-                        "ticket_status", "adaptive", "skill_selection"},
+                        "ticket_status", "adaptive", "skill_selection",
+                        "agent_turns", "orientation"},
                        "run configuration")
         if type(value["version"]) is not int or value["version"] != 1:
             raise ContractError("run configuration.version must be the integer 1")
@@ -154,6 +160,9 @@ class RunConfig:
             raise ContractError("adaptive must be an object, not null")
         if "skill_selection" in value and value["skill_selection"] is None:
             raise ContractError("skill_selection must be an object, not null")
+        for name in ("agent_turns", "orientation"):
+            if name in value and value[name] is None:
+                raise ContractError(f"{name} must not be null; omit it to use the default")
 
         def text(name: str, default: str | None = None) -> str:
             result = value.get(name, default)
@@ -209,6 +218,8 @@ class RunConfig:
             workers=workers, max_processes=value.get("max_processes"),
             ticket_status=value.get("ticket_status", False), adaptive=value.get("adaptive"),
             skill_selection=value.get("skill_selection"),
+            agent_turns=value.get("agent_turns"),
+            orientation=(resolve("orientation") if "orientation" in value else None),
         )
 
     def to_dict(self) -> dict:
@@ -223,6 +234,10 @@ class RunConfig:
             result["adaptive"] = self.adaptive
         if self.skill_selection is not None:
             result["skill_selection"] = dict(self.skill_selection)
+        if self.agent_turns is not None:
+            result["agent_turns"] = self.agent_turns
+        if self.orientation is not None:
+            result["orientation"] = str(self.orientation)
         if self.workers:
             result.update(workers=[worker.to_dict() for worker in self.workers],
                           max_processes=self.max_processes)

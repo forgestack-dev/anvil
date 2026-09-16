@@ -106,9 +106,13 @@ def build_invocation(
     claude_binary: str = "claude",
     *,
     read_only: bool = False,
+    turns: int | None = None,
 ) -> ClaudeInvocation:
     """Build a shell-free invocation; the caller must launch with cwd=repo."""
     _validate_binary(claude_binary)
+    turns = MAX_TURNS if turns is None else turns
+    if isinstance(turns, bool) or type(turns) is not int or not 1 <= turns <= 1000:
+        raise ValueError("turns must be an integer between 1 and 1000")
     if not isinstance(prompt, str) or not prompt.strip() or "\0" in prompt:
         raise ValueError("prompt must be nonempty text without NUL characters")
     if not isinstance(read_only, bool):
@@ -126,7 +130,7 @@ def build_invocation(
     return ClaudeInvocation(
         argv=(
             claude_binary, "--print", "--input-format", "text", "--output-format", "stream-json",
-            "--verbose", "--json-schema", schema_text, "--max-turns", str(MAX_TURNS),
+            "--verbose", "--json-schema", schema_text, "--max-turns", str(turns),
             "--no-session-persistence", "--safe-mode", "--strict-mcp-config",
             "--mcp-config", '{"mcpServers":{}}', "--disable-slash-commands", "--no-chrome",
             "--permission-prompts", "none", "--permission-mode", "dontAsk" if read_only else "acceptEdits",
@@ -177,7 +181,11 @@ class ClaudeRunner:
     excludes shell execution and delegation; acceptance belongs to the caller.
     """
 
-    def __init__(self, claude_binary: str = "claude", *, profile=None) -> None:
+    def __init__(self, claude_binary: str = "claude", *, profile=None, turns=None) -> None:
+        if turns is not None and (isinstance(turns, bool) or type(turns) is not int
+                                  or not 1 <= turns <= 1000):
+            raise ValueError("turns must be an integer between 1 and 1000")
+        self.turns = turns
         if profile is not None:
             from ..routing import validate_selection
             validate_selection("claude-code", profile)
@@ -202,7 +210,8 @@ class ClaudeRunner:
             raise ProcessError(f"could not start command: Claude Code executable was not found: {self.claude_binary}")
         try:
             repo = Path(repo).expanduser().resolve()
-            invocation = build_invocation(repo, prompt, schema, self.executable, read_only=read_only)
+            invocation = build_invocation(repo, prompt, schema, self.executable,
+                                          read_only=read_only, turns=self.turns)
             artifact_dir = Path(artifact_dir).expanduser()
             artifact_dir.mkdir(parents=True, exist_ok=False)
             artifact_dir = artifact_dir.resolve()

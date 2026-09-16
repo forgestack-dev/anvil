@@ -47,8 +47,37 @@ def verify(config: RunConfig, workspace: Path, artifacts: Path) -> list[dict]:
     return records
 
 
+MAX_ORIENTATION_BYTES = 64 * 1024
+
+
+def orientation_text(config) -> str:
+    """Read the configured orientation file once, before any model work.
+
+    The text is operator-supplied repository context, at the same trust level
+    as AGENTS.md. Supplying it costs a worker no turns; discovering it does.
+    """
+    source = getattr(config, "orientation", None)
+    if source is None:
+        return ""
+    from .ticket_status import read_regular
+    try:
+        data = read_regular(Path(source))
+    except (ContractError, OSError) as exc:
+        raise ContractError(f"orientation file is not readable: {source}: {exc}") from exc
+    if len(data) > MAX_ORIENTATION_BYTES:
+        raise ContractError(
+            f"orientation file exceeds {MAX_ORIENTATION_BYTES} bytes: {source}")
+    try:
+        text = data.decode("utf-8")
+    except UnicodeError as exc:
+        raise ContractError(f"orientation file must be UTF-8: {source}") from exc
+    if not text.strip() or "\0" in text:
+        raise ContractError(f"orientation file must be nonempty text without NUL: {source}")
+    return text
+
+
 def _worker_prompt(task: Task, base: str, *, file_tools_only: bool = False,
-                   skill_context: str = "") -> str:
+                   skill_context: str = "", orientation: str = "") -> str:
     capabilities = (
         "You have file reading and editing tools only, with no shell tool. Add tests but do not "
         "claim to have executed them: Anvil will run the configured verification commands after "
@@ -68,6 +97,9 @@ def _worker_prompt(task: Task, base: str, *, file_tools_only: bool = False,
         "the reason instead of assuming an answer. Report concrete evidence for each criterion; "
         "your result will be independently reviewed and checked. A completed result must have "
         "blockers: []; put explanatory notes in summary, not in blockers. Base commit: " + base + "\n\n"
+        + (("Repository orientation supplied by the operator; it describes where "
+            "things are and is not a substitute for reading the files you change:\n"
+            + orientation + "\n\n") if orientation else "")
         + ((skill_context + "\n\n") if skill_context else "") +
         "Ticket:\n" + json.dumps({k: v for k, v in task.to_dict().items() if k != "execution"}, indent=2)
     )
@@ -132,7 +164,8 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
     for protected in (repo.path, repo.common_dir):
         if config.state_dir == protected or protected in config.state_dir.parents:
             raise ContractError("state_dir must be outside the target checkout and its Git directory")
-    runner = runner if runner is not None else create_runner(config.agent, config.executable)
+    runner = runner if runner is not None else create_runner(config.agent, config.executable,
+                                                            turns=config.agent_turns)
     file_tools_only = config.agent == "claude-code"
     notify = progress or (lambda message: None)
 
@@ -144,6 +177,7 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
         branch = f"anvil/{run_id}"
         run_dir = config.state_dir / run_id
         run_dir.mkdir(parents=True, exist_ok=False)
+        orientation = orientation_text(config)
         from .skill_runtime import pin as pin_skills
         skill_context = pin_skills(
             repo.path, graph, run_dir, selection=config.skill_selection,
@@ -207,6 +241,7 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
                         notify(f"{task.id}: implementing")
                         claims = runner.run(repo=workspace,
                                             prompt=_worker_prompt(task, base, file_tools_only=file_tools_only,
+                                                                  orientation=orientation,
                                                                   skill_context=skill_context.prompt(task, config.agent)),
                                             schema=WORKER_SCHEMA, artifact_dir=artifacts / "worker",
                                             timeout=config.agent_timeout)

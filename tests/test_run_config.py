@@ -9,7 +9,8 @@ import unittest
 from unittest.mock import patch
 
 from anvil.config import RunConfig, WorkerConfig
-from anvil.contracts import ContractError
+from anvil.contracts import ContractError, Task
+from anvil.execution import MAX_ORIENTATION_BYTES, _worker_prompt, orientation_text
 
 
 def configuration() -> dict:
@@ -337,3 +338,80 @@ class RunConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AgentTurnsAndOrientation(unittest.TestCase):
+    def setUp(self):
+        self.base = Path(tempfile.mkdtemp()).resolve()
+        self.document = {"version": 1, "repo": ".", "tickets": "tickets.json",
+                         "verification": [["true"]]}
+
+    def config(self, **extra):
+        return RunConfig.from_document({**self.document, **extra}, base=self.base)
+
+    def test_defaults_are_absent(self):
+        config = self.config()
+        self.assertIsNone(config.agent_turns)
+        self.assertIsNone(config.orientation)
+        self.assertNotIn("agent_turns", config.to_dict())
+        self.assertNotIn("orientation", config.to_dict())
+
+    def test_agent_turns_round_trips(self):
+        config = self.config(agent_turns=64)
+        self.assertEqual(config.agent_turns, 64)
+        self.assertEqual(config.to_dict()["agent_turns"], 64)
+
+    def test_agent_turns_rejects_invalid(self):
+        for value in (0, 1001, "64", 2.5, True, None):
+            with self.subTest(value=value):
+                with self.assertRaises(ContractError):
+                    self.config(agent_turns=value)
+
+    def test_orientation_resolves_and_round_trips(self):
+        (self.base / "orient.md").write_text("map", encoding="utf-8")
+        config = self.config(orientation="orient.md")
+        self.assertEqual(config.orientation, self.base / "orient.md")
+        self.assertEqual(config.to_dict()["orientation"], str(self.base / "orient.md"))
+
+
+class OrientationText(unittest.TestCase):
+    def setUp(self):
+        self.base = Path(tempfile.mkdtemp()).resolve()
+
+    def config(self, orientation):
+        return RunConfig.from_document(
+            {"version": 1, "repo": ".", "tickets": "tickets.json",
+             "verification": [["true"]], **({} if orientation is None else {"orientation": orientation})},
+            base=self.base)
+
+    def test_absent_orientation_is_empty(self):
+        self.assertEqual(orientation_text(self.config(None)), "")
+
+    def test_reads_committed_text(self):
+        (self.base / "orient.md").write_text("store.py owns the ledger.", encoding="utf-8")
+        self.assertEqual(orientation_text(self.config("orient.md")), "store.py owns the ledger.")
+
+    def test_rejects_oversized_missing_blank_and_non_utf8(self):
+        (self.base / "big.md").write_text("x" * (MAX_ORIENTATION_BYTES + 1), encoding="utf-8")
+        (self.base / "blank.md").write_text("   \n", encoding="utf-8")
+        (self.base / "bad.md").write_bytes(b"\xff\xfe\x00")
+        for name in ("big.md", "blank.md", "bad.md", "missing.md"):
+            with self.subTest(name=name):
+                with self.assertRaises(ContractError):
+                    orientation_text(self.config(name))
+
+
+class OrientationPrompt(unittest.TestCase):
+    def task(self):
+        return Task(id="t", title="T", objective="O", depends_on=(),
+                    acceptance_criteria=("first",))
+
+    def test_supplied_text_appears_before_the_ticket(self):
+        prompt = _worker_prompt(self.task(), "a" * 40, orientation="MODULE MAP")
+        self.assertIn("MODULE MAP", prompt)
+        self.assertIn("supplied by the operator", prompt)
+        self.assertLess(prompt.index("MODULE MAP"), prompt.index("Ticket:"))
+
+    def test_absent_orientation_adds_nothing(self):
+        prompt = _worker_prompt(self.task(), "a" * 40)
+        self.assertNotIn("supplied by the operator", prompt)
