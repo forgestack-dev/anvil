@@ -60,7 +60,7 @@ Each registry entry identifies whether it can run automatically, requires an exp
 
 ## Intake and planning
 
-Accept a specification or a set of ticket files. The first implementation supports Markdown and JSON, including AI Hero's local ticket format. Define a tracker adapter boundary, then add one live tracker based on actual usage rather than implementing every provider initially.
+Accept a specification or a set of ticket files. The first implementation supports Markdown and JSON, including AI Hero's local ticket format. The next delivery milestone specifies Jira Cloud, Linear, and GitHub Issues behind independent tracker adapters, with GitHub.com or Bitbucket Cloud as code hosts. See [the delivery and dashboard specification](DELIVERY_DASHBOARD_PLAN.md); these remote integrations are not yet implemented.
 
 For an agreed spec, use the relevant planning skills to produce independently verifiable slices with dependencies. For ready tickets, preserve their scope and identifiers. Avoid re-triaging tickets already made agent-ready by `to-tickets`.
 
@@ -125,7 +125,7 @@ The adapter contract covers capability checks, launch, events, structured result
 3. **Parallel execution and coordination.** Add atomic claims, per-attempt worktrees, dependency scheduling, durable messages, global process limits, and serialized integration. Demonstrate independent slices running concurrently and dependent work waiting correctly.
 4. **Interruption and recovery.** Add heartbeat expiry, stale-result rejection, pause/resume/stop, timeouts, retries, rate-limit backoff, and Git/state reconciliation. Verify recovery at each externally visible transition.
 5. **Full catalog validation and packaging.** Exercise skill discovery, dependency loading, explicit invocation, human-decision paths, and missing capabilities. Run an independent skill evaluation and a real end-to-end burndown. Package the skill and runtime with concise setup and usage instructions.
-6. **Extensions after the core works.** Add the preferred live tracker and further agent adapters as needed; Claude Code is already supported. Consider plugin distribution, remote execution, or a visual dashboard when there is a demonstrated need.
+6. **Delivery and visibility.** Implement the [delivery and dashboard milestone](DELIVERY_DASHBOARD_PLAN.md): GitHub/Bitbucket pull requests, Jira/Linear/GitHub issue synchronization, and a local run dashboard. Further agent adapters, plugin distribution, and remote execution remain separate extensions.
 
 ## Required behavioral tests
 
@@ -147,4 +147,4 @@ Use deterministic fake-agent tests for scheduling and crash handling, real Git f
 
 ## Decisions left for implementation
 
-Codex and Claude Code are supported. An application-repository pilot and its actual spec/ticket set remain to be selected. A live issue tracker, publishing behavior, and remote execution are optional extensions and do not block building the local core.
+Codex, Claude Code, and Muse are supported. The [delivery and dashboard specification](DELIVERY_DASHBOARD_PLAN.md) records the chosen providers, publishing behavior, and staged acceptance requirements. Provider test accounts and organizational credential setup must be selected before live integration acceptance. Remote execution remains a separate extension.
