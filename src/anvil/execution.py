@@ -39,7 +39,7 @@ def verify(config: RunConfig, workspace: Path, artifacts: Path) -> list[dict]:
         stdout, stderr = artifacts / f"{number}.stdout.log", artifacts / f"{number}.stderr.log"
         outcome = run_process(command, cwd=workspace, stdin=None, stdout_path=stdout,
                               stderr_path=stderr, timeout=config.check_timeout,
-                              env=managed_environment())
+                              env=managed_environment(exclude=config.credential_exclusion))
         records.append({"argv": list(command), "returncode": outcome.returncode,
                         "timed_out": outcome.timed_out, "stdout": str(stdout), "stderr": str(stderr)})
         if outcome.returncode != 0 or outcome.timed_out:
@@ -170,7 +170,8 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
         if config.state_dir == protected or protected in config.state_dir.parents:
             raise ContractError("state_dir must be outside the target checkout and its Git directory")
     runner = runner if runner is not None else create_runner(config.agent, config.executable,
-                                                            turns=config.agent_turns)
+                                                            turns=config.agent_turns,
+                                                            exclude=config.credential_exclusion)
     file_tools_only = config.agent == "claude-code"
     notify = progress or (lambda message: None)
 

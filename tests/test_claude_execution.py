@@ -102,6 +102,19 @@ class ClaudeExecutionTests(unittest.TestCase):
                 self.assertEqual(result["tools"], "Read,Glob,Grep" if read_only else "Read,Glob,Grep,Edit,Write")
                 self.assertEqual(result["mode"], "dontAsk" if read_only else "acceptEdits")
 
+    def test_excluded_variable_is_withheld_from_the_subprocess_environment(self):
+        self.fake("emit({'leaked': 'ANVIL_TEST_SECRET' in os.environ, 'argv': args})")
+        for read_only in (True, False):
+            with self.subTest(read_only=read_only), patch.dict(os.environ, {"ANVIL_TEST_SECRET": "s3cret-value"}):
+                result = ClaudeRunner(str(self.binary), exclude=["ANVIL_TEST_SECRET"]).run(
+                    repo=self.repo, prompt="Inspect fixture", schema=self.schema,
+                    artifact_dir=self.root / f"exclusion-{read_only}", timeout=3, read_only=read_only)
+                self.assertFalse(result["leaked"])
+                self.assertNotIn("s3cret-value", json.dumps(result["argv"]))
+                artifact_dir = self.root / f"exclusion-{read_only}"
+                self.assertNotIn("s3cret-value", (artifact_dir / "events.jsonl").read_text())
+                self.assertNotIn("s3cret-value", (artifact_dir / "result.json").read_text())
+
     def test_task_summary_after_success_preserves_worker_and_reviewer_results_and_raw_stream(self):
         for read_only in (False, True):
             for summary_count in (1, 2):

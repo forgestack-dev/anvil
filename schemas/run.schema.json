@@ -338,6 +338,14 @@
       "type": "string",
       "minLength": 1,
       "description": "Path to a UTF-8 repository orientation file supplied verbatim in implementation prompts so workers do not spend turns locating context."
+    },
+    "credential_exclusion": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/text"
+      },
+      "description": "Environment variable names withheld from agent, review, and verification subprocess environments, such as integration credentials. Matching against the host environment is case-sensitive."
     }
   },
   "allOf": [

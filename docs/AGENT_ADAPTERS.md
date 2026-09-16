@@ -6,6 +6,8 @@ Pool runs locate every agent entrypoint before dispatch and share process capaci
 
 `anvil doctor --agent <agent>` probes the selected CLI's version and required flags without authenticating or requesting a model response. For a custom executable, add `--agent-binary /path/to/executable`. A successful probe establishes local CLI compatibility, not working account access. Anvil uses the CLI's configured account and model; it does not pass a model override unless an explicit adaptive profile is configured, and never passes a permission bypass. Subprocesses do not inherit desktop-only tools or connected apps.
 
+A run configuration's `credential_exclusion` names environment variables withheld from every agent, review, and verification subprocess (case-sensitive match against the host environment). It applies uniformly across serial and pool execution, including adaptive escalation.
+
 ## Codex
 
 The Codex adapter uses noninteractive `codex exec`, sends the prompt through stdin, and records JSON events and schema-constrained final output. Implementation uses the CLI's `workspace-write` sandbox and independent review uses `read-only`. Existing Codex run behavior is unchanged by agent selection.

@@ -321,6 +321,17 @@ class RunConfigTests(unittest.TestCase):
         ]})
         self.assertEqual(maximum.max_processes, 8)
 
+    def test_direct_credential_exclusion_validates_and_round_trips(self):
+        paths = (self.root / "repo", self.root / "tickets.json", (("check",),), self.root / "state")
+        config = RunConfig(*paths, credential_exclusion=("ANVIL_TOKEN",))
+        self.assertEqual(self.parse(config.to_dict()), config)
+        for fields in ({"credential_exclusion": ["ANVIL_TOKEN"]},
+                       {"credential_exclusion": ("ANVIL_TOKEN", "ANVIL_TOKEN")},
+                       {"credential_exclusion": ("",)}, {"credential_exclusion": ("bad\0name",)},
+                       {"credential_exclusion": (None,)}):
+            with self.subTest(fields=fields), self.assertRaises(ContractError):
+                RunConfig(*paths, **fields)
+
     def test_direct_worker_pool_construction_validates_and_round_trips(self):
         paths = (self.root / "repo", self.root / "tickets.json", (("check",),), self.root / "state")
         workers = (WorkerConfig("codex-worker"), WorkerConfig("claude-worker", "claude-code"))
@@ -354,8 +365,22 @@ class AgentTurnsAndOrientation(unittest.TestCase):
         config = self.config()
         self.assertIsNone(config.agent_turns)
         self.assertIsNone(config.orientation)
+        self.assertEqual(config.credential_exclusion, ())
         self.assertNotIn("agent_turns", config.to_dict())
         self.assertNotIn("orientation", config.to_dict())
+        self.assertNotIn("credential_exclusion", config.to_dict())
+
+    def test_credential_exclusion_round_trips(self):
+        config = self.config(credential_exclusion=["ANVIL_TOKEN", "OTHER_SECRET"])
+        self.assertEqual(config.credential_exclusion, ("ANVIL_TOKEN", "OTHER_SECRET"))
+        self.assertEqual(config.to_dict()["credential_exclusion"], ["ANVIL_TOKEN", "OTHER_SECRET"])
+        self.assertEqual(RunConfig.from_document(config.to_dict(), base=self.base), config)
+
+    def test_credential_exclusion_rejects_invalid(self):
+        for value in ("ANVIL_TOKEN", [""], ["ok", 1], ["ok", "ok"], ["ok\0"], [None]):
+            with self.subTest(value=value):
+                with self.assertRaises(ContractError):
+                    self.config(credential_exclusion=value)
 
     def test_agent_turns_round_trips(self):
         config = self.config(agent_turns=64)

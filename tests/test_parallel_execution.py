@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -10,6 +11,7 @@ from textwrap import dedent
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 from anvil.config import RunConfig, WorkerConfig
 from anvil.parallel import run_parallel
@@ -334,6 +336,64 @@ class ParallelExecutionTests(unittest.TestCase):
         self.assertLess(position["worker", "b"], position["done", "a"])
         self.assertLess(position["done", "a"], position["worker", "exclusive"])
         self.assertLess(position["done", "b"], position["worker", "exclusive"])
+
+
+class ParallelCredentialExclusionTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.repo = self.root / "repo"
+        self.repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main", str(self.repo)], check=True)
+        (self.repo / "README.md").write_text("Credential exclusion fixture\n")
+        git(self.repo, "add", ".")
+        git(self.repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "commit", "-qm", "Initial fixture")
+        self.tickets = self.root / "tickets.json"
+        self.tickets.write_text(json.dumps({"version": 1, "tasks": [ticket("solo", worker="codex-slot")]}))
+        self.markers = self.root / "markers"
+        self.markers.mkdir()
+
+    def test_excluded_credential_never_reaches_worker_review_or_verification(self):
+        binary = self.root / "fake-codex"
+        binary.write_text(f"#!{sys.executable}\nMARKERS = {str(self.markers)!r}\n" + dedent("""\
+            import json, os, sys
+            from pathlib import Path
+            args = sys.argv[1:]
+            sys.stdin.read()
+            leaked = 'ANVIL_TEST_SECRET' in os.environ
+            review = args[args.index('--sandbox') + 1] == 'read-only'
+            role = 'review' if review else 'worker'
+            (Path(MARKERS) / (role + '.json')).write_text(json.dumps({'leaked': leaked, 'argv': args}))
+            result = ({'verdict': 'approve', 'summary': 'Inspected', 'findings': [],
+                       'acceptance': [{'criterion': 1, 'satisfied': True, 'evidence': 'Inspected'}]}
+                      if review else
+                      {'status': 'completed', 'summary': 'Implemented', 'blockers': [],
+                       'acceptance': [{'criterion': 1, 'evidence': 'Implemented'}]})
+            Path(args[args.index('-o') + 1]).write_text(json.dumps(result))
+            print(json.dumps({'type': 'fixture_complete'}))
+            """))
+        binary.chmod(0o755)
+        check_script = self.root / "check_env.py"
+        check_script.write_text("import os\nassert 'ANVIL_TEST_SECRET' not in os.environ\n")
+        config = RunConfig(
+            self.repo, self.tickets, ((sys.executable, str(check_script)),), self.root / "state",
+            agent_timeout=15, check_timeout=10, agent_binary=str(binary),
+            workers=(WorkerConfig("codex-slot", "codex", str(binary)),),
+            credential_exclusion=("ANVIL_TEST_SECRET",),
+        )
+        with patch.dict(os.environ, {"ANVIL_TEST_SECRET": "top-secret-value"}):
+            result = run_parallel(config)
+        self.assertEqual(result["status"], "success", result.get("error"))
+        for role in ("worker", "review"):
+            trace = json.loads((self.markers / f"{role}.json").read_text())
+            self.assertFalse(trace["leaked"])
+            self.assertNotIn("top-secret-value", json.dumps(trace["argv"]))
+        for check in result["tasks"][0]["details"]["verification"]:
+            self.assertEqual(check["returncode"], 0)
+            self.assertNotIn("top-secret-value", Path(check["stdout"]).read_text())
+            self.assertNotIn("top-secret-value", Path(check["stderr"]).read_text())
 
 
 if __name__ == "__main__":

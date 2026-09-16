@@ -319,6 +319,52 @@ class SerialExecutionTests(unittest.TestCase):
                 self.assertTrue((artifact_dir / "schema.json").is_file())
                 self.assertTrue((artifact_dir / "events.jsonl").is_file())
 
+    def test_credential_exclusion_is_withheld_from_agent_review_and_verification_subprocesses(self):
+        document = json.loads(self.tickets.read_text())
+        document["tasks"] = document["tasks"][:1]
+        self.tickets.write_text(json.dumps(document))
+        markers = self.root / "markers"
+        markers.mkdir()
+        binary = self.root / "fake codex secret probe"
+        binary.write_text(
+            f"#!{sys.executable}\nMARKERS = {str(markers)!r}\n"
+            "import json, os, pathlib, sys\n"
+            "args = sys.argv[1:]\n"
+            "sys.stdin.read()\n"
+            "leaked = 'ANVIL_TEST_SECRET' in os.environ\n"
+            "review = args[args.index('--sandbox') + 1] == 'read-only'\n"
+            "role = 'review' if review else 'worker'\n"
+            "(pathlib.Path(MARKERS) / (role + '.json')).write_text(json.dumps({'leaked': leaked, 'argv': args}))\n"
+            "output = pathlib.Path(args[args.index('-o') + 1])\n"
+            "result = ({'verdict': 'approve', 'summary': 'Inspected', 'findings': [],\n"
+            "           'acceptance': [{'criterion': 1, 'satisfied': True, 'evidence': 'Inspected'}]}\n"
+            "          if review else\n"
+            "          {'status': 'completed', 'summary': 'Implemented', 'blockers': [],\n"
+            "           'acceptance': [{'criterion': 1, 'evidence': 'Implemented'}]})\n"
+            "output.write_text(json.dumps(result))\n"
+            "print(json.dumps({'event': 'fake agent complete'}))\n",
+            encoding="utf-8",
+        )
+        binary.chmod(0o755)
+        check_script = self.root / "check_env_absent.py"
+        check_script.write_text("import os\nassert 'ANVIL_TEST_SECRET' not in os.environ\n")
+        config = RunConfig(
+            self.repo, self.tickets, ((sys.executable, str(check_script)),),
+            self.root / "credential-exclusion-state", agent_timeout=10, check_timeout=10,
+            agent_binary=str(binary), credential_exclusion=("ANVIL_TEST_SECRET",),
+        )
+        with patch.dict(os.environ, {"ANVIL_TEST_SECRET": "top-secret-value"}):
+            result = run_serial(config)
+        self.assertEqual(result["status"], "success", result.get("error"))
+        for role in ("worker", "review"):
+            trace = json.loads((markers / f"{role}.json").read_text())
+            self.assertFalse(trace["leaked"])
+            self.assertNotIn("top-secret-value", json.dumps(trace["argv"]))
+        for check in result["tasks"][0]["details"]["verification"]:
+            self.assertEqual(check["returncode"], 0)
+            self.assertNotIn("top-secret-value", Path(check["stdout"]).read_text())
+            self.assertNotIn("top-secret-value", Path(check["stderr"]).read_text())
+
     def claude_configuration(self, mode="success"):
         binary = self.root / f"fake claude-{mode}"
         trace = self.root / f"claude-{mode}-trace.jsonl"

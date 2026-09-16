@@ -144,6 +144,22 @@ class CodexExecutionTests(unittest.TestCase):
                 self.assertEqual(git("rev-parse", "HEAD"), original_head)
                 self.assertFalse((managed / "bad").exists())
 
+    def test_excluded_variable_is_withheld_from_the_subprocess_environment(self):
+        self.fake(
+            "import os\n"
+            "output.write_text(json.dumps({'leaked': 'ANVIL_TEST_SECRET' in os.environ, 'argv': args}))"
+        )
+        for read_only in (True, False):
+            with self.subTest(read_only=read_only), patch.dict(os.environ, {"ANVIL_TEST_SECRET": "s3cret-value"}):
+                result = CodexRunner(str(self.binary), exclude=["ANVIL_TEST_SECRET"]).run(
+                    repo=self.repo, prompt="Inspect fixture", schema=self.schema,
+                    artifact_dir=self.root / f"exclusion-{read_only}", timeout=3, read_only=read_only)
+                self.assertFalse(result["leaked"])
+                self.assertNotIn("s3cret-value", json.dumps(result["argv"]))
+                artifact_dir = self.root / f"exclusion-{read_only}"
+                self.assertNotIn("s3cret-value", (artifact_dir / "events.jsonl").read_text())
+                self.assertNotIn("s3cret-value", (artifact_dir / "result.json").read_text())
+
     def test_timeout_and_nonzero_exit_reject_even_a_valid_result(self):
         for name, tail, expected in (("timeout", "time.sleep(30)", "timed out"),
                                      ("nonzero", "sys.exit(4)", "code 4")):

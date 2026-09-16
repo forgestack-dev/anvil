@@ -75,10 +75,17 @@ class RunConfig:
     skill_selection: dict | None = None
     agent_turns: int | None = None
     orientation: Path | None = None
+    credential_exclusion: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.ticket_status) is not bool:
             raise ContractError("ticket_status must be boolean")
+        if (not isinstance(self.credential_exclusion, tuple)
+                or any(not isinstance(name, str) or not name or "\0" in name
+                       for name in self.credential_exclusion)
+                or len(set(self.credential_exclusion)) != len(self.credential_exclusion)):
+            raise ContractError(
+                "run configuration.credential_exclusion must be a tuple of unique nonempty names without NUL")
         if self.agent_turns is not None and (type(self.agent_turns) is not int
                                              or not 1 <= self.agent_turns <= 1000):
             raise ContractError("agent_turns must be an integer between 1 and 1000")
@@ -151,7 +158,7 @@ class RunConfig:
                        {"state_dir", "codex_binary", "agent", "agent_binary",
                         "agent_timeout", "check_timeout", "workers", "max_processes",
                         "ticket_status", "adaptive", "skill_selection",
-                        "agent_turns", "orientation"},
+                        "agent_turns", "orientation", "credential_exclusion"},
                        "run configuration")
         if type(value["version"]) is not int or value["version"] != 1:
             raise ContractError("run configuration.version must be the integer 1")
@@ -209,6 +216,12 @@ class RunConfig:
                 raise ContractError("run configuration.max_processes requires workers")
             if type(value["max_processes"]) is not int or not 1 <= value["max_processes"] <= 8:
                 raise ContractError("run configuration.max_processes must be an integer between 1 and 8")
+        credential_exclusion = value.get("credential_exclusion", [])
+        if (not isinstance(credential_exclusion, list)
+                or any(not isinstance(name, str) or not name.strip() or "\0" in name
+                       for name in credential_exclusion)):
+            raise ContractError(
+                "run configuration.credential_exclusion must be an array of nonempty variable names")
         return cls(
             repo=resolve("repo"), tickets=(base / Path(text("tickets")).expanduser()).parent.resolve() / Path(text("tickets")).name,
             verification=tuple(tuple(command) for command in commands),
@@ -220,6 +233,7 @@ class RunConfig:
             skill_selection=value.get("skill_selection"),
             agent_turns=value.get("agent_turns"),
             orientation=(resolve("orientation") if "orientation" in value else None),
+            credential_exclusion=tuple(credential_exclusion),
         )
 
     def to_dict(self) -> dict:
@@ -238,6 +252,8 @@ class RunConfig:
             result["agent_turns"] = self.agent_turns
         if self.orientation is not None:
             result["orientation"] = str(self.orientation)
+        if self.credential_exclusion:
+            result["credential_exclusion"] = list(self.credential_exclusion)
         if self.workers:
             result.update(workers=[worker.to_dict() for worker in self.workers],
                           max_processes=self.max_processes)
