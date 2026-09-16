@@ -46,6 +46,9 @@ Default decisions:
   publication and issue updates without asking repeatedly during a run.
 - Ship a read-only dashboard on loopback. Run control buttons, remote hosting,
   multi-user access, and a webhook gateway are separate follow-on features.
+- Treat epics, projects, milestones, initiatives, sprints, and similar tracker
+  constructs as a read-only lens for import and the dashboard. Anvil never
+  transitions, closes, or edits a parent construct in this milestone.
 
 Native pause/stop is not a prerequisite. The existing scaffold for that work is
 separate from this specification.
@@ -91,6 +94,8 @@ dashboard evidence already.
 anvil integrations doctor --config .anvil/integrations.json --json
 anvil issues import --config .anvil/integrations.json --source jira-work \
   --issue ENG-123 --issue ENG-124 --output .anvil/tickets.json
+anvil issues import --config .anvil/integrations.json --source linear-work \
+  --group PROJECT_ID --output .anvil/tickets.json
 anvil delivery plan RUN_DIR --json
 anvil delivery publish RUN_DIR
 anvil delivery ready RUN_DIR
@@ -99,9 +104,10 @@ anvil delivery sync RUN_DIR --watch --interval 60 --timeout 1800
 anvil dashboard --state-dir ~/.local/state/anvil --port 0
 ```
 
-`issues import` supports each tracker, repeated explicit issue identifiers, or
-one bounded provider query. `--max-issues` defaults to 100 and must be explicit
-to increase it, with a hard bound of 1,000. Overflow fails before output; it must
+`issues import` supports each tracker, repeated explicit issue identifiers, one
+bounded provider query, or one `--group` that expands an epic, project, milestone,
+or similar construct to its current members (section 5). `--max-issues` defaults
+to 100 and must be explicit to increase it, with a hard bound of 1,000. Overflow fails before output; it must
 not silently omit selected issues. Import and doctor perform no remote writes
 or model calls. `delivery plan` refreshes read-only observations and lists exact
 repositories, refs, SHAs, PR actions, issue targets, and externally visible text.
@@ -274,6 +280,49 @@ scope at run preflight, before publication, and before review-ready/completion w
 changes produce `source_changed` and suspend those writes; they cannot expand an
 in-flight task or cause acceptance against old criteria to close a revised issue.
 Keep local acceptance evidence intact and require explicit resolution or a new run.
+
+### Grouping constructs
+
+Trackers organize issues into larger constructs: Jira epics, initiatives, and
+sub-task parents through the unified `parent` field, plus sprints, fix versions,
+and components; Linear projects, initiatives, cycles, project milestones, and
+parent issues; GitHub milestones, sub-issue parents, and issue types. This
+milestone supports these constructs as a read-only lens over work. Anvil never
+creates, edits, transitions, or closes a grouping construct, and membership
+never affects execution. GitHub Projects v2 fields remain deferred.
+
+Record each observed group as an immutable identity plus a mutable observation:
+connection alias, canonical provider group ID, provider-native `kind` (never a
+synthesized universal taxonomy), display name, source URL, optional parent group
+identity, and observation timestamp. An issue holds a set of group memberships,
+not a single parent pointer: one Jira story may belong to an epic, a sprint, and
+a fix version at once. Groups may nest (Linear initiative to project; Jira
+initiative to epic). Record only edges the provider returned; never infer them.
+Unknown or unmapped kinds are recorded under their provider name, not dropped.
+
+Membership is captured at import for imported issues and refreshed by ordinary
+sync reads. Because Anvil does not own membership, a moved or regrouped issue is
+an observation, not a conflict; it does not suspend writes. Scope digests
+continue to exclude grouping fields.
+
+Grouping is distinct from dependencies. The prohibition above stands: epic,
+project, milestone, and parent membership never produces a blocking edge and
+never changes run scope, task ordering, PR boundaries, or issue-binding
+membership. It never authorizes transitioning or closing any issue. Reject any
+later change that derives execution semantics from group membership.
+
+`issues import --group` expands one group to its current members as a bounded
+provider query. The `--max-issues` rule applies unchanged, so an oversized group
+fails before output instead of producing a silently partial graph. Nested groups
+are not expanded transitively in this release; import a child group explicitly.
+Members the query returns but cannot resolve are reported, not skipped.
+
+Rollup is computed locally for display: how many members are imported, accepted,
+delivered, merged, pending, or outside this state root. A member never imported
+into any run under this state root is unknown, never complete because its
+external status says Done. A group index in the state-root integration registry
+(section 10) supports this view across runs, since one epic is commonly
+delivered over several runs. Parent-construct writes are later work (section 14).
 
 ## 6. Three distinct lifecycles
 
@@ -536,6 +585,8 @@ Minimum records:
 | Issue binding | Canonical tenant/issue identity, task membership, whole/partial scope, owner run/generation, workflow mapping |
 | Outbox operation | Operation ID, semantic dedupe key, event ID, target, ownership generation, expected state/head, payload digest, status, retry deadline |
 | Receipt | Provider ID/request correlation, observed effect, timestamp, reconciliation evidence, bounded redacted error |
+| Group | Connection alias, canonical group ID, provider-native kind, display name, URL, parent group identity, last observation |
+| Group membership | Canonical issue identity, canonical group identity, first and last observation, observing run or sync |
 
 Use `pending`, `in_flight`, `confirmed`, `reconciling`, `conflict`, and
 `auth_required` operation states. A crash with an in-flight write enters
@@ -585,10 +636,12 @@ Views:
 | Ticket detail | Issue link when permitted, acceptance criteria/evidence, attempt history, model/effort selection and reasons, selected skills, local/remote states |
 | Delivery | Host, source/base refs and SHAs, PR URL/draft/review/check/merge state, issue synchronization backlog and conflicts |
 | Evidence | Independent review findings, verification command outcomes, event timeline, bounded local artifacts, usage/cost provenance |
+| Group | Epic/project/milestone/initiative identity and kind, member issues with local, delivery, and tracker states, computed rollup counts, runs that touched members, members outside this state root |
 
 The default overview answers: What is active? What is accepted? What is blocked?
-Where is the PR? Why is an issue still open? Keep execution progress and externally
-delivered progress separate. Mark missing token/cost data as unknown; identify
+Where is the PR? Why is an issue still open? The group view answers: How far
+along is this epic, project, or milestone, and which parts has Anvil never seen?
+Keep execution progress and externally delivered progress separate. Mark missing token/cost data as unknown; identify
 estimates and incomplete accounting. Never interpret an old heartbeat alone as
 proof a worker is alive or dead. Show last evidence time and reconciliation state.
 
@@ -597,7 +650,8 @@ delivery/issue projections, events after a cursor, and allowlisted artifacts by
 opaque ID. Default to 100 rows, maximum 500 per page; bound artifact excerpts to
 256 KiB. Use incremental polling about every two seconds for the visible active
 run and slower polling for the list. Dashboard polling never triggers provider
-requests; it reads observations created by sync. Label the two database snapshot
+requests; it reads observations created by sync. The group view reads the
+state-root group index across runs. Label the two database snapshot
 cursors/timestamps so temporary projection lag is visible rather than presented
 as contradictory authoritative state.
 
@@ -628,11 +682,11 @@ in docs. Do not call the whole milestone complete after only the first provider.
 
 | Slice | Deliverable | Exit criterion |
 | --- | --- | --- |
-| D1: contracts and journal | Versioned config/bindings/manifest, read models, sidecar projection/outbox, ownership and credential boundaries | Deterministic crash/ownership tests; old runs readable; fake providers only |
-| D2: read-only issue intake | GitHub Issues, Jira Cloud, Linear resolve/import, rich text and explicit criteria/dependency mapping, read-only doctor | All three produce valid frozen graphs or actionable no-output failures |
+| D1: contracts and journal | Versioned config/bindings/manifest, group and membership records, cross-run group index, read models, sidecar projection/outbox, ownership and credential boundaries | Deterministic crash/ownership tests; old runs readable; fake providers only |
+| D2: read-only issue intake | GitHub Issues, Jira Cloud, Linear resolve/import, group membership capture and import-by-group, rich text and explicit criteria/dependency mapping, read-only doctor | All three produce valid frozen graphs or actionable no-output failures |
 | D3: code-host publication | GitHub and Bitbucket Cloud branch/PR delivery, draft/ready, evidence statuses, observed checks and merges | Both pass uncertain-write/reconciliation tests and publish only manifest-bound work |
 | D4: issue lifecycle sync | Started/review-ready/completion mappings for all three trackers, issue groups, links, manual-conflict handling | All six host/tracker combinations pass the same end-to-end contract |
-| D5: local dashboard | Packaged read-only server/UI over current and historical run evidence, delivery and sync views | Browser verification, bounded queries, isolation and accessibility checks |
+| D5: local dashboard | Packaged read-only server/UI over current and historical run evidence, delivery, sync, and group views | Browser verification, bounded queries, isolation and accessibility checks |
 | D6: operational acceptance | Read-only plan, bounded watching, packaging, setup docs/entry skill, authorized sandbox-provider exercises | Full regression suite/CI plus recorded external acceptance for each adapter |
 
 Likely modules: `integrations/contracts.py`, `config.py`, `journal.py`,
@@ -688,6 +742,14 @@ issues. Required behaviors:
 12. Packaging installs the schemas and UI assets; all existing serial/parallel,
     recovery, routing, status, and skill tests remain green on supported Python
     versions and CI platforms.
+13. Import by group respects the issue bound, reports unresolved members, and
+    does not expand nested groups implicitly. Membership changes between sync
+    reads produce observations only; they never create dependencies, alter run
+    scope, or suspend or authorize any write.
+14. Group rollup counts derive only from local evidence and confirmed delivery
+    observations. A member outside this state root, or one whose external status
+    is Done without Anvil delivery evidence, is unknown in the rollup; no group
+    is ever shown or recorded as complete on that basis.
 
 Before claiming live acceptance, use explicitly authorized sandbox repositories
 and issues to exercise both hosts and all three tracker adapters. The six-way
@@ -706,7 +768,10 @@ documented, and pass the acceptance matrix. A user must be able to identify a
 run's accepted local work, its external PR, its issue states, and any reason those
 states differ, without manually reading SQLite or guessing from worker messages.
 
-Later work includes enterprise/server variants, GitHub Projects, bulk creation of
-remote issues from specs, partial or per-ticket delivery, automatic remediation
+Later work includes enterprise/server variants, GitHub Projects, parent-construct
+writes (transitioning epics, closing milestones, updating project status, which
+need their own policy because a parent whose members were delivered by mixed
+actors is a partial binding under section 5), bulk creation of remote issues
+from specs, partial or per-ticket delivery, automatic remediation
 from human PR feedback, auto-merge, deployment status, webhooks, multi-host
 coordination, and dashboard control actions backed by native lifecycle commands.
