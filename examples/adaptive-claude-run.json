@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "repo": "..",
+  "tickets": "../tickets/delivery-dashboard.json",
+  "agent": "claude-code",
+  "agent_turns": 96,
+  "orientation": "../CLAUDE.md",
+  "verification": [
+    ["env", "PYTHONPATH=src", "python3", "-m", "unittest", "discover", "-s", "tests"]
+  ],
+  "agent_timeout": 1800,
+  "check_timeout": 900,
+  "adaptive": {
+    "mode": "shadow",
+    "profiles": {
+      "economy": {
+        "agent": "claude-code",
+        "model": "claude-sonnet-5",
+        "effort": "medium",
+        "rank": 0,
+        "reserve_usd": 1.0,
+        "max_budget_usd": 2.0
+      },
+      "standard": {
+        "agent": "claude-code",
+        "model": "claude-sonnet-5",
+        "effort": "high",
+        "rank": 1,
+        "reserve_usd": 2.0,
+        "max_budget_usd": 4.0
+      },
+      "demanding": {
+        "agent": "claude-code",
+        "model": "claude-opus-5",
+        "effort": "high",
+        "rank": 2,
+        "reserve_usd": 5.0,
+        "max_budget_usd": 10.0
+      }
+    },
+    "defaults": {
+      "claude-code": "standard"
+    },
+    "review_profile": "standard",
+    "max_attempts": 2,
+    "max_invocations": 120,
+    "soft_budget_usd": 60.0
+  }
+}
