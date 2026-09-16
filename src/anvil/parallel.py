@@ -498,6 +498,7 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                         selected_reviewer = adaptive.runner(item, review=True, injected=review_runner if injected else None) if adaptive else review_runner
                         future = submit(selected_reviewer.run, repo=workspace,
                                         prompt=_review_prompt(item.task, base, sha, item.claims,
+                                                              orientation=orientation,
                                                               supplied_diff=supplied_diff),
                                         schema=REVIEW_SCHEMA, artifact_dir=item.artifacts / "review",
                                         timeout=config.agent_timeout, read_only=True, task=item.task, role="review")

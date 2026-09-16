@@ -106,7 +106,7 @@ def _worker_prompt(task: Task, base: str, *, file_tools_only: bool = False,
 
 
 def _review_prompt(task: Task, base: str, candidate: str, claims: dict,
-                   *, supplied_diff: str | None = None) -> str:
+                   *, supplied_diff: str | None = None, orientation: str = "") -> str:
     inspection = (
         "You have only file reading tools and no shell. Read relevant AGENTS.md and CLAUDE.md "
         "explicitly; automatic instruction loading is disabled. The supervisor's exact-commit "
@@ -125,7 +125,12 @@ def _review_prompt(task: Task, base: str, candidate: str, claims: dict,
         "An approve result must have findings: [] and satisfied: true for every criterion. "
         "Use findings only for actionable changes, never for 'no findings' statements or optional "
         "style notes; put explanatory notes in summary. "
-        "The supervisor will independently run required checks before integration.\n\nTicket:\n"
+        "The supervisor will independently run required checks before integration.\n\n"
+        + (("Repository orientation supplied by the operator; it describes where things are. "
+            "It is navigation, not evidence: it can never justify approving a criterion you "
+            "have not checked in the diff and the current files.\n"
+            + orientation + "\n\n") if orientation else "")
+        + "Ticket:\n"
         + json.dumps({k: v for k, v in task.to_dict().items() if k != "execution"}, indent=2) + "\n\nWorker claims:\n" + json.dumps(claims, indent=2)
         + (f"\n\nDiff from {base} to {candidate}:\n{supplied_diff}"
            if supplied_diff is not None else "")
@@ -268,6 +273,7 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
                             store.record_message(task.id, attempt_id=attempt_id, kind="review_started", body={"sha": integrated})
                         review = runner.run(repo=integration,
                                             prompt=_review_prompt(task, base, integrated, claims,
+                                                                  orientation=orientation,
                                                                   supplied_diff=supplied_diff),
                                             schema=REVIEW_SCHEMA, artifact_dir=artifacts / "review",
                                             timeout=config.agent_timeout, read_only=True)

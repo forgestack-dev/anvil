@@ -10,7 +10,8 @@ from unittest.mock import patch
 
 from anvil.config import RunConfig, WorkerConfig
 from anvil.contracts import ContractError, Task
-from anvil.execution import MAX_ORIENTATION_BYTES, _worker_prompt, orientation_text
+from anvil.execution import (MAX_ORIENTATION_BYTES, _review_prompt, _worker_prompt,
+                             orientation_text)
 
 
 def configuration() -> dict:
@@ -415,3 +416,20 @@ class OrientationPrompt(unittest.TestCase):
     def test_absent_orientation_adds_nothing(self):
         prompt = _worker_prompt(self.task(), "a" * 40)
         self.assertNotIn("supplied by the operator", prompt)
+
+    def test_review_receives_orientation_with_an_evidence_guard(self):
+        prompt = _review_prompt(self.task(), "a" * 40, "b" * 40, {"summary": "done"},
+                                orientation="MODULE MAP")
+        self.assertIn("MODULE MAP", prompt)
+        self.assertIn("navigation, not evidence", prompt)
+        self.assertLess(prompt.index("MODULE MAP"), prompt.index("Ticket:"))
+
+    def test_review_without_orientation_adds_nothing(self):
+        prompt = _review_prompt(self.task(), "a" * 40, "b" * 40, {"summary": "done"})
+        self.assertNotIn("navigation, not evidence", prompt)
+
+    def test_orientation_does_not_displace_the_supplied_diff(self):
+        prompt = _review_prompt(self.task(), "a" * 40, "b" * 40, {"summary": "done"},
+                                supplied_diff="DIFF BODY", orientation="MODULE MAP")
+        self.assertTrue(prompt.rstrip().endswith("DIFF BODY"))
+        self.assertLess(prompt.index("MODULE MAP"), prompt.index("DIFF BODY"))
