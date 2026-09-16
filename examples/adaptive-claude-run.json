@@ -6,7 +6,16 @@
   "agent_turns": 96,
   "orientation": "../CLAUDE.md",
   "verification": [
-    ["env", "PYTHONPATH=src", "python3", "-m", "unittest", "discover", "-s", "tests"]
+    [
+      "env",
+      "PYTHONPATH=src",
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "tests"
+    ]
   ],
   "agent_timeout": 1800,
   "check_timeout": 900,
@@ -39,7 +48,7 @@
       }
     },
     "defaults": {
-      "claude-code": "standard"
+      "claude-code": "economy"
     },
     "review_profile": "standard",
     "max_attempts": 2,
