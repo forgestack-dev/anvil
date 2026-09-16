@@ -9,7 +9,7 @@ Use Anvil to turn a committed Markdown specification into reviewable tickets, or
 
 ## Prepare or inspect work
 
-Read the supplied spec or tickets and project instructions. Preserve scope, identifiers, and settled decisions. Each ticket needs an objective, dependency IDs, and acceptance criteria. Expose missing requirements instead of inventing a completed specification.
+Read the supplied spec or tickets and project instructions. Preserve scope, identifiers, and settled decisions. Each ticket needs an objective, dependency IDs, and acceptance criteria. Expose missing requirements instead of inventing a completed specification. Write criteria a candidate can finish against: when a ticket's subject is an absence, name the complete set the absence must hold over, because a criterion of the form "no X anywhere" lets independent review extend the scope after the work is done.
 
 When adapting source material to JSON, use the shipped schema and retain the source relationship in the surrounding plan. Check `anvil --help` and `anvil --version`, then run `anvil validate <tickets.json>` and `anvil plan <tickets.json> --json`. These commands inspect input without implementing it. Dependency waves show possible parallelism; a configured worker pool also respects worker assignments and declared resource reservations.
 

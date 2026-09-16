@@ -75,7 +75,7 @@ These are native skills for ordinary agent sessions. Ticket-selected text instru
 - Reconcile durable delivery/status operations after interruption and expose their evidence in a local read-only run dashboard.
 - View work grouped by epic, project, milestone, or initiative as a read-only lens across runs; parent-construct writes are later work.
 
-See [the delivery and dashboard specification](DELIVERY_DASHBOARD_PLAN.md) for the proposed contracts, provider boundaries, six implementation slices, and acceptance matrix. This milestone is not implemented; its commands and configuration are design targets.
+Measured limits from running this graph are in [observed execution limits](OBSERVED_LIMITS.md). See [the delivery and dashboard specification](DELIVERY_DASHBOARD_PLAN.md) for the proposed contracts, provider boundaries, six implementation slices, and acceptance matrix. This milestone is not implemented; its commands and configuration are design targets.
 
 ## Later integrations
 
