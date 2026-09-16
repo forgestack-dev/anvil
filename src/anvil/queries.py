@@ -1,0 +1,166 @@
+"""Bounded, paginated read queries over a run's execution ledger.
+
+Unlike ``RunStore.read()``, which loads a run's complete task, attempt, and
+event history, these queries return one bounded page at a time so a dashboard
+or other long-lived consumer can poll a run without repeatedly loading the
+whole event history or relying on the final-only ``report.json``.
+"""
+
+from __future__ import annotations
+
+from contextlib import contextmanager
+from collections.abc import Iterator
+import json
+from pathlib import Path
+import sqlite3
+
+from .store import StoreError
+
+DEFAULT_PAGE_SIZE = 100
+MAX_PAGE_SIZE = 500
+
+
+def _bounded(limit: int) -> int:
+    if type(limit) is bool or not isinstance(limit, int) or limit < 1:
+        raise StoreError("limit must be a positive integer")
+    if limit > MAX_PAGE_SIZE:
+        raise StoreError(f"limit cannot exceed {MAX_PAGE_SIZE} rows")
+    return limit
+
+
+@contextmanager
+def _read_only(path: Path) -> Iterator[sqlite3.Connection]:
+    """Open one consistent, read-only snapshot transaction over a ledger."""
+    connection = None
+    try:
+        uri = Path(path).resolve().as_uri() + "?mode=ro"
+        connection = sqlite3.connect(uri, uri=True, isolation_level=None)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA query_only = ON")
+        connection.execute("BEGIN")
+        yield connection
+    except (OSError, sqlite3.Error) as exc:
+        raise StoreError(f"cannot read run ledger {path}: {exc}") from exc
+    finally:
+        if connection is not None:
+            connection.close()
+
+
+def _require_run(connection: sqlite3.Connection, path: Path) -> None:
+    if connection.execute("SELECT 1 FROM runs WHERE singleton = 1").fetchone() is None:
+        raise StoreError(f"run ledger is not initialized: {path}")
+
+
+def run_summary(run_dir: Path) -> dict:
+    """The run row plus task-status counts, without attempts or events."""
+    path = Path(run_dir) / "state.sqlite"
+    with _read_only(path) as connection:
+        row = connection.execute("SELECT * FROM runs WHERE singleton = 1").fetchone()
+        if row is None:
+            raise StoreError(f"run ledger is not initialized: {path}")
+        summary = dict(row)
+        del summary["singleton"]
+        summary["config"] = json.loads(summary["config"])
+        counts = dict(connection.execute("SELECT status, COUNT(*) FROM tasks GROUP BY status"))
+        summary["task_counts"] = counts
+        summary["task_total"] = sum(counts.values())
+        return summary
+
+
+def list_runs(state_dir: Path, *, after: str | None = None,
+              limit: int = DEFAULT_PAGE_SIZE) -> dict:
+    """A bounded page of run summaries for every ledger directly under state_dir.
+
+    Pages are ordered by run directory name (the run ID) so pagination is
+    stable across calls even as new runs are created.
+    """
+    limit = _bounded(limit)
+    state_dir = Path(state_dir)
+    if not state_dir.is_dir():
+        return {"items": [], "next_after": None}
+    run_ids = sorted(
+        entry.name for entry in state_dir.iterdir()
+        if entry.is_dir() and (entry / "state.sqlite").is_file()
+    )
+    if after is not None:
+        run_ids = [run_id for run_id in run_ids if run_id > after]
+    page = run_ids[:limit]
+    items = [run_summary(state_dir / run_id) for run_id in page]
+    next_after = page[-1] if len(run_ids) > limit else None
+    return {"items": items, "next_after": next_after}
+
+
+def run_tasks(run_dir: Path, *, after: int | None = None,
+              limit: int = DEFAULT_PAGE_SIZE) -> dict:
+    """A bounded page of per-run task summaries ordered by position."""
+    limit = _bounded(limit)
+    if after is not None and (type(after) is bool or not isinstance(after, int) or after < 0):
+        raise StoreError("after must be a nonnegative integer position")
+    path = Path(run_dir) / "state.sqlite"
+    with _read_only(path) as connection:
+        _require_run(connection, path)
+        clause = "WHERE position > ?" if after is not None else ""
+        params = (after,) if after is not None else ()
+        rows = connection.execute(
+            f"SELECT * FROM tasks {clause} ORDER BY position LIMIT ?",
+            (*params, limit + 1),
+        ).fetchall()
+        page = rows[:limit]
+        items = []
+        for row in page:
+            item = dict(row)
+            source = json.loads(item.pop("input"))
+            item.pop("position")
+            item["details"] = json.loads(item["details"])
+            items.append(source | item)
+        next_after = page[-1]["position"] if len(rows) > limit else None
+        return {"items": items, "next_after": next_after}
+
+
+def run_attempts(run_dir: Path, *, after: int | None = None,
+                  limit: int = DEFAULT_PAGE_SIZE) -> dict:
+    """A bounded page of ticket attempts ordered by insertion (rowid)."""
+    limit = _bounded(limit)
+    if after is not None and (type(after) is bool or not isinstance(after, int) or after < 0):
+        raise StoreError("after must be a nonnegative integer cursor")
+    path = Path(run_dir) / "state.sqlite"
+    with _read_only(path) as connection:
+        _require_run(connection, path)
+        clause = "WHERE rowid > ?" if after is not None else ""
+        params = (after,) if after is not None else ()
+        rows = connection.execute(
+            f"SELECT rowid AS _cursor, * FROM attempts {clause} ORDER BY rowid LIMIT ?",
+            (*params, limit + 1),
+        ).fetchall()
+        page = rows[:limit]
+        items = []
+        for row in page:
+            item = dict(row)
+            del item["_cursor"]
+            item["details"] = json.loads(item["details"])
+            items.append(item)
+        next_after = page[-1]["_cursor"] if len(rows) > limit else None
+        return {"items": items, "next_after": next_after}
+
+
+def run_events(run_dir: Path, *, after: int = 0,
+               limit: int = DEFAULT_PAGE_SIZE) -> dict:
+    """A bounded page of ledger events with ``id`` strictly greater than after."""
+    limit = _bounded(limit)
+    if type(after) is bool or not isinstance(after, int) or after < 0:
+        raise StoreError("after must be a nonnegative integer event ID")
+    path = Path(run_dir) / "state.sqlite"
+    with _read_only(path) as connection:
+        _require_run(connection, path)
+        rows = connection.execute(
+            "SELECT * FROM events WHERE id > ? ORDER BY id LIMIT ?",
+            (after, limit + 1),
+        ).fetchall()
+        page = rows[:limit]
+        items = []
+        for row in page:
+            item = dict(row)
+            item["details"] = json.loads(item["details"])
+            items.append(item)
+        next_after = page[-1]["id"] if len(rows) > limit else None
+        return {"items": items, "next_after": next_after}
