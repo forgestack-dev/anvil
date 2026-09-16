@@ -29,19 +29,21 @@
     {
       "id": "apply-credential-exclusion",
       "title": "Apply credential exclusion to agent and verification subprocesses",
-      "objective": "Pass the configured credential exclusion set through every managed subprocess launch, including agent turns, review turns, and verification checks, and prove the values never escape.",
+      "objective": "Withhold the configured credential variables from every managed subprocess a run launches, and prove the values do not escape.",
       "depends_on": [
         "environment-exclusion-set"
       ],
       "acceptance_criteria": [
-        "Agent invocations, review invocations, and verification check commands all receive the exclusion-filtered environment.",
-        "Leakage tests prove excluded variables are absent from subprocess environments, subprocess argv, and recorded command artifacts.",
-        "Existing serial and parallel execution tests remain green with an empty exclusion set."
+        "A run configuration field names the variables to withhold; absent or empty changes nothing for existing runs.",
+        "Every managed subprocess launch builds its environment with that exclusion set: agent implementation turns, independent review turns, verification check commands, the adaptive session's per-attempt runners, the adaptive profile preflight probe in adaptive_runtime, and the same preflight probe reached through `anvil doctor --config`.",
+        "Leakage tests prove excluded variables are absent from subprocess environments, from subprocess argv, and from recorded command artifacts.",
+        "README.md documents the new field beside the existing run configuration fields, and docs/AGENT_ADAPTERS.md no longer states that doctor has no exclusion set to apply, which holds only without --config.",
+        "Existing serial, parallel, adaptive and recovery tests remain green with no exclusion configured."
       ],
       "source_refs": [
         "DELIVERY_DASHBOARD_PLAN.md section 9 Authentication and credential isolation"
       ],
-      "risk": "low",
+      "risk": "medium",
       "execution": {
         "status": "todo"
       }
