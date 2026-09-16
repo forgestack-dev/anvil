@@ -433,3 +433,37 @@ class OrientationPrompt(unittest.TestCase):
                                 supplied_diff="DIFF BODY", orientation="MODULE MAP")
         self.assertTrue(prompt.rstrip().endswith("DIFF BODY"))
         self.assertLess(prompt.index("MODULE MAP"), prompt.index("DIFF BODY"))
+
+
+class CredentialExclusion(unittest.TestCase):
+    def setUp(self):
+        self.base = Path(tempfile.mkdtemp()).resolve()
+        self.document = {"version": 1, "repo": ".", "tickets": "tickets.json",
+                         "verification": [["true"]]}
+
+    def config(self, **extra):
+        return RunConfig.from_document({**self.document, **extra}, base=self.base)
+
+    def test_default_is_an_empty_set_absent_from_the_document(self):
+        config = self.config()
+        self.assertEqual(config.credential_exclusion, ())
+        self.assertNotIn("credential_exclusion", config.to_dict())
+
+    def test_names_round_trip_in_order(self):
+        names = ["GITHUB_TOKEN", "JIRA_API_TOKEN"]
+        config = self.config(credential_exclusion=names)
+        self.assertEqual(config.credential_exclusion, ("GITHUB_TOKEN", "JIRA_API_TOKEN"))
+        self.assertEqual(config.to_dict()["credential_exclusion"], names)
+        again = RunConfig.from_document(config.to_dict(), base=self.base)
+        self.assertEqual(again.credential_exclusion, config.credential_exclusion)
+
+    def test_direct_construction_normalizes_to_a_tuple(self):
+        config = RunConfig(self.base, self.base / "tickets.json", (("true",),),
+                           self.base / "state", credential_exclusion=["GITHUB_TOKEN"])
+        self.assertEqual(config.credential_exclusion, ("GITHUB_TOKEN",))
+
+    def test_invalid_exclusions_are_contract_errors(self):
+        for value in (None, "GITHUB_TOKEN", ["GITHUB TOKEN"], ["1TOKEN"], [""], [3],
+                      ["GITHUB_TOKEN", "GITHUB_TOKEN"], ["T" + str(i) for i in range(65)]):
+            with self.subTest(value=value), self.assertRaises(ContractError):
+                self.config(credential_exclusion=value)

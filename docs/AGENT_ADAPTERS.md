@@ -4,6 +4,8 @@ Choose `agent: "codex"`, `agent: "claude-code"`, or `agent: "muse"` for serial i
 
 Pool runs locate every agent entrypoint before dispatch and share process capacity and cancellation across all managed commands. Each worker owns a separate worktree; one integration owner applies candidates to the current accepted branch and reviews/checks the resulting commit. See [worker coordination](PARALLEL_EXECUTION.md) for scheduling, shared resources, and dependency handoffs.
 
+Within a run, every implementation turn, review turn, adaptive profile preflight probe, and verification command inherits the host environment without `GIT_*` variables and without the variables named by the run's `credential_exclusion`. The exclusion keeps a supervisor's integration credentials out of model turns and checks; matching is case-sensitive, and only the names are recorded with the run. Muse turns launch no process and so inherit nothing to filter. `anvil doctor` runs outside a run configuration and has no exclusion set to apply.
+
 `anvil doctor --agent <agent>` probes the selected CLI's version and required flags without authenticating or requesting a model response. For a custom executable, add `--agent-binary /path/to/executable`. A successful probe establishes local CLI compatibility, not working account access. Anvil uses the CLI's configured account and model; it does not pass a model override unless an explicit adaptive profile is configured, and never passes a permission bypass. Subprocesses do not inherit desktop-only tools or connected apps.
 
 ## Codex

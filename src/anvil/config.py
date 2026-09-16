@@ -75,8 +75,14 @@ class RunConfig:
     skill_selection: dict | None = None
     agent_turns: int | None = None
     orientation: Path | None = None
+    credential_exclusion: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        from .environment import exclusion_set
+        try:
+            object.__setattr__(self, "credential_exclusion", exclusion_set(self.credential_exclusion))
+        except ValueError as exc:
+            raise ContractError(str(exc)) from exc
         if type(self.ticket_status) is not bool:
             raise ContractError("ticket_status must be boolean")
         if self.agent_turns is not None and (type(self.agent_turns) is not int
@@ -151,7 +157,7 @@ class RunConfig:
                        {"state_dir", "codex_binary", "agent", "agent_binary",
                         "agent_timeout", "check_timeout", "workers", "max_processes",
                         "ticket_status", "adaptive", "skill_selection",
-                        "agent_turns", "orientation"},
+                        "agent_turns", "orientation", "credential_exclusion"},
                        "run configuration")
         if type(value["version"]) is not int or value["version"] != 1:
             raise ContractError("run configuration.version must be the integer 1")
@@ -160,7 +166,7 @@ class RunConfig:
             raise ContractError("adaptive must be an object, not null")
         if "skill_selection" in value and value["skill_selection"] is None:
             raise ContractError("skill_selection must be an object, not null")
-        for name in ("agent_turns", "orientation"):
+        for name in ("agent_turns", "orientation", "credential_exclusion"):
             if name in value and value[name] is None:
                 raise ContractError(f"{name} must not be null; omit it to use the default")
 
@@ -220,6 +226,7 @@ class RunConfig:
             skill_selection=value.get("skill_selection"),
             agent_turns=value.get("agent_turns"),
             orientation=(resolve("orientation") if "orientation" in value else None),
+            credential_exclusion=value.get("credential_exclusion", ()),
         )
 
     def to_dict(self) -> dict:
@@ -238,6 +245,9 @@ class RunConfig:
             result["agent_turns"] = self.agent_turns
         if self.orientation is not None:
             result["orientation"] = str(self.orientation)
+        if self.credential_exclusion:
+            # Variable names only: the withheld values never reach the ledger.
+            result["credential_exclusion"] = list(self.credential_exclusion)
         if self.workers:
             result.update(workers=[worker.to_dict() for worker in self.workers],
                           max_processes=self.max_processes)

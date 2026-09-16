@@ -19,7 +19,7 @@ import shutil
 import stat
 from tempfile import TemporaryDirectory
 
-from anvil.environment import managed_environment
+from anvil.environment import exclusion_set, managed_environment
 from anvil.processes import ProcessError, run_process
 
 
@@ -179,9 +179,11 @@ class ClaudeRunner:
 
     Model controls come only from explicit profiles; authentication is inherited. The explicit tool set
     excludes shell execution and delegation; acceptance belongs to the caller.
+    `exclude` names environment variables withheld from every launched process.
     """
 
-    def __init__(self, claude_binary: str = "claude", *, profile=None, turns=None) -> None:
+    def __init__(self, claude_binary: str = "claude", *, profile=None, turns=None,
+                 exclude=()) -> None:
         if turns is not None and (isinstance(turns, bool) or type(turns) is not int
                                   or not 1 <= turns <= 1000):
             raise ValueError("turns must be an integer between 1 and 1000")
@@ -190,6 +192,7 @@ class ClaudeRunner:
             from ..routing import validate_selection
             validate_selection("claude-code", profile)
         self.profile = dict(profile) if profile is not None else None
+        self.exclude = exclusion_set(exclude)
         _validate_binary(claude_binary)
         self.claude_binary = claude_binary
         # Select once in the supervisor's directory, before any worktree runs.
@@ -225,7 +228,7 @@ class ClaudeRunner:
                                                    "--effort", self.profile["effort"]))
         if self.profile is not None and "max_budget_usd" in self.profile:
             invocation = replace(invocation, argv=(*invocation.argv, "--max-budget-usd", str(self.profile["max_budget_usd"])))
-        environment = managed_environment()
+        environment = managed_environment(self.exclude)
         if self.profile is not None:
             # Claude's effort environment override takes precedence over the CLI flag.
             environment["CLAUDE_CODE_EFFORT_LEVEL"] = self.profile["effort"]

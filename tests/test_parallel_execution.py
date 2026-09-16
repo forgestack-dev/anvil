@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -10,6 +11,7 @@ from textwrap import dedent
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 from anvil.config import RunConfig, WorkerConfig
 from anvil.parallel import run_parallel
@@ -256,6 +258,104 @@ class ParallelExecutionTests(unittest.TestCase):
         self.assertEqual(RunStore.read(Path(result["run_dir"]) / "state.sqlite"),
                          {key: value for key, value in result.items() if key != "run_dir"})
         self.assertEqual(json.loads((Path(result["run_dir"]) / "report.json").read_text()), result)
+        self.assert_clean_original()
+
+    def environment_fixture(self, agent, traces):
+        """A fake CLI for either adapter that records the environment of its turn."""
+        binary = self.root / f"anvil-environment-{agent}"
+        binary.write_text(f"#!{sys.executable}\nAGENT = {agent!r}\nTRACES = {str(traces)!r}\n"
+                          + dedent("""\
+            import json
+            import os
+            from pathlib import Path
+            import sys
+
+            args = sys.argv[1:]
+            prompt = sys.stdin.read()
+            task = json.JSONDecoder().raw_decode(prompt.split('Ticket:\\n', 1)[1])[0]
+            if AGENT == 'codex':
+                schema = json.loads(Path(args[args.index('--output-schema') + 1]).read_text())
+                review = args[args.index('--sandbox') + 1] == 'read-only'
+            else:
+                schema = json.loads(args[args.index('--json-schema') + 1])
+                review = 'verdict' in schema['required']
+            role = 'review' if review else 'worker'
+            Path(TRACES, task['id'] + '-' + role + '.json').write_text(json.dumps(
+                {'agent': AGENT, 'role': role, 'environment': dict(os.environ),
+                 'argv': args, 'prompt': prompt}))
+            if review:
+                result = {'verdict': 'approve', 'summary': 'Inspected ' + task['id'], 'findings': [],
+                          'acceptance': [{'criterion': 1, 'satisfied': True,
+                                          'evidence': task['id'] + ' inspected'}]}
+            else:
+                Path(task['id'] + '.txt').write_text(task['id'] + '\\n')
+                result = {'status': 'completed', 'summary': 'Implemented ' + task['id'], 'blockers': [],
+                          'acceptance': [{'criterion': 1, 'evidence': task['id'] + ' implemented'}]}
+            if AGENT == 'codex':
+                Path(args[args.index('-o') + 1]).write_text(json.dumps(result))
+                print(json.dumps({'type': 'fixture_complete'}))
+            else:
+                print(json.dumps({'type': 'system', 'subtype': 'init'}))
+                print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False,
+                                  'permission_denials': [], 'structured_output': result}))
+            """))
+        binary.chmod(0o755)
+        return binary
+
+    def test_pool_withholds_configured_credentials_from_workers_review_and_checks(self):
+        secrets = {"ANVIL_TEST_GITHUB_TOKEN": "ghp-leak-canary-github",
+                   "ANVIL_TEST_LINEAR_TOKEN": "lin-leak-canary-token"}
+        traces, check_traces = self.root / "pool environments", self.root / "pool checks"
+        traces.mkdir()
+        check_traces.mkdir()
+        codex = self.environment_fixture("codex", traces)
+        claude = self.environment_fixture("claude-code", traces)
+        check = self.root / "dump_environment.py"
+        check.write_text(dedent("""\
+            import json
+            import os
+            from pathlib import Path
+            import sys
+            import time
+
+            Path(sys.argv[1], str(os.getpid()) + '-' + str(time.time_ns()) + '.json').write_text(
+                json.dumps({'environment': dict(os.environ), 'argv': sys.argv[1:]}))
+            """))
+        self.write_tickets(ticket("alpha", worker="codex-slot"), ticket("beta", worker="claude-slot"))
+        config = replace(self.config, agent="claude-code", agent_binary=str(claude),
+                         workers=(WorkerConfig("codex-slot", "codex", str(codex)),
+                                  WorkerConfig("claude-slot", "claude-code", str(claude))),
+                         verification=((sys.executable, str(check), str(check_traces)),),
+                         credential_exclusion=tuple(secrets))
+
+        with patch.dict(os.environ, secrets | {"ANVIL_TEST_PROJECT_SETTING": "preserved"}):
+            result = run_parallel(config)
+            # The coordinator keeps the credentials it withholds from its children.
+            self.assertEqual({name: os.environ[name] for name in secrets}, secrets)
+
+        self.assertEqual(result["status"], "success", result["error"])
+        self.assertEqual(result["config"]["credential_exclusion"], list(secrets))
+        turns = [json.loads(path.read_text()) for path in traces.iterdir()]
+        checks = [json.loads(path.read_text()) for path in check_traces.iterdir()]
+        self.assertEqual(sorted((turn["agent"], turn["role"]) for turn in turns),
+                         [("claude-code", "review"), ("claude-code", "review"),
+                          ("claude-code", "worker"), ("codex", "worker")])
+        self.assertEqual(len(checks), 3)  # the baseline plus one per integrated ticket
+        for observed in turns + checks:
+            recorded = json.dumps(observed)
+            for name, value in secrets.items():
+                self.assertNotIn(name, observed["environment"])
+                self.assertNotIn(value, observed["environment"].values())
+                self.assertFalse([argument for argument in observed["argv"]
+                                  if name in argument or value in argument])
+                # Nothing reaches a child by another route: prompt or any other recorded field.
+                self.assertNotIn(value, recorded)
+            self.assertEqual(observed["environment"]["ANVIL_TEST_PROJECT_SETTING"], "preserved")
+
+        leaked = [str(path) for path in sorted(Path(result["run_dir"]).rglob("*"))
+                  if path.is_file() and not path.is_symlink()
+                  and any(value.encode() in path.read_bytes() for value in secrets.values())]
+        self.assertEqual(leaked, [])
         self.assert_clean_original()
 
     def injected_run(self, tasks, callback=None):
