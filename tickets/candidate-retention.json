@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "id": "retain-candidate-refs",
+      "title": "Retain a ref for every candidate and integration revision",
+      "objective": "The supervisor records candidate_sha and integration_sha in the ledger but holds no Git ref to either, so a rejected attempt's commits are unreachable the moment the run ends and a routine prune destroys them. Write a supervisor-owned ref at each site that creates one of these revisions, so the replay described in OBSERVED_LIMITS.md stays possible for as long as the ledger names the commit.",
+      "depends_on": [],
+      "acceptance_criteria": [
+        "Every call to Repository.commit_candidate from execution.run_serial and from the worker-completion branch of parallel.run_parallel leaves the new candidate commit named by a ref; these are the only two production call sites.",
+        "Every call to Repository.prepare_integration from execution.run_serial, from the integration-dispatch branch of parallel.run_parallel, and from its recovery candidate-reuse branch leaves the integration revision named by a ref; these are the only three production call sites.",
+        "Refs are written under one refs/anvil/ namespace keyed by run ID and attempt ID, are created by the supervisor on the coordinator thread only, and are never created inside a worker worktree or by a worker turn.",
+        "A run whose ledger predates this change still resumes, and no acceptance, rejection, retry, or recovery decision reads or requires one of these refs.",
+        "Tests assert that after an accepted ticket, after a review rejection, and after a verification failure, the recorded candidate_sha and integration_sha are each reachable from a ref, so git prune --expire=now cannot drop them."
+      ],
+      "source_refs": [
+        "OBSERVED_LIMITS.md section The auditing method",
+        "ACCEPTANCE.md section Stage 1: checks before review"
+      ],
+      "risk": "medium"
+    },
+    {
+      "id": "reap-candidate-refs",
+      "title": "List and delete retained candidate refs",
+      "objective": "Retained refs accumulate one pair per attempt and would otherwise grow without bound in the operator's repository, which AGENTS.md forbids. Give the operator an explicit way to see what is retained and to remove it, without ever touching accepted work.",
+      "depends_on": ["retain-candidate-refs"],
+      "acceptance_criteria": [
+        "A read-only subcommand lists every retained ref with its run ID, attempt ID, ticket ID, revision, and whether that attempt was accepted, and exits without changing any ref.",
+        "The same subcommand deletes the retained refs of one named run when explicitly asked, and reports how many it removed.",
+        "Deleting retained refs never moves the managed branch, never writes the ledger, and never removes a revision that the managed branch or any run directory's recorded acceptance still names.",
+        "Deletion is explicit: no run, resume, or status invocation removes a retained ref as a side effect.",
+        "Tests cover listing a mix of accepted and rejected attempts, deleting one run's refs while another run's refs survive, and refusing to delete a revision reachable from the managed branch."
+      ],
+      "source_refs": [
+        "OBSERVED_LIMITS.md section The auditing method",
+        "AGENTS.md invariant: do not add unbounded background work or silently enlarge the user's backlog"
+      ],
+      "risk": "low"
+    }
+  ]
+}

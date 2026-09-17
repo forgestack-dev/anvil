@@ -141,13 +141,34 @@ A rejection is auditable after the fact, and this correction exists because
 nobody had audited one. The candidate commit is in `details.candidate_sha` on
 the attempt, the reviewed revision is the `integration` message's
 `integration_sha`, the verification command is `config.verification` in the run
-row, and the commits survive in the target repository. Extracting the commit
-into a detached worktree and running that exact command distinguishes a reviewer
-that was right from one that was wrong, which no amount of reading the review
-text can do.
+row. Extracting the commit into a detached worktree and running that exact
+command distinguishes a reviewer that was right from one that was wrong, which
+no amount of reading the review text can do.
 
 Do this before drawing a conclusion from a rejection. The reading corrected
 above stood for a day and pointed at a fix that would have merged `a371221c`.
+
+The commits are not kept, which nearly cost this correction its evidence. Anvil
+records `candidate_sha` and `integration_sha` in the ledger but holds no ref to
+either, so once a run ends a rejected attempt's commits are unreachable and an
+ordinary `git gc` destroys them; the three cited here were 25 hours old and
+already listed by `git prune --dry-run --expire=now`. They are pinned as
+annotated tags so this section stays checkable:
+
+| Tag | Revision |
+| --- | --- |
+| `evidence/apply-credential-exclusion/attempt-3-candidate` | `a371221c` |
+| `evidence/apply-credential-exclusion/attempt-4-candidate` | `e093e320` |
+| `evidence/apply-credential-exclusion/attempt-4-reviewed` | `b51f97c3` |
+
+```sh
+git worktree add --detach /tmp/replay evidence/apply-credential-exclusion/attempt-3-candidate
+cd /tmp/replay && env PYTHONPATH=src python3 -m unittest discover -s tests
+```
+
+Pinning by hand does not generalize. `tickets/candidate-retention.json` covers
+retaining a ref at each of the five sites that create one of these revisions,
+and bounding their growth afterwards.
 
 ### What this does not establish
 
