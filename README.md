@@ -30,9 +30,27 @@ anvil validate tickets.json
 anvil plan tickets.json --json
 ```
 
+[examples/SPEC.md](examples/SPEC.md) is a small specification written to the criterion contract: every requirement states how it is decided, the absence requirement names the complete set it holds over, and the headings are the lines a prepared ticket cites in `source_refs`. Copy it into the repository you want worked on and commit it there; a specification must be committed inside its target repository.
+
 Preparation is two read-only turns from the selected Codex, Claude Code, or Muse adapters. One converts the specification into a ticket graph. The second is a gate: it runs on the adapter the first did not use, sees the graph and the specification but not the turn that wrote them, and can only ask questions -- it has no approval verdict, so an empty result records the absence of an objection rather than readiness. `--gate-agent` selects it, and `--gate-agent none` disables it and records that in the ticket document; `prepare` refuses a gate on the adapter that authored the graph.
 
 A question from either turn means no tickets are written, and `anvil prepare` exits `3` rather than the `2` it uses for errors, because a question is not an error. Each names the criterion contract rule it invokes and cites exact specification lines. Answer them by editing and committing the specification, which changes the recorded source hash and makes the next preparation traceably a different input.
+
+Pin both turns to explicit models when the defaults are not what you want. `--model`/`--effort` select the planning turn's and `--gate-model`/`--gate-effort` the gate's; each pair is given together, and `prepare` refuses a gate that matches the planning turn's adapter or its stated model.
+
+```sh
+anvil prepare SPEC.md --output tickets.json --repo . \
+  --agent claude-code --model claude-opus-5 --effort high \
+  --gate-agent codex --gate-model gpt-5-codex --gate-effort medium
+```
+
+Both models are then recorded in the ticket document, so the claim that one turn judged another's work is auditable afterwards:
+
+```json
+"model": "claude-opus-5",
+"gate": {"agent": "codex", "model": "gpt-5-codex", "distinct_adapter": true, "questions": 0}
+```
+
 
 Preparation records the source hash, repository commit, and gate, requires a source reference on every ticket, initializes ticket status to `todo`, and writes the result atomically. It does not start implementation. See [spec preparation](docs/SPEC_PREPARATION.md) and the [criterion contract](docs/CRITERIA.md).
 

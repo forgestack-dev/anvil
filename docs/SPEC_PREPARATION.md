@@ -15,6 +15,11 @@ anvil prepare SPEC.md -o tickets.json --repo . \
 anvil prepare SPEC.md -o tickets.json --repo . --config run.json
 ```
 
+[examples/SPEC.md](../examples/SPEC.md) is a worked specification: requirements
+that state how they are decided, one absence requirement that enumerates the set
+it holds over, and headings a prepared ticket can cite verbatim in `source_refs`.
+Copy it into the target repository rather than preparing it in place.
+
 The repository must be clean, the specification must be a regular file inside
 that repository, and both it and the repository state must already be committed.
 The output must be a new path inside the repository with an existing parent.
