@@ -7,7 +7,7 @@ import sqlite3
 from .adapters import create_runner
 from .contracts import ContractError
 from .routing import Policy, preflight
-from .telemetry import MeasuredRunner, load_record
+from .telemetry import MeasuredRunner, attempt_record, load_record, rollup
 from .ticket_status import read_regular
 
 
@@ -153,51 +153,13 @@ def report(result):
         return
     decisions = {e["attempt_id"]: e["details"]["body"] for e in result["events"]
                  if e["details"].get("message_kind") == "routing_decision"}
-    records = []
-    for attempt in result["attempts"]:
-        invocations = []
-        for role in ("worker", "review"):
-            path = Path(result["run_dir"]) / "artifacts" / attempt["id"] / role / "invocation.json"
-            try:
-                invocations.append(load_record(path, role))
-            except (OSError, ValueError):
-                started = role == "worker" or any(
-                    e["attempt_id"] == attempt["id"] and e["details"].get("message_kind") == "review_started"
-                    for e in result["events"])
-                invocations.append({"role": role, "cost_usd": None if started else 0,
-                                    "cost_kind": "unknown" if started else "not_started"})
-        costs = [r["cost_usd"] for r in invocations]
-        details = attempt["details"]
-        attributable_rejection = (
-            "retry_reason" in details
-            or details.get("review", {}).get("verdict") == "request_changes"
-            or any(check.get("returncode") not in (None, 0) or check.get("timed_out")
-                   for check in details.get("verification", []))
-        )
-        evaluation = "observed_sufficient" if attempt["status"] == "done" else (
-            "rejected" if attempt["status"] in ("failed", "blocked") and attributable_rejection
-            else "insufficient_evidence")
-        # The coordinator records the structured retry cause when it retires the
-        # attempt; prefer it over re-deriving from whatever evidence survived.
-        stored_category = details.get("failure_category")
-        if stored_category not in ("review_rejection", "verification_failure", "retryable_rejection"):
-            stored_category = None
-        records.append({"attempt_id": attempt["id"], "task_id": attempt["task_id"],
-                        "status": attempt["status"], "decision": decisions.get(attempt["id"]),
-                        "failure_category": ("none" if attempt["status"] == "done" else
-                            "provider_error" if any(i.get("provider_error") for i in invocations) else
-                            stored_category if stored_category else
-                            "review_rejection" if attempt["details"].get("review", {}).get("verdict") == "request_changes" else
-                            "verification_failure" if attempt["details"].get("verification") else
-                            "retryable_rejection" if "retry_reason" in attempt["details"] else "unknown"),
-                        "evaluation": evaluation, "invocations": invocations,
-                        "cost_usd": sum(costs) if all(c is not None for c in costs) else None,
-                        "duration_seconds": sum(r.get("duration_seconds", 0) for r in invocations)})
-    known = [i["cost_usd"] for r in records for i in r["invocations"] if i["cost_usd"] is not None]
-    result["routing"] = {"attempts": records, "known_cost_usd": sum(known),
-                         "cost_complete": all(r["cost_usd"] is not None for r in records),
-                         "cost_kind": "estimated; not a subscription invoice",
-                         "evaluation_note": "Success establishes observed sufficiency, not optimal model choice."}
+    reviewed = {e["attempt_id"] for e in result["events"]
+                if e["details"].get("message_kind") == "review_started"}
+    records = [attempt_record(result["run_dir"], attempt,
+                              decision=decisions.get(attempt["id"]),
+                              review_started=attempt["id"] in reviewed)
+               for attempt in result["attempts"]]
+    result["routing"] = {"attempts": records, **rollup(records)}
 
 
 def learn(repo, config, result):

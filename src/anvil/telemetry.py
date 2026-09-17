@@ -104,6 +104,78 @@ class MeasuredRunner:
                 pass
 
 
+COST_KIND_NOTE = "estimated; not a subscription invoice"
+EVALUATION_NOTE = "Success establishes observed sufficiency, not optimal model choice."
+
+
+def attempt_invocations(run_dir, attempt_id, *, review_started=False):
+    """Both role records for one attempt; absent accounting stays unknown, never free."""
+    invocations = []
+    for role in ("worker", "review"):
+        path = Path(run_dir) / "artifacts" / attempt_id / role / "invocation.json"
+        try:
+            invocations.append(load_record(path, role))
+        except (OSError, ValueError):
+            started = role == "worker" or review_started
+            invocations.append({"role": role, "cost_usd": None if started else 0,
+                                "cost_kind": "unknown" if started else "not_started"})
+    return invocations
+
+
+def attempt_record(run_dir, attempt, *, decision=None, review_started=False):
+    """One attempt's accounting and failure classification, from saved evidence only."""
+    invocations = attempt_invocations(run_dir, attempt["id"], review_started=review_started)
+    costs = [r["cost_usd"] for r in invocations]
+    details = attempt["details"]
+    attributable_rejection = (
+        "retry_reason" in details
+        or details.get("review", {}).get("verdict") == "request_changes"
+        or any(check.get("returncode") not in (None, 0) or check.get("timed_out")
+               for check in details.get("verification", [])))
+    evaluation = "observed_sufficient" if attempt["status"] == "done" else (
+        "rejected" if attempt["status"] in ("failed", "blocked") and attributable_rejection
+        else "insufficient_evidence")
+    # The coordinator records the structured retry cause when it retires the
+    # attempt; prefer it over re-deriving from whatever evidence survived.
+    stored_category = details.get("failure_category")
+    if stored_category not in ("review_rejection", "verification_failure", "retryable_rejection"):
+        stored_category = None
+    return {"attempt_id": attempt["id"], "task_id": attempt["task_id"],
+            "status": attempt["status"], "decision": decision,
+            "failure_category": ("none" if attempt["status"] == "done" else
+                "provider_error" if any(i.get("provider_error") for i in invocations) else
+                stored_category if stored_category else
+                "review_rejection" if details.get("review", {}).get("verdict") == "request_changes" else
+                "verification_failure" if details.get("verification") else
+                "retryable_rejection" if "retry_reason" in details else "unknown"),
+            "evaluation": evaluation, "invocations": invocations,
+            "cost_usd": sum(costs) if all(c is not None for c in costs) else None,
+            "duration_seconds": sum(r.get("duration_seconds", 0) for r in invocations)}
+
+
+def rollup(records):
+    """Totals that omit unknown cost rather than counting it as zero."""
+    known = [i["cost_usd"] for r in records for i in r["invocations"] if i["cost_usd"] is not None]
+    return {"known_cost_usd": sum(known),
+            "cost_complete": all(r["cost_usd"] is not None for r in records),
+            "cost_kind": COST_KIND_NOTE, "evaluation_note": EVALUATION_NOTE}
+
+
+def run_telemetry(run_dir, *, after=None, limit=None):
+    """A bounded page of per-attempt accounting joined to its routing decision."""
+    from .queries import DEFAULT_PAGE_SIZE, attempt_messages, run_attempts
+
+    page = run_attempts(run_dir, after=after,
+                        limit=DEFAULT_PAGE_SIZE if limit is None else limit)
+    identifiers = [attempt["id"] for attempt in page["items"]]
+    decisions = attempt_messages(run_dir, "routing_decision", identifiers)
+    reviewed = attempt_messages(run_dir, "review_started", identifiers)
+    records = [attempt_record(run_dir, attempt, decision=decisions.get(attempt["id"]),
+                              review_started=attempt["id"] in reviewed)
+               for attempt in page["items"]]
+    return {"items": records, "next_after": page["next_after"], **rollup(records)}
+
+
 def load_record(path, role):
     """Treat absent or damaged accounting as unknown, never as free execution."""
     value = json.loads(read_regular(path))
