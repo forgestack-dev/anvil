@@ -315,11 +315,14 @@ Two invocations per preparation instead of one, on the order of $1 to $4 each at
 the rates in `OBSERVED_LIMITS.md`, against attempt-scale spends of $2 to $7 for a
 ticket that does not merge. The gate turn is cheaper than the planning turn in
 principle -- it reads a graph rather than a repository -- but nothing here
-measures that. Two providers also means two sets of credentials on the host. Note that
-`credential_exclusion` does not cover either preparation turn: it is a
-`RunConfig` field, and `prepare` takes no run configuration, so both turns are
-launched with the operator's environment as they were before the gate existed.
-Worth measuring; not worth asserting in advance.
+measures that. Two providers also means two sets of credentials on the host, and each adapter's
+key is useless to the other. `prepare --config run.json` reads that run
+configuration's `credential_exclusion` and withholds those variables from both
+turns, and from the availability probe that precedes them: with a set configured,
+the probe becomes `routing.preflight`, which takes an exclusion, rather than
+`adapters.probe_agent`, which does not. Without `--config` there is no run
+configuration and so no set to apply, exactly as `anvil doctor` behaves. Worth
+measuring; not worth asserting in advance.
 
 ### Tests
 
@@ -339,6 +342,8 @@ two turns are separately sourced:
 - each profile reaches the runner it selects, a profiled turn is preflighted
   rather than only probed, an unsupported effort or an unknown profile field is
   refused, and a Muse turn refuses a profile with the operator-handoff reason;
+- a configured exclusion set reaches both runners and the probe, a malformed one
+  is refused before any turn, and an empty one leaves the cheaper probe in place;
 - the planning turn's artifact directory is not present in the gate prompt;
 - with `--gate-agent none`, the tasks branch behaves exactly as it does today.
 
@@ -363,6 +368,12 @@ benefit far more cheaply. That comparison is the first thing to measure.
 
 It cannot prove the gate ran on the provider it claims. `provenance.gate` records
 a configured adapter and model string, and both are operator-supplied.
+
+It does not record the exclusion set. `run.json` already states it, and copying
+variable names into a committed ticket file would duplicate a value that can
+drift. The claim that a preparation withheld them is therefore not auditable from
+the ticket document; it is auditable only from the configuration that was
+passed.
 
 And it moves cost earlier rather than removing it: a specification that produces
 questions on every preparation is a specification the author has to write anyway,

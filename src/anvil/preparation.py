@@ -300,13 +300,31 @@ def _gate_selection(agent: str, gate_agent: str | None) -> str | None:
     return selected
 
 
-def _probe(agent: str, binary: str, profile, label: str) -> None:
-    """Confirm the agent is installed, and that it advertises the profile's controls."""
+def _exclusion(value) -> tuple[str, ...]:
+    """The same variable-name rule RunConfig.credential_exclusion enforces."""
+    names = tuple(value)
+    if (any(not isinstance(name, str) or not name.strip() or "\0" in name or "=" in name
+            for name in names) or len(set(names)) != len(names)):
+        raise ContractError(
+            "credential exclusion must be unique nonempty variable names without NUL or '='")
+    return names
+
+
+def _probe(agent: str, binary: str, profile, exclude: tuple[str, ...], label: str) -> None:
+    """Confirm the agent is installed, and that it advertises the profile's controls.
+
+    `probe_agent` launches the binary through the adapter's own doctor, which has
+    no exclusion parameter, so a configured exclusion set selects `preflight`
+    instead: it withholds the same variables from the probe that the turn itself
+    will not see. Muse launches nothing either way.
+    """
     try:
-        if profile is None or agent == "muse":
+        if agent == "muse":
+            probe_agent(agent, binary)
+        elif profile is None and not exclude:
             probe_agent(agent, binary)
         else:
-            preflight(agent, binary, profile)
+            preflight(agent, binary, profile, exclude=exclude)
     except (ContractError, ProcessError, OSError) as exc:
         remedy = "; pass none to disable the gate" if label == "gate agent" else ""
         raise ContractError(f"{label} {agent} is not available: {exc}{remedy}") from exc
@@ -322,8 +340,8 @@ def _distinct(profile, gate_profile) -> None:
 def prepare(source: Path, output: Path, *, repo: Path, agent: str = "codex",
             executable: str | None = None, timeout: float = 900,
             artifact_root: Path | None = None, runner=None, profile=None,
-            gate_agent: str | None = None, gate_executable: str | None = None,
-            gate_profile=None, gate_runner=None) -> dict:
+            exclude: tuple[str, ...] = (), gate_agent: str | None = None,
+            gate_executable: str | None = None, gate_profile=None, gate_runner=None) -> dict:
     """Generate, gate, validate, and atomically write tickets; runner injection is test-only."""
     if agent not in ("codex", "claude-code", "muse"):
         raise ContractError("preparation agent must be codex, claude-code, or muse")
@@ -333,6 +351,7 @@ def prepare(source: Path, output: Path, *, repo: Path, agent: str = "codex",
         raise ContractError("a gate profile requires a gate agent")
     gate_profile = _profile(gate, gate_profile, "gate") if gate is not None else None
     _distinct(profile, gate_profile)
+    exclude = _exclusion(exclude)
     if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
             or not math.isfinite(timeout) or not 0 < timeout <= 3600):
         raise ContractError("preparation timeout must be between 0 and 3600 seconds")
@@ -357,11 +376,12 @@ def prepare(source: Path, output: Path, *, repo: Path, agent: str = "codex",
     artifact_dir = artifact_root.resolve() / uuid.uuid4().hex
     binary = _binary(agent, executable)
     gate_binary = _binary(gate, gate_executable) if gate is not None else None
-    if runner is None and profile is not None:
-        _probe(agent, binary, profile, "preparation agent")
+    if runner is None and (profile is not None or exclude):
+        _probe(agent, binary, profile, exclude, "preparation agent")
     if gate is not None and gate_runner is None:
-        _probe(gate, gate_binary, gate_profile, "gate agent")
-    selected = runner if runner is not None else create_runner(agent, binary, profile=profile)
+        _probe(gate, gate_binary, gate_profile, exclude, "gate agent")
+    selected = (runner if runner is not None
+                else create_runner(agent, binary, profile=profile, exclude=exclude))
     invocation = dict(
         repo=repository.path,
         prompt=_prompt(relative_source, data.decode("utf-8"), skills),
@@ -410,7 +430,7 @@ def prepare(source: Path, output: Path, *, repo: Path, agent: str = "codex",
     if gate is not None:
         gate_artifact_dir = artifact_root.resolve() / uuid.uuid4().hex
         judge = (gate_runner if gate_runner is not None
-                 else create_runner(gate, gate_binary, profile=gate_profile))
+                 else create_runner(gate, gate_binary, profile=gate_profile, exclude=exclude))
         request = dict(
             repo=repository.path,
             prompt=_gate_prompt(relative_source, data.decode("utf-8"), tasks),

@@ -50,6 +50,10 @@ def parser() -> argparse.ArgumentParser:
     prepare.add_argument("--repo", type=Path, default=Path.cwd())
     prepare.add_argument("--agent", choices=EXECUTION_AGENTS, default="codex")
     prepare.add_argument("--agent-binary", help="Trusted agent executable name or path.")
+    prepare.add_argument("--config", type=Path,
+                         help="Read credential_exclusion from a run configuration and withhold "
+                              "those variables from both preparation turns. The preparation and "
+                              "gate agents stay whatever --agent and --gate-agent select.")
     prepare.add_argument("--model", help="Explicit model for the preparation turn; requires --effort.")
     prepare.add_argument("--effort", help="Explicit effort for the preparation turn; requires --model.")
     prepare.add_argument("--gate-agent", choices=(*EXECUTION_AGENTS, "none"),
@@ -161,13 +165,18 @@ def main(argv: list[str] | None = None) -> int:
         try:
             from .preparation import prepare
             from .workspaces import WorkspaceError
+            exclusion = ()
+            if arguments.config:
+                from .config import RunConfig
+                exclusion = RunConfig.load(arguments.config).credential_exclusion
             selection = _explicit_profile(arguments.model, arguments.effort, "--model", "--effort")
             gate_selection = _explicit_profile(arguments.gate_model, arguments.gate_effort,
                                                "--gate-model", "--gate-effort")
             result = prepare(arguments.source, arguments.output, repo=arguments.repo,
                              agent=arguments.agent, executable=arguments.agent_binary,
                              timeout=arguments.timeout, artifact_root=arguments.artifact_root,
-                             profile=selection, gate_agent=arguments.gate_agent,
+                             profile=selection, exclude=exclusion,
+                             gate_agent=arguments.gate_agent,
                              gate_executable=arguments.gate_binary,
                              gate_profile=gate_selection)
         except (ContractError, WorkspaceError, ProcessError, OSError) as exc:

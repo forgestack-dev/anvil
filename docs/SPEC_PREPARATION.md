@@ -12,6 +12,7 @@ anvil prepare SPEC.md -o tickets.json --repo . --gate-agent none
 anvil prepare SPEC.md -o tickets.json --repo . \
   --agent claude-code --model claude-opus-5 --effort high \
   --gate-agent codex --gate-model gpt-5-codex --gate-effort medium
+anvil prepare SPEC.md -o tickets.json --repo . --config run.json
 ```
 
 The repository must be clean, the specification must be a regular file inside
@@ -64,9 +65,15 @@ operator handoff with no model or effort selection.
 
 Availability is checked before the planning turn is dispatched, so a missing
 second agent costs a subprocess rather than a planning turn. A turn without a
-profile is probed like `anvil doctor` does it; a turn with one is preflighted,
-which also confirms the CLI advertises the model and effort controls that profile
-depends on. When only
+profile or an exclusion set is probed like `anvil doctor` does it; otherwise it
+is preflighted, which withholds the exclusion set from the probe and confirms the
+CLI advertises the model and effort controls a profile depends on.
+
+`--config <run.json>` reads that run configuration's `credential_exclusion` and
+withholds those variables from both turns and from the probe. It supplies nothing
+else: the preparation and gate agents stay whatever `--agent` and `--gate-agent`
+select. Without `--config` there is no run configuration and so no exclusion set
+to apply, exactly as `anvil doctor` behaves. When only
 one agent is installed, pass `--gate-agent none`; the preparation is then
 recorded with `"gate": null` rather than silently gated by its own author.
 

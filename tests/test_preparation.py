@@ -435,5 +435,70 @@ class GateProfileTests(PreparationCase):
         self.assertIn("must be given together", json.loads(stdout.getvalue())["error"])
 
 
+class CredentialExclusionTests(PreparationCase):
+    """Both preparation turns, and the probe that precedes them, withhold the set."""
+
+    def test_both_turns_are_launched_without_the_excluded_variables(self):
+        with patch("anvil.preparation.create_runner") as created, \
+                patch("anvil.preparation._probe"), \
+                patch("anvil.preparation._skills", return_value=([], [])):
+            created.side_effect = [FakePlanner(), FakeGate()]
+            prepare(self.spec, self.output, repo=self.repo, agent="claude-code",
+                    artifact_root=self.artifacts, gate_agent="codex",
+                    exclude=("ANTHROPIC_API_KEY", "OPENAI_API_KEY"))
+        for call in created.call_args_list:
+            self.assertEqual(call.kwargs["exclude"], ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"))
+        self.assertEqual(len(created.call_args_list), 2)
+
+    def test_the_availability_probe_withholds_the_same_set(self):
+        with patch("anvil.preparation.preflight") as checked, \
+                patch("anvil.preparation.probe_agent") as probed, \
+                patch("anvil.preparation.create_runner", return_value=FakeGate()), \
+                patch("anvil.preparation._skills", return_value=([], [])):
+            prepare(self.spec, self.output, repo=self.repo, agent="claude-code",
+                    artifact_root=self.artifacts, runner=FakePlanner(), gate_agent="codex",
+                    exclude=("OPENAI_API_KEY",))
+        self.assertEqual(checked.call_args.kwargs["exclude"], ("OPENAI_API_KEY",))
+        self.assertIsNone(checked.call_args.args[2])
+        self.assertEqual(probed.call_args_list, [])
+
+    def test_an_empty_set_leaves_the_cheaper_probe_in_place(self):
+        with patch("anvil.preparation.preflight") as checked, \
+                patch("anvil.preparation.probe_agent") as probed, \
+                patch("anvil.preparation.create_runner", return_value=FakeGate()), \
+                patch("anvil.preparation._skills", return_value=([], [])):
+            prepare(self.spec, self.output, repo=self.repo, agent="claude-code",
+                    artifact_root=self.artifacts, runner=FakePlanner(), gate_agent="codex")
+        self.assertEqual(probed.call_args.args, ("codex", "codex"))
+        self.assertEqual(checked.call_args_list, [])
+
+    def test_malformed_exclusion_sets_are_refused_before_any_turn(self):
+        planner = FakePlanner()
+        for names in (("OPENAI_API_KEY", "OPENAI_API_KEY"), ("NAME=value",), ("",), (" ",)):
+            with self.subTest(names=names):
+                with self.assertRaises(ContractError) as raised:
+                    self.run_prepare(planner, exclude=names)
+                self.assertIn("credential exclusion", str(raised.exception))
+        self.assertEqual(planner.calls, [])
+
+    def test_cli_reads_the_exclusion_set_from_a_run_configuration(self):
+        config = self.repo / "run.json"
+        config.write_text(json.dumps({
+            "version": 1, "repo": str(self.repo), "tickets": str(self.output),
+            "verification": [["true"]],
+            "credential_exclusion": ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]}))
+        report = {"status": "prepared", "task_count": 1, "wave_count": 1,
+                  "output": str(self.output), "artifact_dir": str(self.artifacts),
+                  "unclassified_skills": []}
+        with patch("anvil.preparation.prepare", return_value=report) as invoked, \
+                redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            code = main(["prepare", str(self.spec), "-o", str(self.output),
+                         "--repo", str(self.repo), "--config", str(config), "--json"])
+        self.assertEqual(code, 0)
+        self.assertEqual(invoked.call_args.kwargs["exclude"],
+                         ("OPENAI_API_KEY", "ANTHROPIC_API_KEY"))
+        self.assertEqual(invoked.call_args.kwargs["agent"], "codex")
+
+
 if __name__ == "__main__":
     unittest.main()
