@@ -128,6 +128,25 @@ class CredentialExclusionReachesEverySubprocess(unittest.TestCase):
             self.assertTrue(seen, "preflight never launched the probe")
             self.assertEqual(set(seen), {"ABSENT"}, f"a probe launch saw the value: {seen}")
 
+    def test_git_descendants_never_see_the_value(self):
+        import subprocess
+        from anvil.workspaces import Repository
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name).resolve()
+            probe = root / "seen.txt"
+            script = root / "probe.sh"
+            # A `!` alias runs as a child of Git itself, so it observes exactly
+            # what Git handed down rather than what this process holds.
+            script.write_text(f'#!/bin/sh\nprintf "%s\\n" "${{{self.SECRET}:-ABSENT}}" >> {probe}\n')
+            script.chmod(0o755)
+            for command in (("init", "-q"), ("-c", "user.name=T", "-c", "user.email=t@t.invalid",
+                                             "commit", "-qm", "base", "--allow-empty")):
+                subprocess.run(["git", *command], cwd=root, check=True,
+                               capture_output=True)
+            repository = Repository(root, exclude=(self.SECRET,))
+            repository.git("-c", f"alias.probe=!{script}", "probe")
+            self.assertEqual(probe.read_text().split(), ["ABSENT"])
+
     def test_the_value_is_absent_from_argv_and_recorded_artifacts(self):
         from anvil.adapters.claude import build_invocation
         with tempfile.TemporaryDirectory() as name:

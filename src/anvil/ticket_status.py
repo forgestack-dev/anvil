@@ -222,7 +222,8 @@ def sync(run_dir):
     from .store import RunStore
     from .workspaces import Repository, RepositoryLock
     saved = RunStore.read(Path(run_dir) / "state.sqlite")
-    repo = Repository(Path(saved["repo"]))
+    repo = Repository(Path(saved["repo"]),
+                      exclude=tuple(saved["config"].get("credential_exclusion", ())))
     with RepositoryLock(repo), RunStore(Path(run_dir) / "state.sqlite") as store:
         publisher = Publisher(store, saved["config"]["tickets"], repo)
         publisher.flush()

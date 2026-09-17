@@ -51,7 +51,8 @@ def dispatch(args):
                 raise ContractError("routing requires an adaptive configuration")
             if not config.workers:
                 config = replace(config, workers=(WorkerConfig("serial", config.agent, config.executable),), max_processes=1)
-            graph, repo = TaskGraph.load(config.tickets), Repository(config.repo)
+            graph, repo = (TaskGraph.load(config.tickets),
+                           Repository(config.repo, exclude=config.credential_exclusion))
             policy = Policy(config, graph, repo)
             base = repo.head()
             result = {"mode":"preview", "base_sha":base, "decisions":[
@@ -66,14 +67,16 @@ def dispatch(args):
             result["run_dir"] = str(args.run_dir.resolve())
             report(result)
             if args.action == "import":
-                result = learning.import_run(Repository(Path(result["repo"])), result)
+                result = learning.import_run(Repository(
+                    Path(result["repo"]),
+                    exclude=tuple(result["config"].get("credential_exclusion", ()))), result)
             else:
                 result = result.get("routing", {"status":"no routing telemetry"})
         else:
             config = RunConfig.load(args.config)
             if config.adaptive is None:
                 raise ContractError("adaptive configuration required")
-            repo = Repository(config.repo)
+            repo = Repository(config.repo, exclude=config.credential_exclusion)
             if args.action == "train":
                 options = config.adaptive.get("learning")
                 if options is None:

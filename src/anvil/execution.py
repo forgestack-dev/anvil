@@ -167,7 +167,7 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
         raise ContractError("ticket profiles require an adaptive configuration")
     if any(task.worker is not None for task in graph.tasks):
         raise ContractError("ticket worker assignments require a workers configuration")
-    repo = Repository(config.repo)
+    repo = Repository(config.repo, exclude=config.credential_exclusion)
     from .ticket_status import prepare_repo, attach
     prepare_repo(repo, config)
     for protected in (repo.path, repo.common_dir):

@@ -224,6 +224,28 @@ class WorkspaceTests(unittest.TestCase):
         with patch.dict(os.environ, {"GIT_DIR": "/does/not/exist", "GIT_WORK_TREE": "/tmp"}):
             self.assertEqual(Repository(self.path).head(), self.base)
 
+    def test_git_runs_under_the_configured_credential_exclusion(self):
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "secret", "KEEP": "yes"}):
+            repo = Repository(self.path, exclude=("OPENAI_API_KEY",))
+            with patch("anvil.workspaces.run_process") as launched:
+                launched.return_value = ProcessOutcome(0, False)
+                with self.assertRaises(WorkspaceError):
+                    repo.git("status")
+        environment = launched.call_args.kwargs["env"]
+        self.assertNotIn("OPENAI_API_KEY", environment)
+        self.assertEqual(environment["KEEP"], "yes")
+        self.assertEqual(environment["GIT_TERMINAL_PROMPT"], "0")
+
+    def test_git_inherits_everything_when_no_exclusion_is_configured(self):
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "secret"}):
+            repo = Repository(self.path)
+            self.assertEqual(repo.exclude, ())
+            with patch("anvil.workspaces.run_process") as launched:
+                launched.return_value = ProcessOutcome(0, False)
+                with self.assertRaises(WorkspaceError):
+                    repo.git("status")
+        self.assertIn("OPENAI_API_KEY", launched.call_args.kwargs["env"])
+
     def test_git_errors_and_timeouts_are_workspace_errors(self):
         with patch("anvil.workspaces.run_process", side_effect=ProcessError("creation failed")):
             with self.assertRaisesRegex(WorkspaceError, "cannot run Git"):

@@ -352,7 +352,7 @@ def prepare(source: Path, output: Path, *, repo: Path, agent: str = "codex",
     if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
             or not math.isfinite(timeout) or not 0 < timeout <= 3600):
         raise ContractError("preparation timeout must be between 0 and 3600 seconds")
-    repository = Repository(repo)
+    repository = Repository(repo, exclude=exclude)
     repository.assert_clean()
     source = Path(source).expanduser().absolute()
     data = _read_spec(source, repository.path)

@@ -79,6 +79,8 @@ def scope_for(repo: Path | None = None, *, global_scope: bool = False) -> SkillS
             outcome = run_process(
                 ["git", "-C", str(directory), "rev-parse", "--show-toplevel"],
                 cwd=directory, stdin=None, stdout_path=stdout, stderr_path=stderr,
+                # No run configuration exists at this point, so there is no
+                # credential_exclusion set to apply; see README.
                 timeout=30, env=managed_environment(),
             )
         except ProcessError as exc:

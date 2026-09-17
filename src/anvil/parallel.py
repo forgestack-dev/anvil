@@ -151,7 +151,7 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
     for task in graph.tasks:
         if task.worker is not None and task.worker not in worker_ids:
             raise ContractError(f"task {task.id} names an unknown worker: {task.worker}")
-    repo = Repository(config.repo)
+    repo = Repository(config.repo, exclude=config.credential_exclusion)
     from .ticket_status import prepare_repo, attach
     prepare_repo(repo, config)
     for protected in (repo.path, repo.common_dir):

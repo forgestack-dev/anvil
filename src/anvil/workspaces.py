@@ -36,8 +36,9 @@ class WorkspaceError(RuntimeError):
 class Repository:
     """A committed repository and the detached worktrees this run owns."""
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, exclude=()):
         self.path = Path(path).resolve()
+        self.exclude = tuple(exclude)
         self._managed_worktrees: set[Path] = set()
         self.control_ticket = None
         top = Path(self.git("rev-parse", "--show-toplevel")).resolve()
@@ -48,8 +49,13 @@ class Repository:
         self.head()  # Reject unborn branches before creating any run artifacts.
 
     def git(self, *args: str, cwd: Path | None = None) -> str:
-        """Run literal, noninteractive Git and stop any filter/helper descendants."""
-        environment = managed_environment()
+        """Run literal, noninteractive Git and stop any filter/helper descendants.
+
+        Hooks are disabled, but Git still launches credential helpers, askpass
+        programs and clean/smudge filters of its own, so it runs under the same
+        exclusion set as an agent turn.
+        """
+        environment = managed_environment(self.exclude)
         environment.update({
             "GIT_TERMINAL_PROMPT": "0", "GIT_EDITOR": "true",
             "GIT_SEQUENCE_EDITOR": "true", "GIT_MERGE_AUTOEDIT": "no",
