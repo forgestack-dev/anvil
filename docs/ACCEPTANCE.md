@@ -1,6 +1,9 @@
 # The acceptance decision
 
-Status: Stage 1 implemented; Stages 2 to 4 are proposed and not implemented.
+Status: Stage 1 implemented and merged; Stages 2 to 4 are proposed and not
+implemented. The stage order was revised on 2026-09-17 after Stage 1 landed:
+bounding and locating a rejection now precedes the conceded-rejection stop,
+because the stop's trigger is vacuous until the acceptance map is mandatory.
 Recorded 2026-09-17, from the saved ledgers of runs `5abe55ea`, `3658a8d9`,
 `51fec4cd` and `55bca6a2`. The measurements and the correction they forced are
 in [OBSERVED_LIMITS.md](OBSERVED_LIMITS.md).
@@ -95,7 +98,34 @@ README`. Escalation to `demanding` proceeds on a real defect; attempt 4 runs as
 recorded, is green, and its review rejects on `cli.py:173`. Saved: $1.03 and,
 more importantly, the false record.
 
-## Stage 2: a conceded rejection stops the run (proposed)
+## Stage 2: bound and located rejections (proposed)
+
+A finding carries the criterion number it fails and a `file:line` that exists at
+the reviewed revision, and **a rejection must return a full acceptance map**.
+This is auditability and the input the later stages need; it is **not** a bound
+on what a reviewer may reject on, because the criterion number is
+reviewer-chosen. A reviewer determined to reject on documentation can bind it to
+any criterion.
+
+The measured run's error would have read `criterion 1 (src/anvil/cli.py:173):
+pass exclude=config.credential_exclusion to routing.preflight` in the run error,
+the published ticket and any retry prompt, instead of a 700-character paragraph.
+
+### Why this precedes the conceded-rejection stop
+
+This stage and Stage 3 were originally ordered the other way round. They are not
+independent, because `validate_result` in `evidence.py` is strict in one
+direction only: an `approve` needs full criterion coverage, every criterion
+satisfied and no findings, while a `request_changes` needs only a non-empty
+findings list. Its acceptance map may be `[]`.
+
+Stage 3 triggers on a rejection whose every criterion is marked satisfied. Over
+an empty map that is *vacuously* true, so Stage 3 shipped first would fire on
+rejections that assessed nothing at all -- stopping the run for the author on
+precisely the signal that carries no assessment. Requiring the full map first
+turns Stage 3's trigger into the positive assertion it is supposed to be.
+
+## Stage 3: a conceded rejection stops the run (proposed)
 
 When a reviewer returns `request_changes` with every criterion marked
 `satisfied: true`, the requirement it names is not in the ticket. Escalating a
@@ -105,31 +135,21 @@ ticket's scope without changing its frozen criteria.
 Such a rejection ends the ticket for the author: `blocked` with a distinct
 failure category, the finding recorded as a proposal, and no escalation. Keyed on
 the reviewer's own satisfied map, which is a positive assertion it makes against
-its own verdict, not on a judgment about the finding's content.
+its own verdict, not on a judgment about the finding's content -- and, after
+Stage 2, a map it is obliged to fill.
 
 This stage must not ship before Stage 1. Without checks-first it would have
 stopped run `51fec4cd` after attempt 3 at $4.32 while calling "criteria met" a
 candidate that fails its own tests and leaks credentials at the preflight probe.
-The ordering is load-bearing.
-
-## Stage 3: bound and located rejections (proposed)
-
-A finding carries the criterion number it fails and a `file:line` that exists at
-the reviewed revision, and a rejection must return a full acceptance map. This
-is auditability and the input Stage 4 needs; it is **not** a bound on what a
-reviewer may reject on, because the criterion number is reviewer-chosen. A
-reviewer determined to reject on documentation can bind it to any criterion.
-
-The measured run's error would have read `criterion 1 (src/anvil/cli.py:173):
-pass exclude=config.credential_exclusion to routing.preflight` in the run error,
-the published ticket and any retry prompt, instead of a 700-character paragraph.
+Nor before Stage 2, for the reason above. Both orderings are load-bearing.
 
 ## Stage 4: declared sites (proposed)
 
 A typed home for the enumeration `OBSERVED_LIMITS.md` already asks authors to
 write, with paths checked to exist at the base revision and read verbatim by
-both roles. It bounds the discovery cost of an incomplete enumeration: an
-undeclared site costs one attempt and returns as a named authoring decision.
+both roles. It consumes the located findings Stage 2 produces. It bounds the
+discovery cost of an incomplete enumeration: an undeclared site costs one
+attempt and returns as a named authoring decision.
 
 It cannot check completeness, and this is not a small caveat. The human's own
 rewritten enumeration omitted `cli.py`, which is the site that ended the
