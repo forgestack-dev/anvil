@@ -50,6 +50,10 @@ def parser() -> argparse.ArgumentParser:
     prepare.add_argument("--repo", type=Path, default=Path.cwd())
     prepare.add_argument("--agent", choices=EXECUTION_AGENTS, default="codex")
     prepare.add_argument("--agent-binary", help="Trusted agent executable name or path.")
+    prepare.add_argument("--gate-agent", choices=(*EXECUTION_AGENTS, "none"),
+                         help="Adversarial readiness gate; defaults to the execution agent "
+                              "--agent did not select. 'none' disables it and is recorded.")
+    prepare.add_argument("--gate-binary", help="Trusted gate executable name or path.")
     prepare.add_argument("--timeout", type=float, default=900)
     prepare.add_argument("--artifact-root", type=Path)
     prepare.add_argument("--json", action="store_true", help="Print JSON output.")
@@ -146,19 +150,40 @@ def main(argv: list[str] | None = None) -> int:
             from .workspaces import WorkspaceError
             result = prepare(arguments.source, arguments.output, repo=arguments.repo,
                              agent=arguments.agent, executable=arguments.agent_binary,
-                             timeout=arguments.timeout, artifact_root=arguments.artifact_root)
+                             timeout=arguments.timeout, artifact_root=arguments.artifact_root,
+                             gate_agent=arguments.gate_agent,
+                             gate_executable=arguments.gate_binary)
         except (ContractError, WorkspaceError, ProcessError, OSError) as exc:
             if arguments.json:
                 print(json.dumps({"error": str(exc)}))
             else:
                 print(f"anvil: {exc}", file=sys.stderr)
             return 2
+        if result.get("status") == "needs_clarification":
+            if arguments.json:
+                print(json.dumps(result, indent=2))
+            else:
+                raised = "the readiness gate" if result["raised_by"] == "gate" else "preparation"
+                print(f"No tickets written: {raised} needs the specification to answer "
+                      f"{len(result['questions'])} question(s).", file=sys.stderr)
+                for question in result["questions"]:
+                    print(f"  [{question['id']}] rule {question['rule']} "
+                          f"({question['kind']}): {question['question']}", file=sys.stderr)
+                    for reference in question["source_refs"]:
+                        print(f"      cites: {reference}", file=sys.stderr)
+                    for option in question.get("options", []):
+                        print(f"      option: {option}", file=sys.stderr)
+                print("Answer them in the specification, commit it, and prepare again.",
+                      file=sys.stderr)
+            return 3
         if arguments.json:
             print(json.dumps(result, indent=2))
         else:
             print(f"Prepared {result['task_count']} tickets in {result['wave_count']} waves.")
             print(f"Output: {result['output']}")
             print(f"Evidence: {result['artifact_dir']}")
+            gate = result.get("provenance", {}).get("gate")
+            print(f"Gate: {gate['agent']}" if gate else "Gate: disabled")
             if result["unclassified_skills"]:
                 print("Unclassified installed skills omitted: " + ", ".join(result["unclassified_skills"]))
         return 0

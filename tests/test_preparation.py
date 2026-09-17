@@ -13,7 +13,7 @@ from unittest.mock import patch
 from anvil.cli import main
 from anvil.contracts import ContractError
 from anvil.planning import TaskGraph
-from anvil.preparation import _skills, prepare, result_schema
+from anvil.preparation import _skills, gate_schema, prepare, result_schema
 from anvil.workspaces import WorkspaceError
 from test_execution import git
 
@@ -27,6 +27,12 @@ def task(task_id="T-1", *, depends_on=(), skills=()):
             "resources": ["core"], "exclusive": False, "risk": "medium"}
 
 
+def question(question_id="Q-1", *, rule=3, kind="unbounded", refs=("### Capability",)):
+    return {"id": question_id, "rule": rule, "kind": kind,
+            "question": "Which call sites must the absence hold over?",
+            "source_refs": list(refs)}
+
+
 class FakePlanner:
     def __init__(self, result=None):
         self.result = result or {"version": 1, "tasks": [task()]}
@@ -37,7 +43,12 @@ class FakePlanner:
         return self.result
 
 
-class PreparationTests(unittest.TestCase):
+class FakeGate(FakePlanner):
+    def __init__(self, questions=()):
+        super().__init__({"version": 1, "questions": list(questions)})
+
+
+class PreparationCase(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -53,11 +64,14 @@ class PreparationTests(unittest.TestCase):
         self.output = self.repo / "tickets.json"
         self.artifacts = self.root / "artifacts"
 
-    def run_prepare(self, runner, *, skills=None):
+    def run_prepare(self, runner, *, skills=None, gate_agent="none", gate_runner=None):
         with patch("anvil.preparation._skills", return_value=(skills or [], [])):
             return prepare(self.spec, self.output, repo=self.repo, agent="claude-code",
-                           artifact_root=self.artifacts, runner=runner)
+                           artifact_root=self.artifacts, runner=runner,
+                           gate_agent=gate_agent, gate_runner=gate_runner)
 
+
+class PreparationTests(PreparationCase):
     def test_prepares_valid_traceable_tickets_without_implementing(self):
         runner = FakePlanner()
         result = self.run_prepare(runner, skills=[{
@@ -208,6 +222,118 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(json.loads(stdout.getvalue()), {"error": "bad spec"})
         self.assertEqual(stderr.getvalue(), "")
+
+
+class ReadinessGateTests(PreparationCase):
+    """The gate judges the graph, may only ask, and never runs on the authoring adapter."""
+
+    def test_gate_questions_leave_no_tickets_behind(self):
+        planner, gate = FakePlanner(), FakeGate([question()])
+        result = self.run_prepare(planner, gate_agent="codex", gate_runner=gate)
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(result["raised_by"], "gate")
+        self.assertEqual(result["gate_agent"], "codex")
+        self.assertEqual([item["id"] for item in result["questions"]], ["Q-1"])
+        self.assertFalse(self.output.exists())
+        self.assertNotEqual(result["artifact_dir"], result["gate_artifact_dir"])
+
+    def test_silent_gate_writes_tickets_and_records_the_adapter(self):
+        gate = FakeGate()
+        result = self.run_prepare(FakePlanner(), gate_agent="codex", gate_runner=gate)
+        self.assertEqual(result["status"], "prepared")
+        recorded = json.loads(self.output.read_text())["provenance"]["gate"]
+        self.assertEqual(recorded, {"agent": "codex", "distinct_adapter": True, "questions": 0})
+        self.assertTrue(gate.calls[0]["read_only"])
+        self.assertEqual(gate.calls[0]["schema"], gate_schema())
+
+    def test_disabled_gate_is_recorded_rather_than_assumed(self):
+        result = self.run_prepare(FakePlanner())
+        self.assertIsNone(json.loads(self.output.read_text())["provenance"]["gate"])
+        self.assertIsNone(result["gate_artifact_dir"])
+        TaskGraph.from_document(json.loads(self.output.read_text()))
+
+    def test_gate_sees_the_graph_and_the_specification_but_not_the_planning_turn(self):
+        planner, gate = FakePlanner(), FakeGate()
+        self.run_prepare(planner, gate_agent="codex", gate_runner=gate)
+        prompt = gate.calls[0]["prompt"]
+        self.assertIn("Implement the capability", prompt)
+        self.assertIn("### Capability", prompt)
+        self.assertIn("You cannot approve", prompt)
+        self.assertNotIn(planner.calls[0]["artifact_dir"].name, prompt)
+        self.assertNotIn("Convert the committed Markdown specification", prompt)
+
+    def test_gate_on_the_authoring_adapter_is_refused_before_any_turn(self):
+        planner = FakePlanner()
+        with self.assertRaises(ContractError) as raised:
+            self.run_prepare(planner, gate_agent="claude-code", gate_runner=FakeGate())
+        self.assertIn("must differ from the preparation agent", str(raised.exception))
+        self.assertEqual(planner.calls, [])
+        self.assertFalse(self.output.exists())
+
+    def test_unavailable_gate_fails_before_the_planning_turn_is_paid_for(self):
+        planner = FakePlanner()
+        with patch("anvil.preparation.probe_agent", side_effect=ContractError("no codex")), \
+                patch("anvil.preparation._skills", return_value=([], [])):
+            with self.assertRaises(ContractError) as raised:
+                prepare(self.spec, self.output, repo=self.repo, agent="claude-code",
+                        artifact_root=self.artifacts, runner=planner, gate_agent="codex")
+        self.assertIn("pass none to disable the gate", str(raised.exception))
+        self.assertEqual(planner.calls, [])
+
+    def test_unbound_unlocated_and_malformed_questions_are_refused(self):
+        unknown_rule = question(rule=7)
+        absent_ref = question(refs=["### Absent heading"])
+        missing_rule = {key: value for key, value in question().items() if key != "rule"}
+        for verdict in ({"version": 1, "questions": [unknown_rule]},
+                        {"version": 1, "questions": [absent_ref]},
+                        {"version": 1, "questions": [missing_rule]},
+                        {"version": 1, "questions": [question(), question()]},
+                        {"version": 1, "questions": [question(kind="stylistic")]},
+                        {"version": 1, "tasks": [task()]}):
+            with self.subTest(verdict=verdict):
+                with self.assertRaises(ContractError):
+                    self.run_prepare(FakePlanner(), gate_agent="codex",
+                                     gate_runner=FakePlanner(verdict))
+                self.assertFalse(self.output.exists())
+
+    def test_planning_turn_may_ask_instead_of_inventing_a_graph(self):
+        planner = FakePlanner({"version": 1, "questions": [question(rule=1, kind="undecidable")]})
+        gate = FakeGate()
+        result = self.run_prepare(planner, gate_agent="codex", gate_runner=gate)
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(result["raised_by"], "preparation")
+        self.assertEqual(gate.calls, [])
+        self.assertFalse(self.output.exists())
+        self.assertIn("questions", planner.calls[0]["schema"]["properties"])
+
+    def test_a_result_carrying_both_branches_is_refused(self):
+        both = {"version": 1, "tasks": [task()], "questions": [question()]}
+        with self.assertRaises(ContractError):
+            self.run_prepare(FakePlanner(both), gate_agent="codex", gate_runner=FakeGate())
+
+    def test_cli_reports_open_questions_as_a_distinct_exit_code(self):
+        report = {"status": "needs_clarification", "raised_by": "gate", "gate_agent": "codex",
+                  "questions": [question()], "artifact_dir": str(self.artifacts)}
+        stdout, stderr = StringIO(), StringIO()
+        with patch("anvil.preparation.prepare", return_value=report), \
+                redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main(["prepare", str(self.spec), "-o", str(self.output),
+                         "--repo", str(self.repo), "--gate-agent", "codex"])
+        self.assertEqual(code, 3)
+        self.assertIn("rule 3 (unbounded)", stderr.getvalue())
+        self.assertIn("### Capability", stderr.getvalue())
+        self.assertEqual(stdout.getvalue(), "")
+
+    def test_cli_passes_the_gate_selection_through(self):
+        report = {"status": "prepared", "task_count": 1, "wave_count": 1,
+                  "output": str(self.output), "artifact_dir": str(self.artifacts),
+                  "unclassified_skills": []}
+        with patch("anvil.preparation.prepare", return_value=report) as invoked, \
+                redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            code = main(["prepare", str(self.spec), "-o", str(self.output),
+                         "--repo", str(self.repo), "--gate-agent", "none", "--json"])
+        self.assertEqual(code, 0)
+        self.assertEqual(invoked.call_args.kwargs["gate_agent"], "none")
 
 
 if __name__ == "__main__":

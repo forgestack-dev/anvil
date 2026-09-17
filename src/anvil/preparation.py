@@ -12,17 +12,25 @@ import stat
 import uuid
 
 from . import __version__
-from .adapters import create_runner
-from .contracts import ContractError
+from .adapters import EXECUTION_AGENTS, create_runner, probe_agent
+from .contracts import ContractError, _object_fields, _text
 from .planning import TaskGraph
+from .processes import ProcessError
 from .skill_management import SkillError, SkillScope, managed_snapshot, status
 from .ticket_status import atomic, encoded
 from .workspaces import Repository, WorkspaceError
 
 
 MAX_SPEC_BYTES = 2 * 1024 * 1024
+MAX_QUESTIONS = 50
 _TASK_FIELDS = {"id", "title", "objective", "depends_on", "acceptance_criteria",
                 "source_refs", "skills", "resources", "exclusive", "risk"}
+_QUESTION_REQUIRED = {"id", "rule", "kind", "question", "source_refs"}
+_QUESTION_KINDS = ("missing", "ambiguous", "undecidable", "unbounded")
+# The gate runs on the execution adapter the preparation turn did not select.
+# A gate on the authoring adapter grades its own output, so `prepare` refuses
+# the match; "none" disables the gate and is recorded in provenance.
+_GATE_DEFAULT = {"codex": "claude-code", "claude-code": "codex", "muse": "codex"}
 
 
 def _read_spec(path: Path, repo: Path) -> bytes:
@@ -93,6 +101,34 @@ def _skills(repo: Path) -> tuple[list[dict], list[str]]:
         raise ContractError(str(exc)) from exc
 
 
+def _question_schema() -> dict:
+    """One bound and located question; the gate may return nothing else."""
+    text = {"type": "string", "minLength": 1, "pattern": r"\S"}
+    return {
+        "type": "object", "additionalProperties": False,
+        "required": sorted(_QUESTION_REQUIRED),
+        "properties": {
+            "id": {"type": "string", "minLength": 1, "maxLength": 80,
+                   "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
+            "rule": {"type": "integer", "minimum": 1, "maximum": 6},
+            "kind": {"type": "string", "enum": list(_QUESTION_KINDS)},
+            "question": text,
+            "source_refs": {"type": "array", "minItems": 1, "uniqueItems": True,
+                            "items": text},
+            "options": {"type": "array", "uniqueItems": True, "items": text},
+        },
+    }
+
+
+def gate_schema() -> dict:
+    """The gate has no tasks branch and no verdict: it may only ask."""
+    return {"type": "object", "additionalProperties": False,
+            "required": ["version", "questions"],
+            "properties": {"version": {"type": "integer", "const": 1},
+                           "questions": {"type": "array", "maxItems": MAX_QUESTIONS,
+                                         "items": _question_schema()}}}
+
+
 def result_schema(skill_names: list[str]) -> dict:
     text = {"type": "string", "minLength": 1, "pattern": r"\S"}
     identifier = {"type": "string", "minLength": 1, "maxLength": 80,
@@ -118,10 +154,14 @@ def result_schema(skill_names: list[str]) -> dict:
         },
     }
     return {"type": "object", "additionalProperties": False,
-            "required": ["version", "tasks"],
+            "required": ["version"],
+            "oneOf": [{"required": ["tasks"]}, {"required": ["questions"]}],
             "properties": {"version": {"type": "integer", "const": 1},
                            "tasks": {"type": "array", "minItems": 1,
-                                     "maxItems": 100, "items": task}}}
+                                     "maxItems": 100, "items": task},
+                           "questions": {"type": "array", "minItems": 1,
+                                         "maxItems": MAX_QUESTIONS,
+                                         "items": _question_schema()}}}
 
 
 def _prompt(source: str, content: str, skills: list[dict]) -> str:
@@ -138,6 +178,13 @@ def _prompt(source: str, content: str, skills: list[dict]) -> str:
         "Markdown heading or requirement-label line from the specification, including any heading "
         "marker, so Anvil can verify traceability. Set risk to low, medium, or "
         "high. Return only the schema-shaped object.\n\n"
+        "If the specification does not determine a ticket graph, return questions instead of "
+        "tasks: do not invent the missing decision. Each question names the criterion contract "
+        "rule it invokes (1 every criterion names its decision procedure, 2 one criterion one "
+        "role, 3 an absence names the set it holds over, 4 one criterion one claim, 5 criteria "
+        "are frozen for the run, 6 prefer a criterion the worker cannot grade itself), a kind of "
+        "missing, ambiguous, undecidable, or unbounded, and source_refs that are exact stripped "
+        "lines of the specification.\n\n"
         "Skills may be selected only from this installed and classified catalog. Use a skill only "
         "when its workflow materially helps implement that ticket; compatible_agents shows which "
         "Anvil workers can run it. Use an empty skills array when none applies.\n"
@@ -146,12 +193,100 @@ def _prompt(source: str, content: str, skills: list[dict]) -> str:
     )
 
 
+def _gate_prompt(source: str, content: str, tasks: list[dict]) -> str:
+    """Judge a graph against the criterion contract without seeing its author."""
+    graph = json.dumps({"tasks": tasks}, indent=2)
+    return (
+        "Adversarially review the proposed Anvil ticket graph below against the specification it "
+        "claims to implement. This is a read-only judging turn: do not edit files, run commands, "
+        "commit, or implement anything, and do not propose a replacement graph.\n\n"
+        "You cannot approve. Return only questions the specification must answer before this graph "
+        "is executable. Return an empty questions array when you have none; that records the "
+        "absence of an objection and is not an endorsement.\n\n"
+        "Every question must name the criterion contract rule it invokes and cite source_refs that "
+        "are exact stripped lines of the specification, so an unfounded question is visible as "
+        "one. The rules:\n"
+        "1. Every criterion names its decision procedure: the run's configured verification "
+        "commands, a named region of the candidate diff, or a named path at the integration "
+        "revision.\n"
+        "2. One criterion, one role. Independent review can read but cannot execute, so a "
+        "criterion decided by running something must not be left to it.\n"
+        "3. An absence names the complete set it holds over. 'No X anywhere' is not decidable.\n"
+        "4. One criterion, one claim. The acceptance map is per-criterion and boolean.\n"
+        "5. Criteria are frozen for the run; a requirement discovered later is a new ticket.\n"
+        "6. Prefer a criterion the implementing turn cannot grade with its own new tests.\n\n"
+        "Use kind undecidable for rule 1 or 2, unbounded for rule 3, and missing or ambiguous when "
+        "the specification simply does not settle something. Ask only what the specification can "
+        "answer; a question about the repository's code is not one.\n\n"
+        f"Source path: {source}\n"
+        f"--- BEGIN PROPOSED TICKET GRAPH ---\n{graph}\n--- END PROPOSED TICKET GRAPH ---\n"
+        f"--- BEGIN UNTRUSTED SPECIFICATION ---\n{content}\n--- END UNTRUSTED SPECIFICATION ---"
+    )
+
+
+def _questions(value, source_lines: set[str], label: str) -> list[dict]:
+    """Validate questions from either turn; the caller never writes tickets with any."""
+    if not isinstance(value, list):
+        raise ContractError(f"{label} must be an array")
+    if len(value) > MAX_QUESTIONS:
+        raise ContractError(f"{label} must contain at most {MAX_QUESTIONS} questions")
+    seen: set[str] = set()
+    result = []
+    for index, item in enumerate(value):
+        name = f"{label}[{index}]"
+        _object_fields(item, set(_QUESTION_REQUIRED), {"options"}, name)
+        identity = _text(item["id"], f"{name}.id")
+        if identity in seen:
+            raise ContractError(f"{label} contains duplicate question ID: {identity}")
+        seen.add(identity)
+        if type(item["rule"]) is not int or not 1 <= item["rule"] <= 6:
+            raise ContractError(f"{name}.rule must be a criterion contract rule from 1 to 6")
+        if item["kind"] not in _QUESTION_KINDS:
+            raise ContractError(f"{name}.kind must be one of {', '.join(_QUESTION_KINDS)}")
+        _text(item["question"], f"{name}.question")
+        references = item["source_refs"]
+        if not isinstance(references, list) or not references:
+            raise ContractError(f"{name}.source_refs must be a nonempty array")
+        for reference in references:
+            _text(reference, f"{name}.source_refs item")
+            if reference not in source_lines:
+                raise ContractError(
+                    f"{name}.source_refs cites a line absent from the specification: {reference}")
+        if len(set(references)) != len(references):
+            raise ContractError(f"{name}.source_refs contains duplicate references")
+        for option in item.get("options", []):
+            _text(option, f"{name}.options item")
+        result.append(dict(item))
+    return result
+
+
+def _binary(agent: str, executable: str | None) -> str:
+    if executable:
+        return executable
+    return "codex" if agent == "codex" else "claude" if agent == "claude-code" else "muse"
+
+
+def _gate_selection(agent: str, gate_agent: str | None) -> str | None:
+    """Resolve the gate adapter; None disables it and is recorded in provenance."""
+    selected = _GATE_DEFAULT[agent] if gate_agent is None else gate_agent
+    if selected == "none":
+        return None
+    if selected not in EXECUTION_AGENTS:
+        raise ContractError("gate agent must be codex, claude-code, muse, or none")
+    if selected == agent:
+        raise ContractError(
+            "gate agent must differ from the preparation agent; pass none to disable the gate")
+    return selected
+
+
 def prepare(source: Path, output: Path, *, repo: Path, agent: str = "codex",
             executable: str | None = None, timeout: float = 900,
-            artifact_root: Path | None = None, runner=None) -> dict:
-    """Generate, validate, and atomically write tickets; runner injection is test-only."""
+            artifact_root: Path | None = None, runner=None, gate_agent: str | None = None,
+            gate_executable: str | None = None, gate_runner=None) -> dict:
+    """Generate, gate, validate, and atomically write tickets; runner injection is test-only."""
     if agent not in ("codex", "claude-code", "muse"):
         raise ContractError("preparation agent must be codex, claude-code, or muse")
+    gate = _gate_selection(agent, gate_agent)
     if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
             or not math.isfinite(timeout) or not 0 < timeout <= 3600):
         raise ContractError("preparation timeout must be between 0 and 3600 seconds")
@@ -174,7 +309,15 @@ def prepare(source: Path, output: Path, *, repo: Path, agent: str = "codex",
     artifact_root = Path(artifact_root or Path.home() / ".local/state/anvil/preparations").expanduser()
     artifact_root.mkdir(parents=True, exist_ok=True)
     artifact_dir = artifact_root.resolve() / uuid.uuid4().hex
-    binary = executable or ("codex" if agent == "codex" else "claude" if agent == "claude-code" else "muse")
+    binary = _binary(agent, executable)
+    gate_binary = _binary(gate, gate_executable) if gate is not None else None
+    if gate is not None and gate_runner is None:
+        try:
+            probe_agent(gate, gate_binary)
+        except (ContractError, ProcessError, OSError) as exc:
+            raise ContractError(
+                f"gate agent {gate} is not available: {exc}; pass none to disable the gate"
+            ) from exc
     selected = runner if runner is not None else create_runner(agent, binary)
     invocation = dict(
         repo=repository.path,
@@ -187,10 +330,20 @@ def prepare(source: Path, output: Path, *, repo: Path, agent: str = "codex",
     if agent == "muse" and runner is None:
         invocation["purpose"] = "plan"
     document = selected.run(**invocation)
-    if (not isinstance(document, dict) or set(document) != {"version", "tasks"}
-            or not isinstance(document.get("tasks"), list)):
-        raise ContractError("prepared ticket result must contain only version and tasks")
-    if not 1 <= len(document["tasks"]) <= 100:
+    if not isinstance(document, dict) or document.get("version") != 1:
+        raise ContractError("prepared result must be an object with version 1")
+    if set(document) not in ({"version", "tasks"}, {"version", "questions"}):
+        raise ContractError("prepared result must contain version and exactly one of "
+                            "tasks or questions")
+    source_lines = {line.strip() for line in data.decode("utf-8").splitlines() if line.strip()}
+    if "questions" in document:
+        questions = _questions(document["questions"], source_lines, "prepared questions")
+        if not questions:
+            raise ContractError("a questions result must contain at least one question")
+        return {"status": "needs_clarification", "raised_by": "preparation",
+                "source": str(source), "source_sha256": hashlib.sha256(data).hexdigest(),
+                "artifact_dir": str(artifact_dir), "questions": questions}
+    if not isinstance(document["tasks"], list) or not 1 <= len(document["tasks"]) <= 100:
         raise ContractError("prepared ticket result must contain between 1 and 100 tasks")
     for index, task in enumerate(document["tasks"]):
         if not isinstance(task, dict) or set(task) != _TASK_FIELDS:
@@ -208,20 +361,50 @@ def prepare(source: Path, output: Path, *, repo: Path, agent: str = "codex",
     unknown = sorted({name for task in graph.tasks for name in task.skills if name not in allowed})
     if unknown:
         raise ContractError("prepared tickets selected unavailable skills: " + ", ".join(unknown))
+    tasks = [task.to_dict() for task in graph.tasks]
+    gate_artifact_dir = None
+    gate_record = None
+    if gate is not None:
+        gate_artifact_dir = artifact_root.resolve() / uuid.uuid4().hex
+        judge = gate_runner if gate_runner is not None else create_runner(gate, gate_binary)
+        request = dict(
+            repo=repository.path,
+            prompt=_gate_prompt(relative_source, data.decode("utf-8"), tasks),
+            schema=gate_schema(),
+            artifact_dir=gate_artifact_dir,
+            timeout=timeout,
+            read_only=True,
+        )
+        if gate == "muse" and gate_runner is None:
+            request["purpose"] = "plan"
+        verdict = judge.run(**request)
+        if (not isinstance(verdict, dict) or set(verdict) != {"version", "questions"}
+                or verdict["version"] != 1):
+            raise ContractError("gate result must contain only version and questions")
+        raised = _questions(verdict["questions"], source_lines, "gate questions")
+        if raised:
+            return {"status": "needs_clarification", "raised_by": "gate",
+                    "gate_agent": gate, "source": str(source),
+                    "source_sha256": hashlib.sha256(data).hexdigest(),
+                    "artifact_dir": str(artifact_dir),
+                    "gate_artifact_dir": str(gate_artifact_dir), "questions": raised}
+        gate_record = {"agent": gate, "distinct_adapter": gate != agent, "questions": 0}
     final = {"version": 1, "provenance": {
         "generator": "anvil", "generator_version": __version__,
         "source": relative_source,
         "source_sha256": hashlib.sha256(data).hexdigest(),
         "repo_head": repository.head(),
         "prepared_at": datetime.now(timezone.utc).isoformat(), "agent": agent,
+        "gate": gate_record,
     }, "tasks": []}
-    for task in graph.tasks:
-        value = task.to_dict()
+    for value in tasks:
         value["execution"] = {"status": "todo"}
         final["tasks"].append(value)
     TaskGraph.from_document(final)
     atomic(output, encoded(final))
     return {"status": "prepared", "output": str(output), "source": str(source),
-            "artifact_dir": str(artifact_dir), "task_count": len(graph.tasks),
+            "artifact_dir": str(artifact_dir),
+            "gate_artifact_dir": str(gate_artifact_dir) if gate_artifact_dir else None,
+            "task_count": len(graph.tasks),
             "wave_count": len(graph.waves), "available_skills": sorted(allowed),
             "unclassified_skills": unclassified, "provenance": final["provenance"]}

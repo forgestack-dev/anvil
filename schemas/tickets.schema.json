@@ -39,7 +39,24 @@
         "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "repo_head": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
         "prepared_at": {"type": "string", "format": "date-time"},
-        "agent": {"enum": ["codex", "claude-code", "muse"]}
+        "agent": {"enum": ["codex", "claude-code", "muse"]},
+        "gate": {
+          "description": "The adversarial readiness gate that judged this graph before it was written, or null when the operator disabled it.",
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["agent", "distinct_adapter", "questions"],
+              "properties": {
+                "agent": {"enum": ["codex", "claude-code", "muse"]},
+                "model": {"$ref": "#/$defs/text"},
+                "distinct_adapter": {"type": "boolean"},
+                "questions": {"type": "integer", "const": 0}
+              }
+            }
+          ]
+        }
       }
     }
   },

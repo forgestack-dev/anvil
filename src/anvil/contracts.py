@@ -128,10 +128,28 @@ def _string_array(value: Any, label: str, *, nonempty: bool = False) -> tuple[st
     return tuple(_text(item, f"{label}[{index}]") for index, item in enumerate(value))
 
 
+def _validate_gate(value: Any) -> None:
+    """A written document carries no open questions, so the count is always zero."""
+    if value is None:
+        return
+    _object_fields(value, {"agent", "distinct_adapter", "questions"}, {"model"}, "provenance.gate")
+    if value["agent"] not in ("codex", "claude-code", "muse"):
+        raise ContractError("provenance.gate.agent must be codex, claude-code, or muse")
+    if type(value["distinct_adapter"]) is not bool:
+        raise ContractError("provenance.gate.distinct_adapter must be a boolean")
+    if type(value["questions"]) is not int or value["questions"] != 0:
+        raise ContractError("provenance.gate.questions must be 0; a written document is one the "
+                            "gate raised no questions about")
+    if "model" in value:
+        _text(value["model"], "provenance.gate.model")
+
+
 def _validate_provenance(value: Any) -> None:
     fields = {"generator", "generator_version", "source", "source_sha256", "repo_head",
               "prepared_at", "agent"}
-    _object_fields(value, fields, set(), "provenance")
+    _object_fields(value, fields, {"gate"}, "provenance")
+    if "gate" in value:
+        _validate_gate(value["gate"])
     for name in fields - {"source_sha256", "repo_head", "agent"}:
         _text(value[name], f"provenance.{name}")
     if (not isinstance(value["source_sha256"], str)

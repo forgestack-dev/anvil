@@ -1,8 +1,9 @@
 # The criterion contract
 
 Status: an authoring standard, not a validator. The readiness gate in the last
-section is proposed and not implemented; its adversarial, separately sourced
-form was chosen on 2026-09-17 and is recorded here as a design, not a result. The measurements this rests on are in
+section is implemented in `preparation.py` as of 2026-09-17; nothing about its
+effect on run outcomes has been measured, and rules 1 through 6 remain authoring
+guidance that no command enforces. The measurements this rests on are in
 [OBSERVED_LIMITS.md](OBSERVED_LIMITS.md); the acceptance ordering it assumes is
 in [ACCEPTANCE.md](ACCEPTANCE.md).
 
@@ -124,10 +125,12 @@ they follow from the shape of the acceptance map and from `04f270d`. Audit a
 rejection by the method in [OBSERVED_LIMITS.md](OBSERVED_LIMITS.md) before
 concluding that any of this changed an outcome.
 
-## The prepare readiness gate (proposed)
+## The prepare readiness gate
 
-Rules 1 through 6 have no enforcement point today, because `anvil prepare` has
-no way to decline. The gate is that way.
+Rules 1 through 6 had no enforcement point, because `anvil prepare` had no way to
+decline: one planning turn could emit tickets or raise `ContractError`, so an
+underdetermined specification produced invented ones. The gate is that way. What
+follows describes what `preparation.py` now does.
 
 ### Why prepare, and not run
 
@@ -143,27 +146,21 @@ place to record an answer is the specification itself. Answering a question mean
 editing and committing the spec, which changes the hash and makes the second
 preparation traceably a different input. No new store is needed.
 
-### Current shape
+### What it replaced
 
-`preparation.prepare` (`src/anvil/preparation.py:149`) is all-or-nothing. One
-read-only planning turn returns a document, `result_schema` constrains it to
-`{version, tasks}` with 1 to 100 tasks, and every failure path raises
-`ContractError` and writes nothing:
+`preparation.prepare` was all-or-nothing. One read-only planning turn returned a
+document, `result_schema` constrained it to `{version, tasks}` with 1 to 100
+tasks, and every other path raised `ContractError` and wrote nothing. There was
+no representation for "this specification does not determine a ticket graph, and
+here is what is missing," so the turn's only options were to emit tickets or to
+fail, and it invented.
 
-```python
-if (not isinstance(document, dict) or set(document) != {"version", "tasks"}
-        or not isinstance(document.get("tasks"), list)):
-    raise ContractError("prepared ticket result must contain only version and tasks")
-```
+### The shape
 
-There is no representation for "this specification does not determine a ticket
-graph, and here is what is missing." The turn's only options are to emit tickets
-or to fail, so it invents.
-
-### The change
-
-**Widen the result to a discriminated union.** `result_schema` gains a second
-branch under `oneOf`, keyed by which of `tasks` or `questions` is present. The
+**The result is a discriminated union.** `result_schema` carries a second branch
+under `oneOf`, keyed by which of `tasks` or `questions` is present; `prepare`
+re-checks that exactly one is there rather than trusting the model's structured
+output. The
 question object is given below, with the gate that produces it; the planning
 turn may emit the same shape when the specification defeats it outright.
 
@@ -176,7 +173,7 @@ for tasks today, against `source_lines`, so a question must point at a real line
 of the specification and cannot be invented whole.
 
 **Refuse partial emission.** A document carrying questions writes no tickets at
-all, even if it also carries a plausible graph. Waves and dependencies are
+all, and a result carrying both branches is refused outright. Waves and dependencies are
 derived from the whole document; emitting the unambiguous half would produce a
 graph whose shape assumes answers nobody gave, and a written `tickets.json`
 invites `anvil run`. This is the sharpest tradeoff in the design -- one
@@ -185,26 +182,19 @@ emission is the open question here. Whole-document is the safe default because
 `prepare` already refuses to overwrite and writing nothing is its existing
 failure behavior.
 
-**Keep the write path untouched.** The union is resolved before `TaskGraph`:
+**The write path is untouched.** Both question branches return
+`needs_clarification` before any provenance is built, so `atomic(output,
+encoded(final))` and the second `TaskGraph.from_document(final)` still run only
+on a graph that survived every check. A `needs_clarification` result names the
+turn that raised it, so a specification that defeats the planning turn is
+distinguishable from a graph the gate objected to.
 
-```python
-if "questions" in document:
-    return {"status": "needs_clarification",
-            "source": str(source), "artifact_dir": str(artifact_dir),
-            "questions": validated, "source_sha256": digest}
-```
-
-Everything after that line -- provenance, `atomic(output, encoded(final))`, the
-second `TaskGraph.from_document(final)` -- runs only on the tasks branch and
-does not change.
-
-**CLI.** `cli.py:143` gains a third exit code. `0` prepared, `2` contract or
-process error as today, `3` needs clarification, with the questions printed as
-text or under `--json`, each with its rule number and cited specification line. A
-distinct code matters because the caller is often a script or an outer agent, and
-"I have a question" is not an error. The parser at `cli.py:47` gains
-`--gate-agent`, `--gate-binary` and the gate profile arguments alongside the
-existing `--agent` group.
+**CLI.** `anvil prepare` has a third exit code: `0` prepared, `2` contract or
+process error as before, `3` needs clarification, with the questions printed to
+stderr or under `--json`, each with its rule number and cited specification line.
+A distinct code matters because the caller is often a script or an outer agent,
+and "I have a question" is not an error. `--gate-agent` and `--gate-binary` sit
+alongside the existing `--agent` group.
 
 ### The gate is adversarial, and not the turn that authored the graph
 
@@ -260,24 +250,27 @@ that vendor's model at all. Two turns of one model over one specification share
 whatever the specification failed to make salient; that is the correlated
 failure a second opinion is bought to avoid.
 
-`prepare` gains `--gate-agent` (an `EXECUTION_AGENTS` member or `none`),
-`--gate-binary`, and a gate profile. The default is the execution adapter that
-`--agent` did not select, so `--agent codex` gates on `claude-code` and the
-reverse, without a flag.
+`--gate-agent` takes an `EXECUTION_AGENTS` member or `none`. The default is the
+execution adapter that `--agent` did not select, so `--agent codex` gates on
+`claude-code` and the reverse, without a flag. A gate profile is not plumbed:
+`prepare` selects no profile for either turn, so the gate runs at its adapter's
+default and `provenance.gate` records no model.
 
-**Availability is already detectable.** `adapters.probe_agent` is what `doctor`
-uses, and `routing.preflight` probes advertised `--model` and effort controls in
-five seconds without invoking a model. Both run against the gate selection
-*before* the planning turn is dispatched, so a missing second provider costs
-nothing rather than being discovered after the graph is paid for.
+**Availability is checked first.** `prepare` calls `adapters.probe_agent` -- the
+same probe `doctor` uses -- against the gate selection *before* the planning turn
+is dispatched, so a missing second provider costs a subprocess rather than being
+discovered after the graph is paid for. It does not call `routing.preflight`:
+that probes advertised `--model` and effort controls, and `prepare` selects no
+profile for either turn, so there is nothing for it to verify.
 
-**Distinctness is declared and checked, not proved.** Anvil can assert that the
-gate uses a different adapter and a different model identifier than the planning
-turn, and it should refuse a gate selection that matches on both. It cannot
-assert a different provider: `validate_selection` accepts any model string
-matching its identifier pattern, and an adapter's CLI can be pointed at another
-endpoint entirely. The provenance record below states what was configured, which
-is the only honest claim available.
+**Distinctness is declared and checked, not proved.** `_gate_selection` refuses
+a gate on the authoring adapter before any turn is dispatched. That is the whole
+of what Anvil checks, and it is weaker than the design wanted: because no profile
+is plumbed, there is no model identifier to compare, so two adapters pointed at
+the same model would pass. Anvil cannot assert a different provider at all --
+`validate_selection` accepts any model string matching its identifier pattern,
+and an adapter's CLI can be pointed at another endpoint. The provenance record
+states what was configured, which is the only honest claim available.
 
 **Muse is the strongest gate and the slowest.** A Muse gate turn is the operator
 handoff: the questions come from whoever is running Anvil. Distinctness is total
@@ -297,15 +290,16 @@ The gate's outcome belongs in the ticket document, because a graph that was
 gated and a graph that was not are otherwise identical files:
 
 ```json
-"gate": {"agent": "claude-code", "model": "claude-opus-5",
-         "distinct_adapter": true, "questions": 0}
+"gate": {"agent": "claude-code", "distinct_adapter": true, "questions": 0}
 ```
 
-`"gate": null` records an explicit `--gate-agent none`. This is a change to
-`schemas/tickets.schema.json` and to `contracts._validate_provenance`, which
-CLAUDE.md requires be changed together, and `provenance` is
-`additionalProperties: false`, so the field must be added to both the schema's
-property list and the `fields` set in `_validate_provenance`.
+`"gate": null` records an explicit `--gate-agent none`. `model` is permitted and
+is not written: `prepare` selects no profile, so it has no model identifier to
+record, and inventing one would be the unverifiable claim this section exists to
+avoid. `questions` is constrained to `0` in both `schemas/tickets.schema.json`
+and `contracts._validate_gate`, because a document is only written when the gate
+raised none. An absent `gate` key is accepted, so documents prepared before this
+existed still validate.
 
 ### Cost
 
