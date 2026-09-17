@@ -458,19 +458,29 @@ class CredentialExclusionTests(PreparationCase):
             prepare(self.spec, self.output, repo=self.repo, agent="claude-code",
                     artifact_root=self.artifacts, runner=FakePlanner(), gate_agent="codex",
                     exclude=("OPENAI_API_KEY",))
-        self.assertEqual(checked.call_args.kwargs["exclude"], ("OPENAI_API_KEY",))
-        self.assertIsNone(checked.call_args.args[2])
-        self.assertEqual(probed.call_args_list, [])
+        self.assertEqual(probed.call_args.kwargs["exclude"], ("OPENAI_API_KEY",))
+        self.assertEqual(checked.call_args_list, [])
 
-    def test_an_empty_set_leaves_the_cheaper_probe_in_place(self):
+    def test_a_profiled_probe_withholds_the_set_through_preflight(self):
         with patch("anvil.preparation.preflight") as checked, \
                 patch("anvil.preparation.probe_agent") as probed, \
                 patch("anvil.preparation.create_runner", return_value=FakeGate()), \
                 patch("anvil.preparation._skills", return_value=([], [])):
             prepare(self.spec, self.output, repo=self.repo, agent="claude-code",
+                    artifact_root=self.artifacts, runner=FakePlanner(), gate_agent="codex",
+                    gate_profile={"model": "gpt-5-codex", "effort": "high"},
+                    exclude=("OPENAI_API_KEY",))
+        self.assertEqual(checked.call_args.kwargs["exclude"], ("OPENAI_API_KEY",))
+        self.assertEqual(probed.call_args_list, [])
+
+    def test_an_empty_set_still_probes_with_nothing_withheld(self):
+        with patch("anvil.preparation.probe_agent") as probed, \
+                patch("anvil.preparation.create_runner", return_value=FakeGate()), \
+                patch("anvil.preparation._skills", return_value=([], [])):
+            prepare(self.spec, self.output, repo=self.repo, agent="claude-code",
                     artifact_root=self.artifacts, runner=FakePlanner(), gate_agent="codex")
         self.assertEqual(probed.call_args.args, ("codex", "codex"))
-        self.assertEqual(checked.call_args_list, [])
+        self.assertEqual(probed.call_args.kwargs["exclude"], ())
 
     def test_malformed_exclusion_sets_are_refused_before_any_turn(self):
         planner = FakePlanner()

@@ -64,10 +64,10 @@ are not a second opinion. Muse takes no profile, because a Muse turn is an
 operator handoff with no model or effort selection.
 
 Availability is checked before the planning turn is dispatched, so a missing
-second agent costs a subprocess rather than a planning turn. A turn without a
-profile or an exclusion set is probed like `anvil doctor` does it; otherwise it
-is preflighted, which withholds the exclusion set from the probe and confirms the
-CLI advertises the model and effort controls a profile depends on.
+second agent costs a subprocess rather than a planning turn. A turn without a profile is
+probed like `anvil doctor` does it; a turn with one is preflighted, which also
+confirms the CLI advertises the model and effort controls that profile depends
+on. Both probes withhold the exclusion set.
 
 `--config <run.json>` reads that run configuration's `credential_exclusion` and
 withholds those variables from both turns and from the probe. It supplies nothing

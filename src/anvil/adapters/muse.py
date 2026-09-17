@@ -250,11 +250,13 @@ class MuseRunner:
         return _read_result(handoff)
 
 
-def doctor(muse_binary: str = "muse", *, probe: bool = False, timeout: float = 5.0) -> MuseDoctor:
+def doctor(muse_binary: str = "muse", *, probe: bool = False, timeout: float = 5.0,
+           exclude=()) -> MuseDoctor:
     """Report operator-handoff availability; there is no CLI to inspect.
 
     The arguments exist only for a uniform adapter signature. No binary is
     located, no version or flag probe runs, and no login, model turn,
-    credential inspection, or installation is attempted.
+    credential inspection, or installation is attempted. There is no subprocess,
+    so an exclusion set has nothing to withhold from.
     """
     return MuseDoctor(executable=None, compatible=True)

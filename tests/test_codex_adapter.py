@@ -1,6 +1,7 @@
 """Command-boundary checks. These tests do not run Codex or use model credits."""
 
 from pathlib import Path
+import os
 import subprocess
 from tempfile import TemporaryDirectory
 import unittest
@@ -120,6 +121,21 @@ class DoctorTests(unittest.TestCase):
         self.assertIsNone(result.compatible)
         self.assertIsNone(result.version)
         run.assert_not_called()
+
+    @patch("anvil.adapters.codex.subprocess.run")
+    @patch("anvil.adapters.codex.shutil.which", return_value="/tools/codex")
+    def test_probe_withholds_excluded_variables_like_a_turn(self, which, run):
+        run.side_effect = [
+            subprocess.CompletedProcess([], 0, "codex-cli test\n", ""),
+            subprocess.CompletedProcess([], 0, "--sandbox workspace-write --cd --json "
+                                               "--output-schema --output-last-message", ""),
+        ]
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "secret", "PATH": "/usr/bin"},
+                        clear=True):
+            doctor(probe=True, timeout=2, exclude=("OPENAI_API_KEY",))
+        for call in run.call_args_list:
+            self.assertNotIn("OPENAI_API_KEY", call.kwargs["env"])
+            self.assertIn("PATH", call.kwargs["env"])
 
     @patch("anvil.adapters.codex.subprocess.run")
     @patch("anvil.adapters.codex.shutil.which", return_value="/tools/codex")

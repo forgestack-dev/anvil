@@ -313,16 +313,13 @@ def _exclusion(value) -> tuple[str, ...]:
 def _probe(agent: str, binary: str, profile, exclude: tuple[str, ...], label: str) -> None:
     """Confirm the agent is installed, and that it advertises the profile's controls.
 
-    `probe_agent` launches the binary through the adapter's own doctor, which has
-    no exclusion parameter, so a configured exclusion set selects `preflight`
-    instead: it withholds the same variables from the probe that the turn itself
-    will not see. Muse launches nothing either way.
+    Both probes withhold the exclusion set: `probe_agent` passes it to the
+    adapter's doctor, and `preflight` additionally confirms the CLI advertises the
+    controls a profile depends on. Muse launches no subprocess either way.
     """
     try:
-        if agent == "muse":
-            probe_agent(agent, binary)
-        elif profile is None and not exclude:
-            probe_agent(agent, binary)
+        if profile is None or agent == "muse":
+            probe_agent(agent, binary, exclude=exclude)
         else:
             preflight(agent, binary, profile, exclude=exclude)
     except (ContractError, ProcessError, OSError) as exc:

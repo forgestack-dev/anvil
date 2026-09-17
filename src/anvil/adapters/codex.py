@@ -207,13 +207,15 @@ class CodexRunner:
 
 
 def doctor(
-    codex_binary: str = "codex", *, probe: bool = False, timeout: float = 5.0
+    codex_binary: str = "codex", *, probe: bool = False, timeout: float = 5.0, exclude=()
 ) -> CodexDoctor:
     """Locate Codex, optionally checking --version and exec --help.
 
     Each probe has its own timeout, limited to 30 seconds. No login, agent turn,
     credential inspection, or installation is attempted. This executes the local
     binary only when probe=True; a binary path must come from trusted configuration.
+    A probe launches the same binary a turn does, so it runs under the same
+    managed environment and withholds the same excluded variables.
     """
     _validate_binary(codex_binary)
     if not math.isfinite(timeout) or not 0 < timeout <= 30:
@@ -226,6 +228,7 @@ def doctor(
 
     version: str | None = None
     try:
+        environment = managed_environment(exclude)
         version_result = subprocess.run(
             [executable, "--version"],
             stdin=subprocess.DEVNULL,
@@ -234,6 +237,7 @@ def doctor(
             timeout=timeout,
             check=False,
             shell=False,
+            env=environment,
         )
         if version_result.returncode:
             return CodexDoctor(
@@ -250,6 +254,7 @@ def doctor(
             timeout=timeout,
             check=False,
             shell=False,
+            env=environment,
         )
         if help_result.returncode:
             return CodexDoctor(

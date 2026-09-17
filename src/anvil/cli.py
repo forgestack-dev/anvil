@@ -216,10 +216,12 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.command == "doctor":
         try:
             profiles = None
+            exclusion = ()
             if arguments.config:
                 from .config import RunConfig
                 from .routing import preflight
                 config = RunConfig.load(arguments.config)
+                exclusion = config.credential_exclusion
                 arguments.agent, arguments.agent_binary = config.agent, config.executable
                 if config.adaptive:
                     entries = {(worker.agent, worker.executable) for worker in config.workers}
@@ -232,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
                                          "version":preflight(selected, binary, profile,
                                                              exclude=config.credential_exclusion),
                                          "model_access":"not probed"})
-            agent = probe_agent(arguments.agent, arguments.agent_binary)
+            agent = probe_agent(arguments.agent, arguments.agent_binary, exclude=exclusion)
         except (ContractError, ValueError, OSError, ProcessError) as exc:
             if arguments.json:
                 print(json.dumps({"error": str(exc)}))

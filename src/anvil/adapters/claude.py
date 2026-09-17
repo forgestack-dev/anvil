@@ -253,13 +253,14 @@ class ClaudeRunner:
 
 
 def doctor(
-    claude_binary: str = "claude", *, probe: bool = False, timeout: float = 5.0
+    claude_binary: str = "claude", *, probe: bool = False, timeout: float = 5.0, exclude=()
 ) -> ClaudeDoctor:
     """Locate Claude Code; optionally run only bounded version/help probes.
 
     Version 2.1.260 is the minimum inspected contract. --max-turns is deliberately
     absent from the advertised-flag check: this supported print-mode flag is
-    omitted from help. Probe commands never initiate login or a model turn.
+    omitted from help. Probe commands never initiate login or a model turn, and
+    withhold the same excluded variables a turn does.
     """
     _validate_binary(claude_binary)
     if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or not 0 < timeout <= 30:
@@ -279,7 +280,7 @@ def doctor(
                 outcome = run_process(
                     (executable, flag), cwd=root, stdin=None,
                     stdout_path=output, stderr_path=root / f"{flag[2:]}.stderr",
-                    timeout=timeout, env=managed_environment(),
+                    timeout=timeout, env=managed_environment(exclude),
                 )
                 if outcome.timed_out:
                     raise ProcessError(f"{flag} probe timed out")

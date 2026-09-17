@@ -1,6 +1,7 @@
 """Claude Code invocation/probe contracts without model calls."""
 
 import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -105,6 +106,21 @@ class ClaudeDoctorTests(unittest.TestCase):
             return ProcessOutcome(0, False)
         run.side_effect = fake
         return doctor(probe=True, timeout=2)
+
+    @patch("anvil.adapters.claude.run_process")
+    @patch("anvil.adapters.claude.shutil.which", return_value="/tools/claude")
+    def test_probe_withholds_excluded_variables_like_a_turn(self, which, run):
+        def fake(argv, **kwargs):
+            kwargs["stdout_path"].write_text(
+                "2.1.260 (Claude Code)\n" if argv[-1] == "--version" else HELP)
+            return ProcessOutcome(0, False)
+        run.side_effect = fake
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "secret", "PATH": "/usr/bin"},
+                        clear=True):
+            doctor(probe=True, timeout=2, exclude=("ANTHROPIC_API_KEY",))
+        for call in run.call_args_list:
+            self.assertNotIn("ANTHROPIC_API_KEY", call.kwargs["env"])
+            self.assertIn("PATH", call.kwargs["env"])
 
     @patch("anvil.adapters.claude.run_process")
     @patch("anvil.adapters.claude.shutil.which", return_value="/tools/claude")

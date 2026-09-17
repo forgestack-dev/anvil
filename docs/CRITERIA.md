@@ -318,10 +318,11 @@ principle -- it reads a graph rather than a repository -- but nothing here
 measures that. Two providers also means two sets of credentials on the host, and each adapter's
 key is useless to the other. `prepare --config run.json` reads that run
 configuration's `credential_exclusion` and withholds those variables from both
-turns, and from the availability probe that precedes them: with a set configured,
-the probe becomes `routing.preflight`, which takes an exclusion, rather than
-`adapters.probe_agent`, which does not. Without `--config` there is no run
-configuration and so no set to apply, exactly as `anvil doctor` behaves. Worth
+turns and from the availability probe that precedes them; `probe_agent` and
+`routing.preflight` both take the set, and each adapter's `doctor` now launches
+its version and flag probes under `managed_environment(exclude)`. Without
+`--config` there is no run configuration and so no set to apply, exactly as
+`anvil doctor` behaves. Worth
 measuring; not worth asserting in advance.
 
 ### Tests

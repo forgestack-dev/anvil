@@ -26,7 +26,7 @@ class AgentDoctorCliTests(unittest.TestCase):
         self.assertEqual(result["codex"]["executable"], "/tools/codex")
         self.assertTrue(result["ticket_skills_available"])
         self.assertTrue(result["spec_preparation_available"])
-        probe.assert_called_once_with("codex", probe=True)
+        probe.assert_called_once_with("codex", probe=True, exclude=())
         self.assertEqual(error, "")
 
     def test_claude_selection_and_custom_binary_reach_only_claude_probe(self):
@@ -46,9 +46,28 @@ class AgentDoctorCliTests(unittest.TestCase):
             self.assertEqual(result["agent"], "claude-code")
             self.assertTrue(result["claude-code"]["compatible"])
             self.assertNotIn("codex", result)
-            probe.assert_called_once_with(binary or "claude", probe=True)
+            probe.assert_called_once_with(binary or "claude", probe=True, exclude=())
             codex.assert_not_called()
             self.assertEqual(error, "")
+
+
+    def test_configured_exclusion_reaches_the_probe_it_precedes(self):
+        import json as _json
+        import tempfile
+        from pathlib import Path as _Path
+        root = _Path(tempfile.mkdtemp())
+        config = root / "run.json"
+        config.write_text(_json.dumps({
+            "version": 1, "repo": str(root), "tickets": str(root / "tickets.json"),
+            "verification": [["true"]], "agent": "codex",
+            "credential_exclusion": ["OPENAI_API_KEY"]}))
+        with patch("anvil.adapters.codex.doctor", return_value=CodexDoctor(
+                executable="/tools/codex", compatible=True)) as probe, \
+                patch("anvil.cli.shutil.which", return_value="/tools/git"):
+            code, output, error = self.invoke(["--config", str(config), "--json"])
+        self.assertEqual(code, 0)
+        self.assertEqual(probe.call_args.kwargs["exclude"], ("OPENAI_API_KEY",))
+        self.assertEqual(error, "")
 
     def test_failed_probe_is_actionable_and_nonzero(self):
         with patch("anvil.cli.probe_agent", return_value=CodexDoctor(
