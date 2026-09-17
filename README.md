@@ -1,12 +1,24 @@
 # Anvil
 
-**Turn a spec into coordinated engineering work.**
+**A coding agent cannot mark its own work done.**
 
-Anvil is ForgeStack's engineering harness for working through specifications and tickets with coding agents. It combines an entry skill, a local runner, adapters for Codex, Claude Code, and Muse, and managed installation of AI Hero skills for ordinary agent sessions.
+Anvil is ForgeStack's engineering harness for taking specifications and tickets
+through coding agents to accepted, verified work. Its central rule is that a
+worker's success message proves nothing: a ticket is done only when it carries
+criterion evidence, an independent review, and passing checks tied to the exact
+revision that was integrated, and only after the managed branch advances to it.
+
+Agents are run in parallel because tickets are independent, not as the point.
+The point is what happens between a finished turn and a merged change.
 
 ## Current status
 
-Anvil executes a JSON ticket graph serially or with a **coordinated pool of Codex, Claude Code, and Muse workers**. Workers implement ready tickets in isolated Git worktrees. One supervisor owns the SQLite ledger and integration queue, runs the required checks on each change atop the latest accepted branch, independently reviews the changes that pass them, and advances that branch only after acceptance evidence, independent review, and verification pass. Muse turns are fulfilled by the operator running Anvil through a staged handoff rather than a local CLI; see [agent adapters](docs/AGENT_ADAPTERS.md).
+Anvil executes a JSON ticket graph serially or with a **coordinated pool of Codex, Claude Code, and Muse workers**. Workers implement ready tickets in isolated Git worktrees and never commit, branch, or push. One supervisor owns the SQLite ledger and integration queue, runs the required checks on each change atop the latest accepted branch, independently reviews the changes that pass them, and advances that branch only after acceptance evidence, independent review, and verification pass. Every acceptance decision and its evidence is recorded in an append-only ledger that outlives the run, so what was accepted, on what revision, and on what grounds stays answerable afterwards. Muse turns are fulfilled by the operator running Anvil through a staged handoff rather than a local CLI; see [agent adapters](docs/AGENT_ADAPTERS.md).
+
+Isolated parallel workspaces are widely available now. The separation Anvil adds
+is between authorship and acceptance: the agent that wrote a change never
+establishes that it is finished, and review runs against the integrated revision
+rather than the one the worker reported.
 
 It also validates ticket graphs, prepares committed Markdown specifications as reviewable JSON tickets, previews dependency waves, checks local prerequisites, reads saved run state, serves that state read-only over local HTTP, and installs or updates AI Hero skills in both agents' native directories. Tickets can explicitly select installed AI Hero text skills or opt into deterministic runtime selection; Anvil pins their exact files, checks reviewed tool and interaction requirements, and supplies compatible instructions to Codex, Claude, or Muse implementation turns. Native resume continues interrupted runs created by this version. Pause commands, general failure retries, model-assisted skill selection, and issue-tracker closeout remain planned. Package installation does not register skills or modify an application repository automatically.
 
