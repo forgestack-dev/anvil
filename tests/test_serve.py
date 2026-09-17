@@ -11,7 +11,8 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from anvil.contracts import ContractError, Task
-from anvil.serve import create
+import anvil.serve
+from anvil.serve import API_VERSION, create
 from anvil.store import RunStore
 from anvil.ticket_status import atomic, encoded
 
@@ -228,17 +229,23 @@ class TelemetryRouteTests(ServeTestCase):
 
 class StreamTests(ServeTestCase):
     def read_stream(self, base: str, path: str, **headers) -> list[dict]:
+        return [event for event in self.read_frames(base, path, **headers)
+                if event["event"] not in ("meta", "end")]
+
+    def read_frames(self, base: str, path: str, **headers) -> list[dict]:
         request = Request(base + path, headers=headers)
-        events = []
+        frames, identifier, name = [], None, "message"
         with urlopen(request, timeout=20) as response:
-            identifier = None
             for raw in response:
                 line = raw.decode().rstrip("\n")
                 if line.startswith("id: "):
                     identifier = int(line[4:])
+                elif line.startswith("event: "):
+                    name = line[7:]
                 elif line.startswith("data: "):
-                    events.append({"id": identifier, **json.loads(line[6:])})
-        return events
+                    frames.append({"id": identifier, "event": name, **json.loads(line[6:])})
+                    identifier, name = None, "message"
+        return frames
 
     def finished_run(self) -> Path:
         run_dir = self.make_run("run-one", ticket("a"))
@@ -270,6 +277,23 @@ class StreamTests(ServeTestCase):
                                   **{"Last-Event-ID": "2"})
         self.assertEqual([event["id"] for event in events], [3])
 
+    def test_a_stream_announces_its_contract_without_consuming_an_id(self):
+        self.finished_run()
+        _, base = self.start()
+        frames = self.read_frames(base, "/api/runs/run-one/stream")
+        self.assertEqual(frames[0]["event"], "meta")
+        self.assertEqual(frames[0]["api_version"], API_VERSION)
+        self.assertIsNone(frames[0]["id"])
+
+    def test_a_terminal_run_ends_with_a_named_event_not_a_comment(self):
+        self.finished_run()
+        _, base = self.start()
+        frames = self.read_frames(base, "/api/runs/run-one/stream")
+        self.assertEqual(frames[-1]["event"], "end")
+        # Unidentified, so a client's resumption point is the last ledger event.
+        self.assertIsNone(frames[-1]["id"])
+        self.assertEqual(frames[-2]["id"], 3)
+
     def test_streams_are_capped(self):
         self.make_run("run-one")
         with RunStore(self.state_dir / "run-one" / "state.sqlite") as store:
@@ -283,6 +307,54 @@ class StreamTests(ServeTestCase):
     def test_streaming_an_unreadable_run_is_not_found(self):
         _, base = self.start()
         self.assertEqual(self.status_of(base, "/api/runs/absent/stream"), 404)
+
+
+class ContractVersionTests(ServeTestCase):
+    def test_every_json_body_carries_the_api_version(self):
+        run_dir = self.make_run("run-one")
+        with RunStore(run_dir / "state.sqlite") as store:
+            store.set_run("running")
+        _, base = self.start()
+        for path in ("/health", "/api/runs", "/api/runs/run-one", "/api/runs/run-one/tasks",
+                     "/api/runs/run-one/attempts", "/api/runs/run-one/events",
+                     "/api/runs/run-one/telemetry"):
+            self.assertEqual(self.get(base, path)["api_version"], API_VERSION, path)
+
+    def test_errors_carry_the_api_version_too(self):
+        self.make_run("run-one")
+        _, base = self.start()
+        request = Request(base + "/api/runs/absent")
+        with self.assertRaises(HTTPError) as caught:
+            urlopen(request, timeout=10)
+        self.assertEqual(json.loads(caught.exception.read())["api_version"], API_VERSION)
+
+
+class PageTests(ServeTestCase):
+    def test_the_page_and_its_assets_are_served_with_a_restrictive_policy(self):
+        self.make_run("run-one")
+        _, base = self.start()
+        with urlopen(base + "/", timeout=10) as response:
+            body = response.read().decode()
+            self.assertIn("<title>Anvil runs</title>", body)
+            policy = response.headers.get("Content-Security-Policy")
+            self.assertIn("default-src 'none'", policy)
+            self.assertIn("script-src 'self'", policy)
+            self.assertEqual(response.headers.get("X-Content-Type-Options"), "nosniff")
+        for name, kind in (("/app.css", "text/css"), ("/app.js", "text/javascript")):
+            with urlopen(base + name, timeout=10) as response:
+                self.assertIn(kind, response.headers.get("Content-Type"))
+
+    def test_assets_are_an_allowlist_not_a_path_join(self):
+        self.make_run("run-one")
+        _, base = self.start()
+        for path in ("/app.py", "/../serve.py", "/assets/app.js", "/%2e%2e/store.py"):
+            self.assertEqual(self.status_of(base, path), 404, path)
+
+    def test_the_page_never_builds_markup_from_ledger_content(self):
+        source = (Path(anvil.serve.__file__).parent / "assets" / "app.js").read_text()
+        self.assertNotIn("innerHTML", source)
+        self.assertNotIn("insertAdjacentHTML", source)
+        self.assertNotIn("document.write", source)
 
 
 if __name__ == "__main__":

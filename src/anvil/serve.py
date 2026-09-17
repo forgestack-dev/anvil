@@ -27,6 +27,22 @@ from .queries import (DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, list_runs, run_attempts,
 from .store import TERMINAL_RUN_STATUSES, StoreError
 from .telemetry import run_telemetry
 
+API_VERSION = 1
+"""The read contract's version, independent of the ledger's storage version.
+
+Additive within a version; see docs/CLOUD_SYNC.md. It travels on /health, on
+every page envelope, and as an unidentified SSE meta event, so a consumer never
+has to infer which contract it is reading.
+"""
+
+ASSETS = Path(__file__).parent / "assets"
+PAGES = {"index.html": "text/html; charset=utf-8",
+         "app.css": "text/css; charset=utf-8",
+         "app.js": "text/javascript; charset=utf-8"}
+POLICY = ("default-src 'none'; script-src 'self'; style-src 'self'; "
+          "connect-src 'self'; img-src 'self' data:; base-uri 'none'; "
+          "form-action 'none'; frame-ancestors 'none'")
+
 RUN_ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 POLL_SECONDS = 1.0
 KEEPALIVE_SECONDS = 15.0
@@ -86,7 +102,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return True
 
     def _send(self, status: HTTPStatus, body: dict) -> None:
-        payload = json.dumps(body, indent=2).encode() + b"\n"
+        payload = json.dumps({"api_version": API_VERSION, **body}, indent=2).encode() + b"\n"
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
@@ -169,10 +185,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     # -- routes -----------------------------------------------------------
 
+    def _asset(self, name: str) -> None:
+        try:
+            body = (ASSETS / name).read_bytes()
+        except OSError:
+            return self._send(HTTPStatus.NOT_FOUND, {"error": "no such asset"})
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", PAGES[name])
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Security-Policy", POLICY)
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
     def _route(self, path: str, parameters: dict) -> None:
+        if path == "/":
+            return self._asset("index.html")
+        if path.lstrip("/") in PAGES:
+            return self._asset(path.lstrip("/"))
         if path == "/health":
             return self._send(HTTPStatus.OK,
                               {"status": "ok", "state_dir": str(self.server.state_dir)})
+
         if path == "/api/runs":
             return self._send(HTTPStatus.OK, list_runs(
                 self.server.state_dir, after=self._after(parameters, numeric=False),
@@ -225,6 +261,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
             self.end_headers()
             self.close_connection = True
+            self.wfile.write(
+                f'event: meta\ndata: {{"api_version": {API_VERSION}}}\n\n'.encode())
+            self.wfile.flush()
             self._pump(run_dir, after, streams)
         except (BrokenPipeError, ConnectionResetError):
             pass
@@ -245,7 +284,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if page["next_after"] is not None:
                 continue
             if run_summary(run_dir)["status"] in TERMINAL_RUN_STATUSES:
-                self.wfile.write(b": run complete\n\n")
+                # A named event, not a comment: EventSource cannot observe a
+                # comment, so a client would reconnect to a finished run forever.
+                # It carries no ID, leaving the caller's resumption point intact.
+                self.wfile.write(b'event: end\ndata: {"reason": "run complete"}\n\n')
                 self.wfile.flush()
                 return
             if time.monotonic() - idle >= KEEPALIVE_SECONDS:
@@ -291,7 +333,7 @@ def serve(state_dir: Path, *, host: str = "127.0.0.1", port: int = 0,
     server = create(state_dir, host=host, port=port, max_streams=max_streams)
     bound_host, bound_port = server.server_address[:2]
     announce(f"anvil serve reading {server.state_dir}")
-    announce(f"http://{bound_host}:{bound_port}/api/runs")
+    announce(f"http://{bound_host}:{bound_port}/")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -31,8 +31,8 @@ none of those, and deliberately keeps its decisions:
 - Restrict run discovery to the configured state root.
 
 Not in this milestone, and still owned by that plan: delivery, issue, and group
-views; artifact excerpts by opaque ID; packaged HTML assets; and the session
-token exchange required before any non-loopback binding.
+views; artifact excerpts by opaque ID; and the session token exchange required
+before any non-loopback binding.
 
 ## Two sources, because telemetry is not in the ledger
 
@@ -60,10 +60,15 @@ rule has one implementation.
 ## Routes
 
 Paginated routes accept `after` and `limit` and return the `queries.py` envelope
-`{"items": [...], "next_after": ...}` unchanged.
+`{"items": [...], "next_after": ...}`, with `api_version` added by the HTTP layer.
+Every JSON body carries `api_version`, including errors, so a consumer never has
+to infer which contract it is reading; `docs/CLOUD_SYNC.md` governs how it
+changes. The library functions in `queries.py` are unversioned and unchanged: the
+wire format is the server's concern, not theirs.
 
 | Path | Source | Cursor |
 | --- | --- | --- |
+| `/` and `/app.css`, `/app.js` | Packaged assets | — |
 | `/health` | — | — |
 | `/api/runs` | `queries.list_runs` | run ID |
 | `/api/runs/{id}` | `queries.run_summary` | — |
@@ -103,6 +108,12 @@ a stream needs. `/stream` emits Server-Sent Events whose `id` is the event ID:
     data: {"id": ..., "kind": ..., "task_id": ..., "attempt_id": ...,
            "from_status": ..., "to_status": ..., "details": {...}}
 
+A stream opens with an unidentified `meta` event carrying `api_version`, and a
+terminal run's stream closes with an unidentified `end` event. Neither carries an
+`id`, so neither disturbs resumption. The `end` event is a named event rather
+than a comment because `EventSource` cannot observe a comment: a client watching
+a finished run would otherwise reconnect to it forever.
+
 `EventSource` resends the last delivered ID as `Last-Event-ID` on reconnect. The
 handler prefers that header over the `after` parameter, so resumption is exact
 and needs no server-side session state: the ledger is append-only and
@@ -117,6 +128,26 @@ past the cap are refused with `503`.
 
 Polling `/events` remains supported and equivalent. A consumer that cannot use
 SSE loses nothing but latency.
+
+## The page
+
+`anvil serve` also serves a single read-only page at `/`, from packaged assets in
+`src/anvil/assets`: a run list, per-run dependency waves, per-attempt spend, and
+the event timeline, updating live from the stream. It is plain HTML, CSS, and
+JavaScript with no build step, no package manager, and no external origin, as
+section 11 of the delivery plan requires.
+
+Assets are served from a fixed allowlist of three filenames rather than by
+joining a request path, so there is no traversal surface. They carry a
+`Content-Security-Policy` of `default-src 'none'` with `'self'` for script,
+style, and fetch, because the page renders ticket text, review findings, and
+repository paths from the ledger. Every value reaches the document through
+`textContent`; nothing builds markup from ledger content.
+
+The page renders accounting the way the API reports it: `cost_kind` accompanies
+every figure, a role that never started shows as a real zero, genuinely absent
+accounting shows as `unknown` rather than zero, and a page total states whether
+accounting was complete.
 
 ## Isolation
 

@@ -15,7 +15,7 @@ PYTHONPATH=src python3 -m unittest discover -s tests # the same tests, serially
 `python3 -m unittest discover -s tests` fails with import errors rather than a
 useful result. CI installs the package first (`pip install -e .`) and omits the
 prefix; locally, prefer `PYTHONPATH=src`, which `tools/run-tests.py` sets for
-you. The suite is about 453 tests: roughly 55 seconds through the parallel
+you. The suite is about 460 tests: roughly 55 seconds through the parallel
 runner, roughly three minutes serially. Both dispatch the same modules and
 assertions. There are no third-party dependencies, and the runner is standard
 library like everything else.
@@ -41,7 +41,7 @@ All source is in `src/anvil/`. Sizes indicate where the complexity is.
 | Processes | `processes.py` | `run_process`, process groups, timeouts |
 | Processes | `environment.py` | `managed_environment()` |
 | Recovery | `recovery.py` | `resume` reconciliation against branch and ledger |
-| Serving | `serve.py` | Read-only local HTTP over the ledger and telemetry; loopback-only, GET-only |
+| Serving | `serve.py`, `assets/` | Read-only local HTTP over the ledger and telemetry, plus the packaged dashboard page; loopback-only, GET-only |
 | Status | `ticket_status.py` | `Publisher`, the `after_commit` hook, local JSON ticket metadata |
 | Agents | `adapters/claude.py`, `codex.py`, `muse.py` | Per-agent invocation, flags, result parsing |
 | Skills | `skill_management.py`, `skill_runtime.py`, `skill_source.py` | AI Hero install, pinning, upstream fetch |
