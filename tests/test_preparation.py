@@ -64,11 +64,11 @@ class PreparationCase(unittest.TestCase):
         self.output = self.repo / "tickets.json"
         self.artifacts = self.root / "artifacts"
 
-    def run_prepare(self, runner, *, skills=None, gate_agent="none", gate_runner=None):
+    def run_prepare(self, runner, *, skills=None, gate_agent="none", gate_runner=None, **kwargs):
         with patch("anvil.preparation._skills", return_value=(skills or [], [])):
             return prepare(self.spec, self.output, repo=self.repo, agent="claude-code",
                            artifact_root=self.artifacts, runner=runner,
-                           gate_agent=gate_agent, gate_runner=gate_runner)
+                           gate_agent=gate_agent, gate_runner=gate_runner, **kwargs)
 
 
 class PreparationTests(PreparationCase):
@@ -334,6 +334,105 @@ class ReadinessGateTests(PreparationCase):
                          "--repo", str(self.repo), "--gate-agent", "none", "--json"])
         self.assertEqual(code, 0)
         self.assertEqual(invoked.call_args.kwargs["gate_agent"], "none")
+
+
+class GateProfileTests(PreparationCase):
+    """Explicit model and effort selection for either preparation turn."""
+
+    def test_recorded_models_make_the_distinctness_claim_checkable(self):
+        result = self.run_prepare(
+            FakePlanner(), gate_agent="codex", gate_runner=FakeGate(),
+            profile={"model": "claude-opus-5", "effort": "high"},
+            gate_profile={"model": "gpt-5-codex", "effort": "high"})
+        self.assertEqual(result["status"], "prepared")
+        provenance = json.loads(self.output.read_text())["provenance"]
+        self.assertEqual(provenance["model"], "claude-opus-5")
+        self.assertEqual(provenance["gate"], {"agent": "codex", "model": "gpt-5-codex",
+                                              "distinct_adapter": True, "questions": 0})
+        TaskGraph.from_document(json.loads(self.output.read_text()))
+
+    def test_profiles_reach_the_runners_they_select(self):
+        with patch("anvil.preparation.create_runner") as created, \
+                patch("anvil.preparation._probe"), \
+                patch("anvil.preparation._skills", return_value=([], [])):
+            created.side_effect = [FakePlanner(), FakeGate()]
+            prepare(self.spec, self.output, repo=self.repo, agent="claude-code",
+                    artifact_root=self.artifacts, gate_agent="codex",
+                    profile={"model": "claude-opus-5", "effort": "high"},
+                    gate_profile={"model": "gpt-5-codex", "effort": "medium"})
+        self.assertEqual(created.call_args_list[0].kwargs["profile"],
+                         {"model": "claude-opus-5", "effort": "high"})
+        self.assertEqual(created.call_args_list[1].kwargs["profile"],
+                         {"model": "gpt-5-codex", "effort": "medium"})
+
+    def test_one_model_behind_two_adapters_is_not_a_second_opinion(self):
+        planner = FakePlanner()
+        with self.assertRaises(ContractError) as raised:
+            self.run_prepare(planner, gate_agent="codex", gate_runner=FakeGate(),
+                             profile={"model": "shared-model", "effort": "high"},
+                             gate_profile={"model": "shared-model", "effort": "high"})
+        self.assertIn("gate model must differ", str(raised.exception))
+        self.assertEqual(planner.calls, [])
+
+    def test_unsupported_and_incomplete_selections_are_refused(self):
+        cases = {
+            "effort": {"model": "claude-opus-5", "effort": "sideways"},
+            "model": {"model": "", "effort": "high"},
+            "field": {"model": "claude-opus-5", "effort": "high", "rank": 2},
+        }
+        for name, gate_profile in cases.items():
+            with self.subTest(case=name):
+                with self.assertRaises(ContractError):
+                    self.run_prepare(FakePlanner(), gate_agent="codex",
+                                     gate_runner=FakeGate(), gate_profile=gate_profile)
+        with self.assertRaises(ContractError) as raised:
+            self.run_prepare(FakePlanner(), gate_profile={"model": "m", "effort": "high"})
+        self.assertIn("gate profile requires a gate agent", str(raised.exception))
+
+    def test_muse_turns_take_no_profile(self):
+        with patch("anvil.preparation._skills", return_value=([], [])):
+            with self.assertRaises(ContractError) as raised:
+                prepare(self.spec, self.output, repo=self.repo, agent="claude-code",
+                        artifact_root=self.artifacts, runner=FakePlanner(),
+                        gate_agent="muse", gate_runner=FakeGate(),
+                        gate_profile={"model": "muse-1", "effort": "high"})
+        self.assertIn("operator handoff", str(raised.exception))
+
+    def test_a_profile_is_preflighted_rather_than_only_probed(self):
+        planner = FakePlanner()
+        with patch("anvil.preparation.preflight") as checked, \
+                patch("anvil.preparation.probe_agent") as probed, \
+                patch("anvil.preparation.create_runner", return_value=FakeGate()), \
+                patch("anvil.preparation._skills", return_value=([], [])):
+            prepare(self.spec, self.output, repo=self.repo, agent="claude-code",
+                    artifact_root=self.artifacts, runner=planner, gate_agent="codex",
+                    gate_runner=None, gate_profile={"model": "gpt-5-codex", "effort": "high"})
+        self.assertEqual(checked.call_args.args[0], "codex")
+        self.assertEqual(checked.call_args.args[2], {"model": "gpt-5-codex", "effort": "high"})
+        self.assertEqual(probed.call_args_list, [])
+
+    def test_cli_pairs_model_with_effort_and_passes_both_selections(self):
+        report = {"status": "prepared", "task_count": 1, "wave_count": 1,
+                  "output": str(self.output), "artifact_dir": str(self.artifacts),
+                  "unclassified_skills": []}
+        with patch("anvil.preparation.prepare", return_value=report) as invoked, \
+                redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            code = main(["prepare", str(self.spec), "-o", str(self.output),
+                         "--repo", str(self.repo), "--agent", "claude-code",
+                         "--model", "claude-opus-5", "--effort", "high",
+                         "--gate-agent", "codex", "--gate-model", "gpt-5-codex",
+                         "--gate-effort", "medium", "--json"])
+        self.assertEqual(code, 0)
+        self.assertEqual(invoked.call_args.kwargs["profile"],
+                         {"model": "claude-opus-5", "effort": "high"})
+        self.assertEqual(invoked.call_args.kwargs["gate_profile"],
+                         {"model": "gpt-5-codex", "effort": "medium"})
+        stdout, stderr = StringIO(), StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main(["prepare", str(self.spec), "-o", str(self.output),
+                         "--repo", str(self.repo), "--gate-model", "gpt-5-codex", "--json"])
+        self.assertEqual(code, 2)
+        self.assertIn("must be given together", json.loads(stdout.getvalue())["error"])
 
 
 if __name__ == "__main__":

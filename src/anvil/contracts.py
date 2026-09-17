@@ -147,7 +147,9 @@ def _validate_gate(value: Any) -> None:
 def _validate_provenance(value: Any) -> None:
     fields = {"generator", "generator_version", "source", "source_sha256", "repo_head",
               "prepared_at", "agent"}
-    _object_fields(value, fields, {"gate"}, "provenance")
+    _object_fields(value, fields, {"gate", "model"}, "provenance")
+    if "model" in value:
+        _text(value["model"], "provenance.model")
     if "gate" in value:
         _validate_gate(value["gate"])
     for name in fields - {"source_sha256", "repo_head", "agent"}:

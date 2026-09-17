@@ -252,31 +252,38 @@ failure a second opinion is bought to avoid.
 
 `--gate-agent` takes an `EXECUTION_AGENTS` member or `none`. The default is the
 execution adapter that `--agent` did not select, so `--agent codex` gates on
-`claude-code` and the reverse, without a flag. A gate profile is not plumbed:
-`prepare` selects no profile for either turn, so the gate runs at its adapter's
-default and `provenance.gate` records no model.
+`claude-code` and the reverse, without a flag. `--gate-model` and `--gate-effort`
+select the gate's model explicitly, and `--model` and `--effort` do the same for
+the planning turn; each pair is given together or not at all. Omitting them
+leaves that turn on its adapter's default, as before.
 
-**Availability is checked first.** `prepare` calls `adapters.probe_agent` -- the
-same probe `doctor` uses -- against the gate selection *before* the planning turn
-is dispatched, so a missing second provider costs a subprocess rather than being
-discovered after the graph is paid for. It does not call `routing.preflight`:
-that probes advertised `--model` and effort controls, and `prepare` selects no
-profile for either turn, so there is nothing for it to verify.
+**Availability is checked first.** `prepare` probes the gate selection *before*
+the planning turn is dispatched, so a missing second provider costs a subprocess
+rather than being discovered after the graph is paid for. A turn with no profile
+gets `adapters.probe_agent`, the same probe `doctor` uses. A turn with a profile
+gets `routing.preflight`, which additionally confirms the CLI advertises the
+`--model` and effort controls that profile depends on; an adapter that silently
+ignores a model flag would otherwise run the gate on whatever its default is
+while provenance recorded the model that was asked for.
 
 **Distinctness is declared and checked, not proved.** `_gate_selection` refuses
-a gate on the authoring adapter before any turn is dispatched. That is the whole
-of what Anvil checks, and it is weaker than the design wanted: because no profile
-is plumbed, there is no model identifier to compare, so two adapters pointed at
-the same model would pass. Anvil cannot assert a different provider at all --
-`validate_selection` accepts any model string matching its identifier pattern,
-and an adapter's CLI can be pointed at another endpoint. The provenance record
-states what was configured, which is the only honest claim available.
+a gate on the authoring adapter, and `_distinct` refuses one whose model matches
+the planning turn's, both before any turn is dispatched. Two adapters pointed at
+one model are not a second opinion, and that is now a refusal rather than a
+caveat -- but only when both models are stated, because a turn left on its
+adapter's default has no identifier to compare. Anvil still cannot assert a
+different *provider*: `validate_selection` accepts any model string matching its
+identifier pattern, and an adapter's CLI can be pointed at another endpoint. The
+provenance record states what was configured, which is the only honest claim
+available.
 
 **Muse is the strongest gate and the slowest.** A Muse gate turn is the operator
 handoff: the questions come from whoever is running Anvil. Distinctness is total
 and the mechanism already exists, but the preparation blocks on a human, which
 is the correct default for a first specification and the wrong one for the
-twentieth.
+twentieth. A Muse turn takes no profile -- `EFFORTS["muse"]` is empty and
+`validate_selection` rejects any selection for it -- so `prepare` refuses a gate
+profile for Muse with that reason rather than an effort-list error.
 
 **No silent self-gating.** If only one adapter probes, `prepare` does not quietly
 gate on the authoring adapter. Either the operator passes `--gate-agent none`,
@@ -293,13 +300,14 @@ gated and a graph that was not are otherwise identical files:
 "gate": {"agent": "claude-code", "distinct_adapter": true, "questions": 0}
 ```
 
-`"gate": null` records an explicit `--gate-agent none`. `model` is permitted and
-is not written: `prepare` selects no profile, so it has no model identifier to
-record, and inventing one would be the unverifiable claim this section exists to
-avoid. `questions` is constrained to `0` in both `schemas/tickets.schema.json`
-and `contracts._validate_gate`, because a document is only written when the gate
-raised none. An absent `gate` key is accepted, so documents prepared before this
-existed still validate.
+`"gate": null` records an explicit `--gate-agent none`. `gate.model` and the
+sibling `provenance.model` are written only when `--gate-model` or `--model` gave
+one; a turn on its adapter's default records no model rather than inventing the
+identifier it happened to resolve to, which would be exactly the unverifiable
+claim this section exists to avoid. `questions` is constrained to `0` in both
+`schemas/tickets.schema.json` and `contracts._validate_gate`, because a document
+is only written when the gate raised none. Absent `gate` and `model` keys are
+accepted, so documents prepared before either existed still validate.
 
 ### Cost
 
@@ -307,8 +315,10 @@ Two invocations per preparation instead of one, on the order of $1 to $4 each at
 the rates in `OBSERVED_LIMITS.md`, against attempt-scale spends of $2 to $7 for a
 ticket that does not merge. The gate turn is cheaper than the planning turn in
 principle -- it reads a graph rather than a repository -- but nothing here
-measures that. Two providers also means two sets of credentials on the host, and
-`credential_exclusion` covers the gate launch exactly as it covers the others.
+measures that. Two providers also means two sets of credentials on the host. Note that
+`credential_exclusion` does not cover either preparation turn: it is a
+`RunConfig` field, and `prepare` takes no run configuration, so both turns are
+launched with the operator's environment as they were before the gate existed.
 Worth measuring; not worth asserting in advance.
 
 ### Tests
@@ -323,9 +333,12 @@ two turns are separately sourced:
   recording the gate agent and `distinct_adapter: true`;
 - a question citing no rule, a rule outside 1 to 6, or `source_refs` absent from
   the specification raises `ContractError` on the same path task refs do;
-- a gate selection matching the planning adapter and model is refused before any
-  turn is dispatched, and `--gate-agent none` is accepted and recorded as
-  `"gate": null`;
+- a gate selection matching the planning adapter, or matching its stated model,
+  is refused before any turn is dispatched, and `--gate-agent none` is accepted
+  and recorded as `"gate": null`;
+- each profile reaches the runner it selects, a profiled turn is preflighted
+  rather than only probed, an unsupported effort or an unknown profile field is
+  refused, and a Muse turn refuses a profile with the operator-handoff reason;
 - the planning turn's artifact directory is not present in the gate prompt;
 - with `--gate-agent none`, the tasks branch behaves exactly as it does today.
 

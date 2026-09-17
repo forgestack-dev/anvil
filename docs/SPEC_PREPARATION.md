@@ -9,6 +9,9 @@ anvil prepare SPEC.md --output tickets.json --repo .
 anvil prepare SPEC.md -o tickets.json --repo . --agent claude-code
 anvil prepare SPEC.md -o tickets.json --repo . --agent muse --timeout 1800
 anvil prepare SPEC.md -o tickets.json --repo . --gate-agent none
+anvil prepare SPEC.md -o tickets.json --repo . \
+  --agent claude-code --model claude-opus-5 --effort high \
+  --gate-agent codex --gate-model gpt-5-codex --gate-effort medium
 ```
 
 The repository must be clean, the specification must be a regular file inside
@@ -51,8 +54,19 @@ the specification, which changes `provenance.source_sha256` and makes the next
 preparation traceably a different input; there is nowhere else an answer would
 be durable.
 
-The gate's availability is probed before the planning turn is dispatched, so a
-missing second agent costs a subprocess rather than a planning turn. When only
+Either turn can be pinned to an explicit model with `--model`/`--effort` and
+`--gate-model`/`--gate-effort`; each pair is given together or not at all, and a
+turn left without one runs on its adapter's default as before. A stated model is
+recorded in `provenance.model` and `provenance.gate.model`, and `prepare` refuses
+a gate whose model matches the planning turn's: two adapters pointed at one model
+are not a second opinion. Muse takes no profile, because a Muse turn is an
+operator handoff with no model or effort selection.
+
+Availability is checked before the planning turn is dispatched, so a missing
+second agent costs a subprocess rather than a planning turn. A turn without a
+profile is probed like `anvil doctor` does it; a turn with one is preflighted,
+which also confirms the CLI advertises the model and effort controls that profile
+depends on. When only
 one agent is installed, pass `--gate-agent none`; the preparation is then
 recorded with `"gate": null` rather than silently gated by its own author.
 

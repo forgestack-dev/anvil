@@ -40,6 +40,7 @@
         "repo_head": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
         "prepared_at": {"type": "string", "format": "date-time"},
         "agent": {"enum": ["codex", "claude-code", "muse"]},
+        "model": {"$ref": "#/$defs/text", "description": "The explicit model the preparation turn selected, when one was given."},
         "gate": {
           "description": "The adversarial readiness gate that judged this graph before it was written, or null when the operator disabled it.",
           "oneOf": [

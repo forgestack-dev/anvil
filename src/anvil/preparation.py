@@ -14,6 +14,7 @@ import uuid
 from . import __version__
 from .adapters import EXECUTION_AGENTS, create_runner, probe_agent
 from .contracts import ContractError, _object_fields, _text
+from .routing import preflight, validate_selection
 from .planning import TaskGraph
 from .processes import ProcessError
 from .skill_management import SkillError, SkillScope, managed_snapshot, status
@@ -260,6 +261,26 @@ def _questions(value, source_lines: set[str], label: str) -> list[dict]:
     return result
 
 
+def _profile(agent: str, profile, label: str):
+    """Validate an explicit model and effort selection for one preparation turn."""
+    if profile is None:
+        return None
+    if agent == "muse":
+        raise ContractError(
+            f"{label} profile is unsupported: Muse turns are an operator handoff with no "
+            "model or effort selection")
+    if not isinstance(profile, dict):
+        raise ContractError(f"{label} profile must be an object with model and effort")
+    unknown = profile.keys() - {"model", "effort", "max_budget_usd"}
+    if unknown:
+        raise ContractError(f"{label} profile has unknown fields: {', '.join(sorted(unknown))}")
+    try:
+        validate_selection(agent, profile)
+    except ContractError as exc:
+        raise ContractError(f"{label} profile: {exc}") from exc
+    return dict(profile)
+
+
 def _binary(agent: str, executable: str | None) -> str:
     if executable:
         return executable
@@ -279,14 +300,39 @@ def _gate_selection(agent: str, gate_agent: str | None) -> str | None:
     return selected
 
 
+def _probe(agent: str, binary: str, profile, label: str) -> None:
+    """Confirm the agent is installed, and that it advertises the profile's controls."""
+    try:
+        if profile is None or agent == "muse":
+            probe_agent(agent, binary)
+        else:
+            preflight(agent, binary, profile)
+    except (ContractError, ProcessError, OSError) as exc:
+        remedy = "; pass none to disable the gate" if label == "gate agent" else ""
+        raise ContractError(f"{label} {agent} is not available: {exc}{remedy}") from exc
+
+
+def _distinct(profile, gate_profile) -> None:
+    """A different adapter running the same model is not a second opinion."""
+    if profile and gate_profile and profile["model"] == gate_profile["model"]:
+        raise ContractError(
+            f"gate model must differ from the preparation model: {profile['model']}")
+
+
 def prepare(source: Path, output: Path, *, repo: Path, agent: str = "codex",
             executable: str | None = None, timeout: float = 900,
-            artifact_root: Path | None = None, runner=None, gate_agent: str | None = None,
-            gate_executable: str | None = None, gate_runner=None) -> dict:
+            artifact_root: Path | None = None, runner=None, profile=None,
+            gate_agent: str | None = None, gate_executable: str | None = None,
+            gate_profile=None, gate_runner=None) -> dict:
     """Generate, gate, validate, and atomically write tickets; runner injection is test-only."""
     if agent not in ("codex", "claude-code", "muse"):
         raise ContractError("preparation agent must be codex, claude-code, or muse")
     gate = _gate_selection(agent, gate_agent)
+    profile = _profile(agent, profile, "preparation")
+    if gate is None and gate_profile is not None:
+        raise ContractError("a gate profile requires a gate agent")
+    gate_profile = _profile(gate, gate_profile, "gate") if gate is not None else None
+    _distinct(profile, gate_profile)
     if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
             or not math.isfinite(timeout) or not 0 < timeout <= 3600):
         raise ContractError("preparation timeout must be between 0 and 3600 seconds")
@@ -311,14 +357,11 @@ def prepare(source: Path, output: Path, *, repo: Path, agent: str = "codex",
     artifact_dir = artifact_root.resolve() / uuid.uuid4().hex
     binary = _binary(agent, executable)
     gate_binary = _binary(gate, gate_executable) if gate is not None else None
+    if runner is None and profile is not None:
+        _probe(agent, binary, profile, "preparation agent")
     if gate is not None and gate_runner is None:
-        try:
-            probe_agent(gate, gate_binary)
-        except (ContractError, ProcessError, OSError) as exc:
-            raise ContractError(
-                f"gate agent {gate} is not available: {exc}; pass none to disable the gate"
-            ) from exc
-    selected = runner if runner is not None else create_runner(agent, binary)
+        _probe(gate, gate_binary, gate_profile, "gate agent")
+    selected = runner if runner is not None else create_runner(agent, binary, profile=profile)
     invocation = dict(
         repo=repository.path,
         prompt=_prompt(relative_source, data.decode("utf-8"), skills),
@@ -366,7 +409,8 @@ def prepare(source: Path, output: Path, *, repo: Path, agent: str = "codex",
     gate_record = None
     if gate is not None:
         gate_artifact_dir = artifact_root.resolve() / uuid.uuid4().hex
-        judge = gate_runner if gate_runner is not None else create_runner(gate, gate_binary)
+        judge = (gate_runner if gate_runner is not None
+                 else create_runner(gate, gate_binary, profile=gate_profile))
         request = dict(
             repo=repository.path,
             prompt=_gate_prompt(relative_source, data.decode("utf-8"), tasks),
@@ -389,6 +433,8 @@ def prepare(source: Path, output: Path, *, repo: Path, agent: str = "codex",
                     "artifact_dir": str(artifact_dir),
                     "gate_artifact_dir": str(gate_artifact_dir), "questions": raised}
         gate_record = {"agent": gate, "distinct_adapter": gate != agent, "questions": 0}
+        if gate_profile is not None:
+            gate_record["model"] = gate_profile["model"]
     final = {"version": 1, "provenance": {
         "generator": "anvil", "generator_version": __version__,
         "source": relative_source,
@@ -397,6 +443,8 @@ def prepare(source: Path, output: Path, *, repo: Path, agent: str = "codex",
         "prepared_at": datetime.now(timezone.utc).isoformat(), "agent": agent,
         "gate": gate_record,
     }, "tasks": []}
+    if profile is not None:
+        final["provenance"]["model"] = profile["model"]
     for value in tasks:
         value["execution"] = {"status": "todo"}
         final["tasks"].append(value)

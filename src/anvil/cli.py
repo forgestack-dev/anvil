@@ -50,10 +50,14 @@ def parser() -> argparse.ArgumentParser:
     prepare.add_argument("--repo", type=Path, default=Path.cwd())
     prepare.add_argument("--agent", choices=EXECUTION_AGENTS, default="codex")
     prepare.add_argument("--agent-binary", help="Trusted agent executable name or path.")
+    prepare.add_argument("--model", help="Explicit model for the preparation turn; requires --effort.")
+    prepare.add_argument("--effort", help="Explicit effort for the preparation turn; requires --model.")
     prepare.add_argument("--gate-agent", choices=(*EXECUTION_AGENTS, "none"),
                          help="Adversarial readiness gate; defaults to the execution agent "
                               "--agent did not select. 'none' disables it and is recorded.")
     prepare.add_argument("--gate-binary", help="Trusted gate executable name or path.")
+    prepare.add_argument("--gate-model", help="Explicit model for the gate turn; requires --gate-effort.")
+    prepare.add_argument("--gate-effort", help="Explicit effort for the gate turn; requires --gate-model.")
     prepare.add_argument("--timeout", type=float, default=900)
     prepare.add_argument("--artifact-root", type=Path)
     prepare.add_argument("--json", action="store_true", help="Print JSON output.")
@@ -93,6 +97,15 @@ def parser() -> argparse.ArgumentParser:
     from .adaptive_cli import add_parsers
     add_parsers(subcommands)
     return command
+
+
+def _explicit_profile(model, effort, model_flag, effort_flag):
+    """Model and effort are selected together or not at all."""
+    if (model is None) != (effort is None):
+        raise ContractError(f"{model_flag} and {effort_flag} must be given together")
+    if model is None:
+        return None
+    return {"model": model, "effort": effort}
 
 
 def _skill_command(arguments: argparse.Namespace) -> int:
@@ -148,11 +161,15 @@ def main(argv: list[str] | None = None) -> int:
         try:
             from .preparation import prepare
             from .workspaces import WorkspaceError
+            selection = _explicit_profile(arguments.model, arguments.effort, "--model", "--effort")
+            gate_selection = _explicit_profile(arguments.gate_model, arguments.gate_effort,
+                                               "--gate-model", "--gate-effort")
             result = prepare(arguments.source, arguments.output, repo=arguments.repo,
                              agent=arguments.agent, executable=arguments.agent_binary,
                              timeout=arguments.timeout, artifact_root=arguments.artifact_root,
-                             gate_agent=arguments.gate_agent,
-                             gate_executable=arguments.gate_binary)
+                             profile=selection, gate_agent=arguments.gate_agent,
+                             gate_executable=arguments.gate_binary,
+                             gate_profile=gate_selection)
         except (ContractError, WorkspaceError, ProcessError, OSError) as exc:
             if arguments.json:
                 print(json.dumps({"error": str(exc)}))
