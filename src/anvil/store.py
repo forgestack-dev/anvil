@@ -26,6 +26,7 @@ class StoreError(ValueError):
 _PHASES = ("running", "candidate", "verified", "reviewed", "integrating", "done")
 _STOPPED = {"failed", "blocked", "interrupted"}
 _RUN_TRANSITIONS = {"created": {"running", *_STOPPED}, "running": {"success", *_STOPPED}}
+TERMINAL_RUN_STATUSES = frozenset({"success", *_STOPPED})
 
 
 def _now() -> str:

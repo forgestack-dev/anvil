@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anvil runs</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<a class="skip" href="#detail">Skip to run detail</a>
+<header>
+  <h1>Anvil</h1>
+  <p id="origin" class="muted">reading local run state</p>
+  <p id="live" class="badge" role="status" aria-live="polite">idle</p>
+</header>
+<main>
+  <nav aria-labelledby="runs-heading">
+    <h2 id="runs-heading">Runs</h2>
+    <ul id="runs" class="runs" role="listbox" aria-label="Saved and active runs" tabindex="0"></ul>
+    <button id="more" class="more" hidden>Load more runs</button>
+  </nav>
+  <section id="detail" aria-labelledby="detail-heading" tabindex="-1">
+    <h2 id="detail-heading">No run selected</h2>
+    <dl id="facts" class="facts"></dl>
+    <p id="run-error" class="note" hidden></p>
+    <div class="tabs" role="tablist" aria-label="Run detail">
+      <button role="tab" id="tab-tasks" aria-controls="panel-tasks" aria-selected="true">Tasks</button>
+      <button role="tab" id="tab-spend" aria-controls="panel-spend" aria-selected="false" tabindex="-1">Spend</button>
+      <button role="tab" id="tab-events" aria-controls="panel-events" aria-selected="false" tabindex="-1">Events</button>
+    </div>
+    <div id="panel-tasks" role="tabpanel" aria-labelledby="tab-tasks" tabindex="0"></div>
+    <div id="panel-spend" role="tabpanel" aria-labelledby="tab-spend" tabindex="0" hidden></div>
+    <div id="panel-events" role="tabpanel" aria-labelledby="tab-events" tabindex="0" hidden></div>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

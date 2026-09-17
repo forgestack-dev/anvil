@@ -53,6 +53,14 @@ def parser() -> argparse.ArgumentParser:
     prepare.add_argument("--timeout", type=float, default=900)
     prepare.add_argument("--artifact-root", type=Path)
     prepare.add_argument("--json", action="store_true", help="Print JSON output.")
+    serve = subcommands.add_parser("serve", help="Read saved and in-progress runs over local HTTP.")
+    serve.add_argument("--state-dir", type=Path, default=Path.home() / ".local/state/anvil",
+                       help="Run state root to read; defaults to ~/.local/state/anvil.")
+    serve.add_argument("--host", default="127.0.0.1",
+                       help="Loopback address to bind; non-loopback binding is refused.")
+    serve.add_argument("--port", type=int, default=8787, help="Port to bind; 0 takes any free port.")
+    serve.add_argument("--max-streams", type=int, default=8,
+                       help="Concurrent event streams to allow; further streams get 503.")
     skills = subcommands.add_parser("skills", help="Install, update, or inspect managed agent skills.")
     skill_actions = skills.add_subparsers(dest="skill_action", required=True)
     for action, help_text in (
@@ -209,6 +217,16 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{label} detail: {agent.error}")
             print("Execution requires macOS or Linux. Native resume and ticket-selected text skill contexts are available for new runs.")
         return 0 if git and agent.compatible and os.name == "posix" else 1
+
+    if arguments.command == "serve":
+        from .serve import serve as serve_runs
+        try:
+            return serve_runs(arguments.state_dir, host=arguments.host, port=arguments.port,
+                              max_streams=arguments.max_streams,
+                              announce=lambda message: print(message, file=sys.stderr, flush=True))
+        except (ContractError, OSError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
 
     if arguments.command in ("run", "resume", "status"):
         from .config import RunConfig

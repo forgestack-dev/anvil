@@ -8,7 +8,7 @@ Anvil is ForgeStack's engineering harness for working through specifications and
 
 Anvil executes a JSON ticket graph serially or with a **coordinated pool of Codex, Claude Code, and Muse workers**. Workers implement ready tickets in isolated Git worktrees. One supervisor owns the SQLite ledger and integration queue, runs the required checks on each change atop the latest accepted branch, independently reviews the changes that pass them, and advances that branch only after acceptance evidence, independent review, and verification pass. Muse turns are fulfilled by the operator running Anvil through a staged handoff rather than a local CLI; see [agent adapters](docs/AGENT_ADAPTERS.md).
 
-It also validates ticket graphs, prepares committed Markdown specifications as reviewable JSON tickets, previews dependency waves, checks local prerequisites, reads saved run state, and installs or updates AI Hero skills in both agents' native directories. Tickets can explicitly select installed AI Hero text skills or opt into deterministic runtime selection; Anvil pins their exact files, checks reviewed tool and interaction requirements, and supplies compatible instructions to Codex, Claude, or Muse implementation turns. Native resume continues interrupted runs created by this version. Pause commands, general failure retries, model-assisted skill selection, and issue-tracker closeout remain planned. Package installation does not register skills or modify an application repository automatically.
+It also validates ticket graphs, prepares committed Markdown specifications as reviewable JSON tickets, previews dependency waves, checks local prerequisites, reads saved run state, serves that state read-only over local HTTP, and installs or updates AI Hero skills in both agents' native directories. Tickets can explicitly select installed AI Hero text skills or opt into deterministic runtime selection; Anvil pins their exact files, checks reviewed tool and interaction requirements, and supplies compatible instructions to Codex, Claude, or Muse implementation turns. Native resume continues interrupted runs created by this version. Pause commands, general failure retries, model-assisted skill selection, and issue-tracker closeout remain planned. Package installation does not register skills or modify an application repository automatically.
 
 Prepare a specification before execution:
 
@@ -272,6 +272,25 @@ Anvil is MIT licensed. Installed AI Hero skills retain their upstream MIT licens
 ## Ticket status and model routing
 
 Opt into source JSON ticket status with `ticket_status: true`. Named model/effort profiles, shadow/rules/adaptive routing, usage reports, one bounded escalation, and local gated policy learning are available through `adaptive` configuration. Existing configurations retain their behavior. See [configuration and limitations](docs/ADAPTIVE_ROUTING.md) and [example](examples/adaptive-run.json). Currency reservations are estimates; live savings require workload evidence.
+
+## Watch a run
+
+```sh
+anvil serve --state-dir ~/.local/state/anvil --port 8787
+```
+
+Serves saved and in-progress runs as JSON for a dashboard or other long-lived
+reader: paginated run, task, attempt, and event pages, per-attempt token and cost
+accounting, and a Server-Sent Events stream that resumes exactly from the ledger
+event ID in `Last-Event-ID`. Every route is a read-only `GET`; the server never
+writes Git, the ledger, or an artifact, and stopping it cannot stop a worker.
+
+Cost figures are estimates labeled with their provenance, not invoices, and
+absent accounting stays unknown rather than zero. Binding is loopback-only:
+reach it from another device over an SSH tunnel. See [the serve
+contract](docs/SERVE.md), and [the delivery dashboard
+plan](docs/DELIVERY_DASHBOARD_PLAN.md) for the delivery, issue, and group views
+that remain future work.
 
 ## Resume interrupted work
 

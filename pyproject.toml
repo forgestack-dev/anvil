@@ -31,7 +31,7 @@ where = ["src"]
 namespaces = false
 
 [tool.setuptools.package-data]
-anvil = ["skill_compat.json"]
+anvil = ["skill_compat.json", "assets/*.html", "assets/*.css", "assets/*.js"]
 
 [tool.setuptools.data-files]
 "share/anvil/skills/anvil" = ["skills/anvil/SKILL.md"]

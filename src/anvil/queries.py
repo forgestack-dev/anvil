@@ -9,7 +9,7 @@ whole event history or relying on the final-only ``report.json``.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 import json
 from pathlib import Path
 import sqlite3
@@ -175,3 +175,35 @@ def run_events(run_dir: Path, *, after: int = 0,
             items.append(item)
         next_after = page[-1]["id"] if len(rows) > limit else None
         return {"items": items, "next_after": next_after}
+
+
+def attempt_messages(run_dir: Path, message_kind: str,
+                     attempt_ids: Sequence[str]) -> dict[str, dict]:
+    """The latest coordinator message body of one kind per attempt, for a bounded set.
+
+    One indexed pass over the page's attempts, rather than one scan per attempt:
+    ``message_kind`` lives inside the event ``details`` document, so a caller
+    resolving it per attempt would rescan the whole event history each time.
+    """
+    identifiers = list(attempt_ids)
+    if not all(isinstance(identifier, str) for identifier in identifiers):
+        raise StoreError("attempt IDs must be strings")
+    if len(identifiers) > MAX_PAGE_SIZE:
+        raise StoreError(f"cannot index more than {MAX_PAGE_SIZE} attempts")
+    if not isinstance(message_kind, str) or not message_kind:
+        raise StoreError("message kind must be a non-empty string")
+    if not identifiers:
+        return {}
+    path = Path(run_dir) / "state.sqlite"
+    with _read_only(path) as connection:
+        _require_run(connection, path)
+        placeholders = ",".join("?" * len(identifiers))
+        rows = connection.execute(
+            "SELECT attempt_id, details FROM events "
+            f"WHERE kind = 'message' AND attempt_id IN ({placeholders}) "
+            "AND json_extract(details, '$.message_kind') = ? ORDER BY id",
+            (*identifiers, message_kind),
+        ).fetchall()
+        # Ordered by event ID, so a later message replaces an earlier one.
+        return {row["attempt_id"]: json.loads(row["details"]).get("body")
+                for row in rows}
