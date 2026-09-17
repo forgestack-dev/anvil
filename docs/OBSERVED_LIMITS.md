@@ -187,6 +187,10 @@ still omitted `cli.py`, and attempt 5 then exhausted a standard budget before
 producing any candidate. Enumeration bounds the argument; it does not make the
 ticket completable in one invocation.
 
+[CRITERIA.md](CRITERIA.md) turns the advice above into a contract: every
+criterion names the role that decides it, and an absence names the set it holds
+over.
+
 The mechanism this section now records is different, and it is in the ordering
 rather than in the criteria. The configured checks run *after* independent
 review, so a reviewer that cannot execute anything is asked to judge candidates

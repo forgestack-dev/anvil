@@ -155,6 +155,10 @@ It cannot check completeness, and this is not a small caveat. The human's own
 rewritten enumeration omitted `cli.py`, which is the site that ended the
 measured run.
 
+The authoring side of this stage is rule 3 of [CRITERIA.md](CRITERIA.md), which
+also proposes asking the question at intake, where `prepare` currently has no
+way to decline.
+
 ## What no stage solves
 
 - **Whether a site is in scope.** `anvil doctor --config` is not a run, yet the
