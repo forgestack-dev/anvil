@@ -32,8 +32,8 @@ class ParallelStoreTests(unittest.TestCase):
     def complete(self, store: RunStore, task_id: str, attempt_id: str):
         for status, details in (
             ("candidate", {"candidate_sha": "candidate"}),
-            ("reviewed", {"review": {"passed": True}}),
             ("verified", {"verification": [{"exit_code": 0}]}),
+            ("reviewed", {"review": {"passed": True}}),
             ("integrating", {"integration_sha": "integration"}),
             ("done", {"integrated_sha": "integrated"}),
         ):
@@ -145,6 +145,8 @@ class ParallelStoreTests(unittest.TestCase):
                     self.assertEqual(item["updated_at"], timestamp)
                     self.assertEqual(item["status"], "candidate")
                 self.assertIsNone(snapshot["attempts"][0]["finished_at"])
+            store.transition("a", "verified", attempt_id=attempt,
+                             details={"verification": [{"exit_code": 0}]})
             store.transition("a", "reviewed", attempt_id=attempt, details={"review": {"passed": True}})
             self.assertEqual(store.snapshot()["tasks"][0]["details"]["heartbeat_at"], timestamp)
 
@@ -182,8 +184,8 @@ class ParallelStoreTests(unittest.TestCase):
 
     def complete_from_candidate(self, store, task_id, attempt):
         for status, details in (
-            ("reviewed", {"review": {"passed": True}}),
             ("verified", {"verification": [{"exit_code": 0}]}),
+            ("reviewed", {"review": {"passed": True}}),
             ("integrating", {"integration_sha": "integration"}),
             ("done", {"integrated_sha": "integrated"}),
         ):

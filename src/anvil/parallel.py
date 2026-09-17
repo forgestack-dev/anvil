@@ -50,7 +50,7 @@ class Integration:
     base: str
     sha: str
     future: Future
-    phase: str = "review"
+    phase: str = "verification"
 
 
 class _Blocked(Exception):
@@ -312,7 +312,7 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                     # structured failure cause must still reach the final report.
                     store.record_rejection(item.task.id, attempt_id=item.attempt_id,
                                            reason=reason, failure_category=failure_category)
-                    adaptive.settle(item)
+                    adaptive.settle(item, reviewed=integration.phase == "review")
                     new_id = str(uuid.uuid4())
                     decision = adaptive.decide(item.task, item.worker, base, new_id, escalate=profile)
                     old_id = item.attempt_id
@@ -381,7 +381,29 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                                 continue
                             raise
                         repo.assert_revision(workspace, integration.sha)
-                        if integration.phase == "review":
+                        if integration.phase == "verification":
+                            store.transition(item.task.id, "verified", attempt_id=item.attempt_id,
+                                             details={"verification": outcome, "verified_sha": integration.sha})
+                            supplied_diff = None
+                            if config.agent == "claude-code":
+                                supplied_diff = repo.git("diff", "--no-ext-diff", "--no-textconv",
+                                                         "--no-color", "--no-renames", "--ignore-submodules=none",
+                                                         integration.base, integration.sha, "--", cwd=workspace)
+                            notify(f"{item.task.id}: reviewing {integration.sha[:12]} with {config.agent}")
+                            if publisher is not None or adaptive is not None:
+                                store.record_message(item.task.id, attempt_id=item.attempt_id,
+                                                     kind="review_started", body={"sha": integration.sha})
+                            selected_reviewer = adaptive.runner(item, review=True, injected=review_runner if injected else None) if adaptive else review_runner
+                            integration.phase = "review"
+                            integration.future = submit(selected_reviewer.run, repo=workspace,
+                                                        prompt=_review_prompt(item.task, integration.base,
+                                                                              integration.sha, item.claims,
+                                                                              orientation=orientation,
+                                                                              supplied_diff=supplied_diff),
+                                                        schema=REVIEW_SCHEMA, artifact_dir=item.artifacts / "review",
+                                                        timeout=config.agent_timeout, read_only=True,
+                                                        task=item.task, role="review")
+                        else:
                             validate_result(outcome, item.task, review=True)
                             store.record_message(item.task.id, attempt_id=item.attempt_id,
                                                  kind="review_result", body=outcome)
@@ -393,13 +415,6 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                                                {"review": outcome, "integration_sha": integration.sha})
                             store.transition(item.task.id, "reviewed", attempt_id=item.attempt_id,
                                              details={"review": outcome, "reviewed_sha": integration.sha})
-                            notify(f"{item.task.id}: verifying integrated changes")
-                            integration.phase = "verification"
-                            integration.future = submit(verify, config, workspace,
-                                                        item.artifacts / "verification", task=item.task)
-                        else:
-                            store.transition(item.task.id, "verified", attempt_id=item.attempt_id,
-                                             details={"verification": outcome, "verified_sha": integration.sha})
                             store.transition(item.task.id, "integrating", attempt_id=item.attempt_id,
                                              details={"integration_sha": integration.sha,
                                                       "expected_base": integration.base})
@@ -485,26 +500,15 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                         item = candidates.pop(0)
                         current = item.task.id
                         sha = repo.prepare_integration(workspace, base, item.candidate)
-                        supplied_diff = None
-                        if config.agent == "claude-code":
-                            supplied_diff = repo.git("diff", "--no-ext-diff", "--no-textconv",
-                                                     "--no-color", "--no-renames", "--ignore-submodules=none",
-                                                     base, sha, "--", cwd=workspace)
                         store.record_message(item.task.id, attempt_id=item.attempt_id, kind="integration",
                                              body={"worker_base": item.base, "accepted_base": base,
                                                    "integration_sha": sha, "review_agent": config.agent})
-                        notify(f"{item.task.id}: reviewing {sha[:12]} with {config.agent}")
-                        if publisher is not None or adaptive is not None:
-                            store.record_message(item.task.id, attempt_id=item.attempt_id,
-                                                 kind="review_started", body={"sha": sha})
-                        selected_reviewer = adaptive.runner(item, review=True, injected=review_runner if injected else None) if adaptive else review_runner
-                        future = submit(selected_reviewer.run, repo=workspace,
-                                        prompt=_review_prompt(item.task, base, sha, item.claims,
-                                                              orientation=orientation,
-                                                              supplied_diff=supplied_diff),
-                                        schema=REVIEW_SCHEMA, artifact_dir=item.artifacts / "review",
-                                        timeout=config.agent_timeout, read_only=True, task=item.task, role="review")
-                        integration = Integration(item, base, sha, future)
+                        # Checks first: the review is dispatched from the completion
+                        # block once these pass. docs/ACCEPTANCE.md
+                        notify(f"{item.task.id}: verifying {sha[:12]}")
+                        future = submit(verify, config, workspace,
+                                        item.artifacts / "verification", task=item.task)
+                        integration = Integration(item, base, sha, future, phase="verification")
 
                     current = None
                     futures = [item.future for item in active.values() if item.future is not None]

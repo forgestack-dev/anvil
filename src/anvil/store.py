@@ -19,7 +19,11 @@ class StoreError(ValueError):
     """The ledger cannot accept the requested state change."""
 
 
-_PHASES = ("running", "candidate", "reviewed", "verified", "integrating", "done")
+# Checks run before independent review: a reviewer that cannot execute
+# anything is never asked to judge a candidate the configured commands
+# already reject. _require_evidence below derives its requirements from
+# these indexes, so this order is the phase contract. See docs/ACCEPTANCE.md.
+_PHASES = ("running", "candidate", "verified", "reviewed", "integrating", "done")
 _STOPPED = {"failed", "blocked", "interrupted"}
 _RUN_TRANSITIONS = {"created": {"running", *_STOPPED}, "running": {"success", *_STOPPED}}
 
@@ -365,7 +369,7 @@ class RunStore:
             raise StoreError("failure_category must be review_rejection or verification_failure")
         with self._transaction() as connection:
             task = self._active_task(connection, task_id, attempt_id)
-            if task["status"] not in {"candidate", "reviewed"}:
+            if task["status"] not in {"candidate", "verified"}:
                 raise StoreError("only rejected review/check attempts can record a rejection")
             timestamp = _now()
             details = json.loads(task["details"]) | {"retry_reason": reason,
@@ -406,7 +410,7 @@ class RunStore:
             count = 1 + connection.execute("SELECT COUNT(*) FROM events WHERE task_id=? AND kind='retry'", (task_id,)).fetchone()[0]
             if count >= min(maximum, 2):
                 raise StoreError("configured attempt limit exhausted")
-            if task["status"] not in {"candidate", "reviewed"}:
+            if task["status"] not in {"candidate", "verified"}:
                 raise StoreError("only rejected review/check attempts can retry")
             timestamp = _now()
             details = json.loads(task["details"]) | {"retry_reason": reason,

@@ -153,13 +153,15 @@ class ParallelFailureTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         first = result["tasks"][0]["details"]["integrated_sha"]
         self.assert_saved_stop(result, ["done", "failed", "pending"], accepted=first)
-        self.assertEqual(len(reviewer.workspaces), 2)
+        # The combined change fails the checks, so its review is never dispatched:
+        # only the first, accepted candidate was reviewed. docs/ACCEPTANCE.md
+        self.assertEqual(len(reviewer.workspaces), 1)
         second = result["tasks"][1]["details"]
-        self.assertIn("reviewed_sha", second)
+        self.assertNotIn("reviewed_sha", second)
         self.assertNotIn("verified_sha", second)
         self.assertTrue(any(record["returncode"] != 0 for record in second["verification"]))
-        self.assertEqual(self.git("show", f"{second['reviewed_sha']}:left.txt"), "first")
-        self.assertEqual(self.git("show", f"{second['reviewed_sha']}:right.txt"), "second")
+        combined = result["attempts"][1]["details"]["candidate_sha"]
+        self.assertEqual(self.git("show", f"{combined}:right.txt"), "second")
         self.assertEqual(self.git("show", f"{result['branch']}:right.txt"), "original")
         # Each stale worker's change passes by itself; only their combination fails.
         subprocess.run(check, cwd=runners["claude-worker"].workspaces[0], check=True)

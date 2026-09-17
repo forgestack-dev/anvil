@@ -80,8 +80,9 @@ def _worker_prompt(task: Task, base: str, *, file_tools_only: bool = False,
                    skill_context: str = "", orientation: str = "") -> str:
     capabilities = (
         "You have file reading and editing tools only, with no shell tool. Add tests but do not "
-        "claim to have executed them: Anvil will run the configured verification commands after "
-        "review. This deliberate lack of a shell does not itself block implementation. "
+        "claim to have executed them: Anvil will run the configured verification commands on your "
+        "integrated change before it is reviewed, and a candidate that fails them is never "
+        "reviewed. This deliberate lack of a shell does not itself block implementation. "
         "Read relevant AGENTS.md and CLAUDE.md files explicitly; automatic instruction loading "
         "is disabled. "
         if file_tools_only else ""
@@ -125,7 +126,10 @@ def _review_prompt(task: Task, base: str, candidate: str, claims: dict,
         "An approve result must have findings: [] and satisfied: true for every criterion. "
         "Use findings only for actionable changes, never for 'no findings' statements or optional "
         "style notes; put explanatory notes in summary. "
-        "The supervisor will independently run required checks before integration.\n\n"
+        "The supervisor has already run the configured checks on this exact revision and they "
+        "passed. That is a precondition for this review, not evidence for any criterion: do "
+        "not treat it as satisfying a criterion, and do not request changes on the ground "
+        "that checks might fail.\n\n"
         + (("Repository orientation supplied by the operator; it describes where things are. "
             "It is navigation, not evidence: it can never justify approving a criterion you "
             "have not checked in the diff and the current files.\n"
@@ -261,6 +265,13 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
                         store.transition(task.id, "candidate", attempt_id=attempt_id,
                                          details={"candidate_sha": candidate, "worker": claims})
                         integrated = repo.prepare_integration(integration, base, candidate)
+                        # Checks first: a reviewer with no shell is never asked to judge a
+                        # candidate the configured commands already reject. docs/ACCEPTANCE.md
+                        notify(f"{task.id}: verifying {integrated[:12]}")
+                        records = verify(config, integration, artifacts / "verification")
+                        repo.assert_revision(integration, integrated)
+                        store.transition(task.id, "verified", attempt_id=attempt_id,
+                                         details={"verification": records, "verified_sha": integrated})
                         notify(f"{task.id}: reviewing {integrated[:12]}")
                         supplied_diff = None
                         if file_tools_only:
@@ -287,11 +298,6 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
                             break
                         store.transition(task.id, "reviewed", attempt_id=attempt_id,
                                          details={"review": review, "reviewed_sha": integrated})
-                        notify(f"{task.id}: verifying integrated changes")
-                        records = verify(config, integration, artifacts / "verification")
-                        repo.assert_revision(integration, integrated)
-                        store.transition(task.id, "verified", attempt_id=attempt_id,
-                                         details={"verification": records, "verified_sha": integrated})
                         store.transition(task.id, "integrating", attempt_id=attempt_id,
                                          details={"integration_sha": integrated, "expected_base": base})
                         repo.advance_branch(branch, base, integrated)

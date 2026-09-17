@@ -133,10 +133,18 @@ class Session:
             return None
         return self.policy.escalation(self.decisions[item.attempt_id]["profile"])
 
-    def settle(self, item):
+    def settle(self, item, *, reviewed=True):
+        """Commit an attempt's actual cost, releasing its reservation.
+
+        Under checks-first a rejected candidate may never reach review, so
+        charging that attempt the reserved reviewer cost would consume a run's
+        soft budget with invocations that never happened. The caller says
+        whether the review was dispatched; it never guesses from the artifacts,
+        where an absent record also means damaged accounting.
+        """
         reservation = self.reservations.pop(item.attempt_id, 0)
         total, complete = 0.0, True
-        for role in ("worker", "review"):
+        for role in ("worker", "review") if reviewed else ("worker",):
             try:
                 record = load_record(item.artifacts / role / "invocation.json", role)
                 if record["cost_usd"] is None:

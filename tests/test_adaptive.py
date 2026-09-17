@@ -350,18 +350,97 @@ prompt = sys.stdin.read()''')
         self.assertEqual(runner.workers, [])
         self.assertEqual(runner.reviews, [])
 
-    def test_approved_attempt_cancellation_and_infrastructure_error_are_not_quality_failures(self):
+    def test_a_failing_check_never_reaches_review(self):
+        """Checks-first: a red candidate costs no review invocation."""
+        runner = FakeRunner("bad-check")
+        result = run_serial(replace(self.config, adaptive=config_options()), runner=runner)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(runner.reviews, [])
+        details = result["tasks"][0]["details"]
+        self.assertIn("candidate_sha", details)
+        self.assertNotIn("verified_sha", details)
+        self.assertNotIn("review", details)
+        self.assertNotEqual(details["verification"][0]["returncode"], 0)
+        # An unstarted review is a real zero, never unknown accounting.
+        review = next(i for i in result["routing"]["attempts"][0]["invocations"]
+                      if i["role"] == "review")
+        self.assertEqual((review["cost_usd"], review["cost_kind"]), (0, "not_started"))
+
+    def test_a_check_rejection_retries_without_ever_reviewing(self):
+        runner = FakeRunner("bad-check")
+        result = run_serial(replace(self.config, adaptive=config_options(attempts=2)), runner=runner)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(runner.reviews, [])
+        self.assertEqual(len(runner.workers), 2)
+        categories = [a["details"].get("failure_category") for a in result["attempts"]]
+        self.assertEqual(categories[0], "verification_failure")
+
+    def test_an_unstarted_review_does_not_consume_its_reservation(self):
+        """Stage 1 accounting: only a dispatched review is charged.
+
+        Under checks-first a rejected candidate often never reaches review, so
+        charging the reserved reviewer cost would spend a run's soft budget on
+        invocations that never happened.
+        """
+        from types import SimpleNamespace
+        from anvil.adaptive_runtime import Session
+        from anvil.ticket_status import atomic, encoded
+        for reviewed, expected in ((False, 0.25), (True, 4.0)):
+            with self.subTest(reviewed=reviewed):
+                # resolve(): read_regular refuses symlinked paths, and on macOS
+                # a temp dir sits under /var, itself a link to /private/var.
+                artifacts = Path(self.root).resolve() / f"settle-{reviewed}"
+                worker = artifacts / "worker"
+                worker.mkdir(parents=True)
+                atomic(worker / "invocation.json",
+                       encoded({"role": "worker", "cost_usd": 0.25, "duration_seconds": 1.0,
+                                "cost_kind": "provider_reported_estimate"}))
+                session = Session.__new__(Session)
+                session.committed_cost = 0.0
+                session.reservations = {"attempt": 4.0}
+                item = SimpleNamespace(attempt_id="attempt", artifacts=artifacts)
+                session.settle(item, reviewed=reviewed)
+                self.assertAlmostEqual(session.committed_cost, expected)
+                self.assertEqual(session.reservations, {})
+
+    def test_cancellation_and_infrastructure_error_are_not_quality_failures(self):
+        """An interrupted or broken check is never scored against the worker.
+
+        Checks now precede review, so the error lands before any review exists;
+        the attempt must still evaluate as insufficient evidence rather than as
+        a rejection. See docs/ACCEPTANCE.md.
+        """
         from anvil.execution import verify
         from anvil.processes import ProcessError
         from anvil.learning import history
         for error in (KeyboardInterrupt(), ProcessError('verification process unavailable')):
             calls = []
-            def stop_after_review(*args):
+            def stop_at_integration_checks(*args):
                 calls.append(1)
                 if len(calls) > 1:
                     raise error
                 return verify(*args)
-            with self.subTest(error=type(error).__name__), patch('anvil.parallel.verify', stop_after_review):
+            with self.subTest(error=type(error).__name__), patch('anvil.parallel.verify', stop_at_integration_checks):
+                result = run_serial(replace(self.config, adaptive=config_options()), runner=FakeRunner())
+            attempt = result['routing']['attempts'][0]
+            self.assertEqual(attempt['evaluation'], 'insufficient_evidence')
+            # The checks broke before review, so no verdict was ever produced.
+            self.assertNotIn('review', result['attempts'][0]['details'])
+            with history(Repository(self.repo)) as db:
+                row = db.execute('SELECT data FROM samples WHERE run_id=?', (result['run_id'],)).fetchone()
+            if isinstance(error, KeyboardInterrupt):
+                self.assertIsNone(row)  # resumable runs cannot be imported as immutable final evidence
+            else:
+                self.assertFalse(json.loads(row[0])['eligible'])
+
+    def test_infrastructure_error_after_approval_is_not_a_quality_failure(self):
+        """The post-approval half of the case above, which checks-first moved."""
+        from anvil.processes import ProcessError
+        from anvil.learning import history
+        from anvil.workspaces import Repository as Repo
+        for error in (KeyboardInterrupt(), ProcessError('git unavailable')):
+            with self.subTest(error=type(error).__name__), \
+                 patch.object(Repo, 'advance_branch', side_effect=error):
                 result = run_serial(replace(self.config, adaptive=config_options()), runner=FakeRunner())
             attempt = result['routing']['attempts'][0]
             self.assertEqual(attempt['evaluation'], 'insufficient_evidence')
@@ -369,7 +448,7 @@ prompt = sys.stdin.read()''')
             with history(Repository(self.repo)) as db:
                 row = db.execute('SELECT data FROM samples WHERE run_id=?', (result['run_id'],)).fetchone()
             if isinstance(error, KeyboardInterrupt):
-                self.assertIsNone(row)  # resumable runs cannot be imported as immutable final evidence
+                self.assertIsNone(row)
             else:
                 self.assertFalse(json.loads(row[0])['eligible'])
 

@@ -32,8 +32,8 @@ class StoreTests(unittest.TestCase):
     def complete(self, store: RunStore, task_id: str, attempt_id: str):
         for status, details in (
             ("candidate", {"candidate_sha": "candidate"}),
-            ("reviewed", {"review": {"passed": True}}),
             ("verified", {"verification": [{"exit_code": 0}]}),
+            ("reviewed", {"review": {"passed": True}}),
             ("integrating", {"integration_sha": "integration"}),
             ("done", {"integrated_sha": "integrated"}),
         ):
@@ -129,8 +129,8 @@ class StoreTests(unittest.TestCase):
             attempt = store.start_attempt("a", "base", "/workspace")
             stages = (
                 ("candidate", {"candidate_sha": "candidate"}, {"candidate_sha": " "}),
-                ("reviewed", {"review": {"passed": True}}, {"review": []}),
                 ("verified", {"verification": [{"exit_code": 0}]}, {"verification": []}),
+                ("reviewed", {"review": {"passed": True}}, {"review": []}),
                 ("integrating", {"integration_sha": "integration"}, {"integration_sha": None}),
                 ("done", {"integrated_sha": "integrated"}, {"integrated_sha": ""}),
             )
@@ -210,6 +210,8 @@ class StoreTests(unittest.TestCase):
             with self.assertRaisesRegex(StoreError, "already exists"):
                 self.initialize(store)
             self.assertEqual(store.snapshot(), before)
+            store.transition("a", "verified", attempt_id=attempt,
+                             details={"verification": [{"exit_code": 0}]})
             store.transition("a", "reviewed", attempt_id=attempt, details={"review": {"passed": True}})
             snapshot = store.snapshot()
             self.assertEqual(snapshot["config"]["verification_commands"], [["check"]])
@@ -233,12 +235,13 @@ class StoreTests(unittest.TestCase):
             before = store.snapshot()
             with sqlite3.connect(self.path) as connection:
                 connection.execute("""
-                    CREATE TRIGGER reject_review BEFORE INSERT ON events
-                    WHEN NEW.to_status = 'reviewed'
+                    CREATE TRIGGER reject_verified BEFORE INSERT ON events
+                    WHEN NEW.to_status = 'verified'
                     BEGIN SELECT RAISE(ABORT, 'injected event failure'); END
                 """)
             with self.assertRaisesRegex(StoreError, "injected event failure"):
-                store.transition("a", "reviewed", attempt_id=attempt, details={"review": {"passed": True}})
+                store.transition("a", "verified", attempt_id=attempt,
+                                 details={"verification": [{"exit_code": 0}]})
             self.assertEqual(store.snapshot(), before)
 
     def test_empty_graph_and_non_json_evidence_cannot_enter_the_ledger(self):

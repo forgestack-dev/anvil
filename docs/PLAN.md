@@ -86,7 +86,7 @@ Workers submit evidence and proposed changes; the supervisor owns authoritative 
 
 Review a known candidate revision against both the ticket/spec and repository standards. Associate review and verification evidence with the exact candidate. Fixes invalidate affected evidence.
 
-A single integration lane combines accepted work with the latest managed branch, resolves or returns conflicts, and runs required checks on the resulting combined candidate. Only then does the coordinator mark the task locally complete and release dependents.
+A single integration lane combines accepted work with the latest managed branch, resolves or returns conflicts, and runs required checks on the resulting combined candidate. The checks precede the review: a reviewer with no shell must never be asked to judge a candidate the configured commands already reject, and its per-criterion assessment is only meaningful about a candidate that passes them. Only after both does the coordinator mark the task locally complete and release dependents. See `docs/ACCEPTANCE.md`.
 
 Represent the upstream wide-refactor exception explicitly as an integration group. Intermediate changes may accumulate on the group's branch and enable internal steps, but remain staged rather than done. A final integrate-and-verify task must pass before the group enters the managed branch, its members become done, or external dependents unlock. Detect this need during planning; do not silently waive verification for ordinary tasks.
 

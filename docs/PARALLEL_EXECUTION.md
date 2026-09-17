@@ -35,9 +35,10 @@ supervisor ownership; they do not establish that an agent is making progress.
 ## Integration and stopping
 
 Completed candidates enter one integration queue. The supervisor applies each
-candidate to the latest accepted commit, independently reviews that exact
-integration revision, runs required checks, checks for subsequent mutations,
-and advances the managed branch with compare-and-swap. Dependencies are released
+candidate to the latest accepted commit, runs required checks on that exact
+integration revision, independently reviews it once they pass, checks for
+subsequent mutations, and advances the managed branch with compare-and-swap.
+A candidate the checks reject never occupies a review invocation. Dependencies are released
 only after the corresponding `done` transaction. Conflicts or rejected checks
 stop the run with work and evidence preserved.
 

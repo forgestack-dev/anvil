@@ -437,7 +437,7 @@ class SerialExecutionTests(unittest.TestCase):
                 self.assertEqual(normalized, details["worker" if role == "worker" else "review"])
                 self.assertTrue((artifact_dir / "stderr.log").is_file())
             transitions = [event["to_status"] for event in result["events"] if event["task_id"] == task["id"]]
-            self.assertEqual(transitions, ["running", "candidate", "reviewed", "verified", "integrating", "done"])
+            self.assertEqual(transitions, ["running", "candidate", "verified", "reviewed", "integrating", "done"])
             self.assertTrue(all(check["returncode"] == 0 and not check["timed_out"]
                                 for check in details["verification"]))
             expected_base = integrated
@@ -506,17 +506,22 @@ class SerialExecutionTests(unittest.TestCase):
                 self.assertEqual(len(result["attempts"]), 1)
                 self.assertIsNone(result["tasks"][1]["attempt_id"])
                 calls = [json.loads(line) for line in trace_path.read_text().splitlines()]
-                self.assertEqual([call["read_only"] for call in calls], [False, True])
                 self.assertTrue(result["error"])
                 details = result["tasks"][0]["details"]
                 self.assertIn("candidate_sha", details)
                 self.assertNotIn("integrated_sha", details)
-                self.assertNotIn("verified_sha", details)
+                self.assertNotIn("reviewed_sha", details)
                 if mode == "bad-check":
-                    self.assertEqual(details["reviewed_sha"], calls[1]["head"])
+                    # The checks reject the candidate, so no reviewer is invoked
+                    # and the run never pays for one. docs/ACCEPTANCE.md
+                    self.assertEqual([call["read_only"] for call in calls], [False])
+                    self.assertNotIn("verified_sha", details)
                     self.assertNotEqual(details["verification"][0]["returncode"], 0)
                 else:
-                    self.assertNotIn("reviewed_sha", details)
+                    self.assertEqual([call["read_only"] for call in calls], [False, True])
+                    # Every review rejection now sits beside passing checks for the same sha.
+                    self.assertEqual(details["verified_sha"], calls[1]["head"])
+                    self.assertEqual([r["returncode"] for r in details["verification"]], [0])
                 if mode == "contradictory-approve":
                     review_path = (Path(result["run_dir"]) / "artifacts" / result["attempts"][0]["id"]
                                    / "review" / "result.json")
@@ -589,7 +594,8 @@ class SerialExecutionTests(unittest.TestCase):
                     result = run_serial(config, runner=runner)
                 self.assertEqual(result["status"], status)
                 self.assertEqual(len(runner.workers), 1)
-                self.assertEqual(len(runner.reviews), 1)
+                # A failing check stops before review; a passing one goes on to it.
+                self.assertEqual(len(runner.reviews), 0 if mode == "bad-check" else 1)
                 run_dir = Path(result["run_dir"])
                 check_dir = run_dir / "artifacts" / result["attempts"][0]["id"] / "verification"
                 self.assertEqual(Path((check_dir / "1.stdout.log").read_text().strip()),

@@ -6,7 +6,7 @@ Anvil is ForgeStack's engineering harness for working through specifications and
 
 ## Current status
 
-Anvil executes a JSON ticket graph serially or with a **coordinated pool of Codex, Claude Code, and Muse workers**. Workers implement ready tickets in isolated Git worktrees. One supervisor owns the SQLite ledger and integration queue, reviews each change on top of the latest accepted branch, runs required checks, and advances that branch only after acceptance evidence, independent review, and verification pass. Muse turns are fulfilled by the operator running Anvil through a staged handoff rather than a local CLI; see [agent adapters](docs/AGENT_ADAPTERS.md).
+Anvil executes a JSON ticket graph serially or with a **coordinated pool of Codex, Claude Code, and Muse workers**. Workers implement ready tickets in isolated Git worktrees. One supervisor owns the SQLite ledger and integration queue, runs the required checks on each change atop the latest accepted branch, independently reviews the changes that pass them, and advances that branch only after acceptance evidence, independent review, and verification pass. Muse turns are fulfilled by the operator running Anvil through a staged handoff rather than a local CLI; see [agent adapters](docs/AGENT_ADAPTERS.md).
 
 It also validates ticket graphs, prepares committed Markdown specifications as reviewable JSON tickets, previews dependency waves, checks local prerequisites, reads saved run state, and installs or updates AI Hero skills in both agents' native directories. Tickets can explicitly select installed AI Hero text skills or opt into deterministic runtime selection; Anvil pins their exact files, checks reviewed tool and interaction requirements, and supplies compatible instructions to Codex, Claude, or Muse implementation turns. Native resume continues interrupted runs created by this version. Pause commands, general failure retries, model-assisted skill selection, and issue-tracker closeout remain planned. Package installation does not register skills or modify an application repository automatically.
 
@@ -154,8 +154,8 @@ For each ticket, Anvil:
 
 1. Implements the ticket in a new worktree based on completed prerequisites.
 2. Validates structured acceptance evidence and commits a complete candidate.
-3. Prepares the integration revision and independently reviews that exact revision in read-only mode.
-4. Runs the configured checks, rejects changes after review, and advances the managed branch only to the verified revision.
+3. Prepares the integration revision and runs the configured checks on it. A candidate that fails them is never reviewed.
+4. Independently reviews that exact revision in read-only mode, and advances the managed branch only to the reviewed and verified revision.
 5. Records completion before starting a dependent ticket.
 
 A worker's success message alone cannot complete a ticket. A blocker, requested review changes, failing check, process timeout, or other terminal failure stops the entire serial run, including independent tickets. Completed work remains on the managed branch; failed candidates, worktrees, logs, and state are preserved for inspection. Ctrl-C terminates the active process group and records interruption. Process groups clean up ordinary child processes; they are not a security boundary against deliberately detached programs.

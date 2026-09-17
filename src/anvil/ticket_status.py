@@ -17,9 +17,11 @@ STATUSES = ("todo", "in_progress", "ready_for_review", "in_review", "verifying",
             "blocked", "failed", "interrupted")
 FIELDS = {"status", "run_id", "attempt_id", "worker", "updated_at", "reason", "evidence",
           "candidate_sha", "integrated_sha", "event_id"}
+# candidate: committed, checks not yet run. verified: checks passed, review
+# pending or running. reviewed: approved, integrating. See docs/ACCEPTANCE.md.
 MAP = dict(pending="todo", running="in_progress", candidate="ready_for_review",
-           reviewed="verifying", verified="verifying", integrating="verifying", done="done",
-           blocked="blocked", failed="failed", interrupted="interrupted")
+           verified="ready_for_review", reviewed="verifying", integrating="verifying",
+           done="done", blocked="blocked", failed="failed", interrupted="interrupted")
 
 
 def validate_metadata(value):
@@ -167,7 +169,7 @@ class Publisher:
                     status = MAP[task["status"]]
                     # Review-start is an evidence event, not a new acceptance phase.
                     events = [e for e in snapshot["events"] if e["task_id"] == task["id"]]
-                    if task["status"] == "candidate" and any(e["attempt_id"] == task["attempt_id"] and e["details"].get("message_kind") == "review_started" for e in events):
+                    if task["status"] == "verified" and any(e["attempt_id"] == task["attempt_id"] and e["details"].get("message_kind") == "review_started" for e in events):
                         status = "in_review"
                     value = {"status": status, "run_id": snapshot["run_id"], "event_id": cursor,
                              "updated_at": task["updated_at"], "evidence": str(self.store.path.parent)}
