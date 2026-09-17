@@ -43,7 +43,7 @@ author should be able to say which without thinking hard:
 | --- | --- | --- |
 | `check` | the run's configured verification commands | "the unittest suite passes with the new leakage tests present" |
 | `inspection` | reading a named region of the candidate diff | "`routing.preflight` receives `exclude` at every call site listed below" |
-| `artifact` | a named path's existence or content at the integration revision | "`docs/ADAPTIVE_ROUTING.md` documents the `credential_exclusion` field" |
+| `artifact` | a named path's existence or content at the integration revision | "`README.md` documents the `credential_exclusion` field" |
 
 A criterion that fits none of the three is not a criterion. It is a hope.
 
