@@ -110,7 +110,8 @@ If `anvil-cloud` consumes the ledger, the schema becomes a contract that cannot
 change casually, and `PRAGMA user_version` is currently 2. Version the read API
 deliberately so that adding an event kind to the open CLI does not break the paid
 product. This is the integration problem worth designing before either product
-ships; repository layout is not.
+ships; repository layout is not. The contract is specified in
+`docs/CLOUD_SYNC.md`.
 
 ## 9. Failure mode to watch
 
@@ -121,7 +122,64 @@ only the multi-party layer, satisfies that. Any proposal to move an existing loc
 capability behind the paywall should be treated as a violation of this record
 rather than a pricing adjustment.
 
-## 10. What this record does not decide
+## 10. Competitive landscape
+
+Surveyed 2026-09-17 from public sources. Treat the dated claims as reported
+rather than verified; the two shutdowns below are load-bearing for section 9 and
+should be confirmed directly before acting on them.
+
+**The orchestration category is commoditizing.** Worktree-per-agent isolation
+became common during the first quarter of 2026 and is now table stakes across
+Conductor, Claude Squad, Vibe Kanban, Crystal/Nimbalyst, Composio's Agent
+Orchestrator, Emdash, Baton, Worktrunk, and omnigent. Anvil's workspace handling
+is necessary and buys no differentiation. The harnesses Anvil drives are also
+absorbing orchestration natively, which squeezes every meta-harness from above.
+
+**Two recent failures share this record's business model.** Crystal, an
+MIT-licensed parallel-session app, was deprecated in February 2026 in favor of a
+paid closed-source successor. Vibe Kanban's company announced shutdown on
+10 April 2026; the Apache-2.0 project continues community-maintained while the
+paid cloud product was sunset. In both cases the open half survived and the paid
+collaboration layer did not. Section 3 is only a different bet if the paid tier
+is the pooled-data asset rather than the interface; if it drifts back toward
+selling a UI, these are the precedents.
+
+**The acceptance thesis is independently validated.** Practitioner guidance now
+states Anvil's core invariant in its own words: a self-check is author evidence,
+not independent acceptance, and the acceptance decision must not collapse into
+the author's completion statement. The pain is measured -- teams with heavy AI
+adoption report substantially more merged pull requests alongside sharply longer
+review times and larger changes -- and post-hoc human review scales worst exactly
+where agent output grows fastest. Competition here is thin and mostly consists of
+guidance content and early projects rather than products with a ledger, an
+evidence model, and recovery semantics.
+
+**Positioning follows from that.** Described as parallel agent orchestration,
+Anvil is one entrant among many in a consolidating category. Described as the
+separation of authorship from acceptance, it is nearly alone against a worsening
+and quantified problem. The README leads with the second framing.
+
+**Observability is the wrong category to enter.** Langfuse, Helicone, CloudZero,
+Vantage, and others already sell token and cost visibility, and Anthropic shipped
+an enterprise analytics API with per-user Claude Code attribution in March 2026.
+A spend dashboard now competes with a first-party feature, which strengthens
+section 4 with a concrete date.
+
+**The asset those tools cannot reproduce.** Observability sees tokens and cost.
+Anvil sees whether work was *accepted*: criterion evidence, review verdict,
+checks passed, branch advanced. Those are supervised labels tying a model and
+effort choice to a verified outcome, produced as a by-product of the acceptance
+protocol. A proxy or a billing integration cannot reconstruct them, and no
+surveyed orchestrator is learning routing policy across organizations. This is
+the concrete form of the moat in section 5.
+
+**The threat section 9 does not cover** is a harness vendor shipping acceptance
+gates itself. This is less likely than it appears: a vendor grading its own
+model's output faces exactly the credibility problem this project's core
+invariant describes. Independent acceptance is structurally a host-side concern.
+That argument belongs in positioning, not only in architecture.
+
+## 11. What this record does not decide
 
 Licensing and contributor agreements are in `docs/LICENSING.md` and are more
 urgent than anything here. Also undecided: pricing and packaging, whether pooled

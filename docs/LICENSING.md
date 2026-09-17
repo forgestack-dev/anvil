@@ -12,7 +12,8 @@ Developer Certificate of Origin, no contributor licence agreement, and no
 `NOTICE`. Copyright is currently held by one party, which is what makes several
 of the decisions below still open.
 
-The product split these decisions serve is in `docs/PRODUCT_BOUNDARY.md`.
+The product split these decisions serve is in `docs/PRODUCT_BOUNDARY.md`, and the interface between the open CLI and any paid service is in
+`docs/CLOUD_SYNC.md`.
 
 ## Urgency
 
