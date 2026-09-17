@@ -1,7 +1,8 @@
 # The criterion contract
 
 Status: an authoring standard, not a validator. The readiness gate in the last
-section is proposed and not implemented. The measurements this rests on are in
+section is proposed and not implemented; its adversarial, separately sourced
+form was chosen on 2026-09-17 and is recorded here as a design, not a result. The measurements this rests on are in
 [OBSERVED_LIMITS.md](OBSERVED_LIMITS.md); the acceptance ordering it assumes is
 in [ACCEPTANCE.md](ACCEPTANCE.md).
 
@@ -162,27 +163,13 @@ or to fail, so it invents.
 ### The change
 
 **Widen the result to a discriminated union.** `result_schema` gains a second
-branch under `oneOf`, keyed by which of `tasks` or `questions` is present:
-
-```python
-question = {
-    "type": "object", "additionalProperties": False,
-    "required": ["id", "kind", "question", "source_refs"],
-    "properties": {
-        "id": identifier,
-        "kind": {"type": "string",
-                 "enum": ["missing", "ambiguous", "undecidable", "unbounded"]},
-        "question": text,
-        "source_refs": {"type": "array", "minItems": 1, "uniqueItems": True,
-                        "items": text},
-        "options": {"type": "array", "uniqueItems": True, "items": text},
-    },
-}
-```
+branch under `oneOf`, keyed by which of `tasks` or `questions` is present. The
+question object is given below, with the gate that produces it; the planning
+turn may emit the same shape when the specification defeats it outright.
 
 `kind` is the contract's own vocabulary, which is what keeps the gate from being
-a general clarification prompt. `undecidable` is rule 1: the turn can state a
-criterion but cannot name a role that decides it. `unbounded` is rule 3: the
+a general clarification prompt. `undecidable` is rule 1: a criterion can be
+stated but no role can be named that decides it. `unbounded` is rule 3: the
 criterion is an absence over a set the specification does not close. `missing`
 and `ambiguous` are ordinary intake. `source_refs` is validated exactly as it is
 for tasks today, against `source_lines`, so a question must point at a real line
@@ -213,33 +200,163 @@ does not change.
 
 **CLI.** `cli.py:143` gains a third exit code. `0` prepared, `2` contract or
 process error as today, `3` needs clarification, with the questions printed as
-text or under `--json`. A distinct code matters because the caller is often a
-script or an outer agent, and "I have a question" is not an error.
+text or under `--json`, each with its rule number and cited specification line. A
+distinct code matters because the caller is often a script or an outer agent, and
+"I have a question" is not an error. The parser at `cli.py:47` gains
+`--gate-agent`, `--gate-binary` and the gate profile arguments alongside the
+existing `--agent` group.
+
+### The gate is adversarial, and not the turn that authored the graph
+
+A single planning turn can carry the union above, but a turn asked to both
+produce a graph and decline to produce one grades its own output. That is the
+same shape as the defect this document exists to describe: attempt 3's reviewer
+filled a satisfied map over work it could not check, and the prompt told it not
+to. Prompt text is not a mechanism.
+
+So the gate is a second read-only turn, and it is constrained in three ways.
+
+**It sees the specification and the graph, and not the planning turn.** The
+planning turn's artifact directory, its reasoning and its own account of what it
+found are withheld. It is given the spec bytes, the emitted tasks, and rules 1
+through 6. Anchoring a gate on the author's explanation is how a gate learns to
+agree.
+
+**It can only ask.** The gate has no approval verdict and no `tasks` branch: its
+result is a `questions` array, possibly empty. An empty array is the absence of
+an objection, not evidence of readiness -- the same distinction `ACCEPTANCE.md`
+draws when it refuses to merge on a satisfied map. Nothing downstream may read
+an empty gate result as a quality signal.
+
+**Every question is bound and located.** A question carries the rule it invokes
+and a `source_refs` line that exists in the specification, both schema-enforced,
+which is Stage 2's bound-and-located rejection applied at intake. This is the
+counterweight to the obvious failure mode of an adversarial role: a turn told to
+find problems finds them, and an ungated gate simply never lets a preparation
+succeed. Binding a question to a numbered rule and a real line makes an
+unfounded question visible as one.
+
+```python
+question = {
+    "type": "object", "additionalProperties": False,
+    "required": ["id", "rule", "kind", "question", "source_refs"],
+    "properties": {
+        "id": identifier,
+        "rule": {"type": "integer", "minimum": 1, "maximum": 6},
+        "kind": {"type": "string",
+                 "enum": ["missing", "ambiguous", "undecidable", "unbounded"]},
+        "question": text,
+        "source_refs": {"type": "array", "minItems": 1, "uniqueItems": True,
+                        "items": text},
+        "options": {"type": "array", "uniqueItems": True, "items": text},
+    },
+}
+```
+
+### A different adapter, and a different model
+
+The gate should not run on the model that wrote the graph, and preferably not on
+that vendor's model at all. Two turns of one model over one specification share
+whatever the specification failed to make salient; that is the correlated
+failure a second opinion is bought to avoid.
+
+`prepare` gains `--gate-agent` (an `EXECUTION_AGENTS` member or `none`),
+`--gate-binary`, and a gate profile. The default is the execution adapter that
+`--agent` did not select, so `--agent codex` gates on `claude-code` and the
+reverse, without a flag.
+
+**Availability is already detectable.** `adapters.probe_agent` is what `doctor`
+uses, and `routing.preflight` probes advertised `--model` and effort controls in
+five seconds without invoking a model. Both run against the gate selection
+*before* the planning turn is dispatched, so a missing second provider costs
+nothing rather than being discovered after the graph is paid for.
+
+**Distinctness is declared and checked, not proved.** Anvil can assert that the
+gate uses a different adapter and a different model identifier than the planning
+turn, and it should refuse a gate selection that matches on both. It cannot
+assert a different provider: `validate_selection` accepts any model string
+matching its identifier pattern, and an adapter's CLI can be pointed at another
+endpoint entirely. The provenance record below states what was configured, which
+is the only honest claim available.
+
+**Muse is the strongest gate and the slowest.** A Muse gate turn is the operator
+handoff: the questions come from whoever is running Anvil. Distinctness is total
+and the mechanism already exists, but the preparation blocks on a human, which
+is the correct default for a first specification and the wrong one for the
+twentieth.
+
+**No silent self-gating.** If only one adapter probes, `prepare` does not quietly
+gate on the authoring adapter. Either the operator passes `--gate-agent none`,
+which is recorded, or the preparation fails with the probe error. A graph gated
+by its own author and a graph not gated at all must not be indistinguishable
+from a graph gated across providers.
+
+### Provenance
+
+The gate's outcome belongs in the ticket document, because a graph that was
+gated and a graph that was not are otherwise identical files:
+
+```json
+"gate": {"agent": "claude-code", "model": "claude-opus-5",
+         "distinct_adapter": true, "questions": 0}
+```
+
+`"gate": null` records an explicit `--gate-agent none`. This is a change to
+`schemas/tickets.schema.json` and to `contracts._validate_provenance`, which
+CLAUDE.md requires be changed together, and `provenance` is
+`additionalProperties: false`, so the field must be added to both the schema's
+property list and the `fields` set in `_validate_provenance`.
 
 ### Cost
 
-The single planning turn can carry the gate, but a turn asked to both produce a
-graph and decline to produce one is being asked to grade its own output. The
-honest version is a second read-only turn over the emitted graph and the spec,
-which may return only `questions` or an empty list. That is one additional
-invocation per preparation, on the order of $1 to $4 at the rates in
-`OBSERVED_LIMITS.md`, against attempt-scale spends of $2 to $7 for a ticket that
-does not merge. Worth measuring; not worth asserting in advance.
+Two invocations per preparation instead of one, on the order of $1 to $4 each at
+the rates in `OBSERVED_LIMITS.md`, against attempt-scale spends of $2 to $7 for a
+ticket that does not merge. The gate turn is cheaper than the planning turn in
+principle -- it reads a graph rather than a repository -- but nothing here
+measures that. Two providers also means two sets of credentials on the host, and
+`credential_exclusion` covers the gate launch exactly as it covers the others.
+Worth measuring; not worth asserting in advance.
 
 ### Tests
 
-`tests/test_preparation.py`, using the existing injected fake runner: a runner
-returning only `questions` writes no output file and reports
-`needs_clarification`; a runner returning both branches is refused by the schema;
-a question whose `source_refs` are absent from the specification raises
-`ContractError` on the same path task refs do; the tasks branch behaves exactly
-as it does today. No live model.
+`tests/test_preparation.py`, using the existing injected fake runner, now
+injected twice -- one planning runner and one gate runner, which also proves the
+two turns are separately sourced:
+
+- a gate returning `questions` writes no output file and reports
+  `needs_clarification`, even when the planning runner returned a valid graph;
+- a gate returning an empty array writes the graph, with `provenance.gate`
+  recording the gate agent and `distinct_adapter: true`;
+- a question citing no rule, a rule outside 1 to 6, or `source_refs` absent from
+  the specification raises `ContractError` on the same path task refs do;
+- a gate selection matching the planning adapter and model is refused before any
+  turn is dispatched, and `--gate-agent none` is accepted and recorded as
+  `"gate": null`;
+- the planning turn's artifact directory is not present in the gate prompt;
+- with `--gate-agent none`, the tasks branch behaves exactly as it does today.
+
+No live model, and no second provider on the test host: both runners are fakes,
+as `prepare`'s existing `runner=` injection already allows.
 
 ### What the gate cannot do
 
-It cannot tell a well-formed question from a fluent one, and a turn that wants
-to finish will answer its own questions silently -- the same pressure that makes
-required PRD fields worthless. It cannot check that an enumeration is complete.
+It cannot tell a well-formed question from a fluent one. Binding a question to a
+rule and a specification line makes an unfounded one visible to a reader; it does
+not stop one being asked, and no schema checks relevance -- the same limit
+`ACCEPTANCE.md` records for a reviewer's satisfied map.
+
+It cannot check that an enumeration is complete. Rule 3 bounds an argument; the
+human's own enumeration still omitted `cli.py`.
+
+It cannot establish that two providers fail independently. Different vendors are
+not independent estimators of what a specification left out, and nothing here
+measures the correlation. Cross-provider gating is a reasonable prior, not a
+result, and a same-vendor gate on a different model may recover most of the
+benefit far more cheaply. That comparison is the first thing to measure.
+
+It cannot prove the gate ran on the provider it claims. `provenance.gate` records
+a configured adapter and model string, and both are operator-supplied.
+
 And it moves cost earlier rather than removing it: a specification that produces
-questions on every preparation is a specification the author has to write
-anyway, which is the point, but it is not a saving until someone measures one.
+questions on every preparation is a specification the author has to write anyway,
+which is the point, but it is not a saving until someone measures one.
