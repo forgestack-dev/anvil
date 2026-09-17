@@ -226,7 +226,7 @@ def resume(run_dir, *, runners=None, review_runner=None, progress=None):
 def frozen_policy(run_dir):
     """Bind the frozen policy artifact to its committed ledger fingerprint."""
     from .routing import fingerprint
-    run_dir = Path(run_dir)
+    run_dir = Path(run_dir).expanduser().resolve()
     saved = RunStore.read(run_dir / "state.sqlite")
     value = json.loads(read_regular(run_dir / "routing-frozen.json"))
     bindings = [e["details"]["digest"] for e in saved["events"] if e["kind"] == "routing_frozen"]

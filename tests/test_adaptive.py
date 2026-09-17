@@ -350,6 +350,61 @@ prompt = sys.stdin.read()''')
         self.assertEqual(runner.workers, [])
         self.assertEqual(runner.reviews, [])
 
+    def test_accounting_survives_a_state_dir_reached_through_a_symlink(self):
+        """read_regular refuses symlinked paths; normalized config keeps it aimed.
+
+        The guard exists so a worker cannot redirect the ticket file it is
+        judged against, and it inspects every ancestor. Ordinary macOS paths
+        have symlinked ancestors (/tmp and /var both link into /private), so
+        telemetry would silently degrade to unknown cost if a run ever read its
+        artifacts through the path the operator typed. It does not: run_serial
+        and run_parallel both normalize the configuration on entry, and
+        RunConfig.from_document resolves state_dir. This test names that
+        dependency, because the normalization reads like re-validation.
+        """
+        import json as _json
+        from anvil.ticket_status import read_regular
+        real = Path(self.root).resolve() / "state-real"
+        real.mkdir()
+        link = Path(self.root).resolve() / "state-link"
+        link.symlink_to(real, target_is_directory=True)
+
+        class Metered(FakeRunner):
+            """Emits the codex-shaped usage stream MeasuredRunner reads."""
+            def run(self, **kwargs):
+                outcome = super().run(**kwargs)
+                (kwargs["artifact_dir"] / "events.jsonl").write_text(_json.dumps(
+                    {"type": "turn.completed",
+                     "usage": {"input_tokens": 100000, "cached_input_tokens": 0,
+                               "output_tokens": 10000}}) + "\n")
+                return outcome
+
+        price = {"version": "test-1", "input": 3.0, "cached_input": 0.3,
+                 "cache_write": 3.75, "output": 15.0}
+        options = config_options()
+        for profile in options["profiles"].values():
+            profile["price"] = price
+        config = replace(self.config, state_dir=link, adaptive=options)
+        result = run_serial(config, runner=Metered())
+
+        self.assertEqual(result["status"], "success", result.get("error"))
+        routing = result["routing"]
+        self.assertTrue(routing["cost_complete"])
+        self.assertGreater(routing["known_cost_usd"], 0)
+        for attempt in routing["attempts"]:
+            for invocation in attempt["invocations"]:
+                self.assertIsNone(invocation.get("usage_error"))
+                self.assertEqual(invocation["cost_kind"], "configured_price_estimate")
+        # The run recorded its own location resolved, not as it was configured.
+        run_dir = Path(result["run_dir"])
+        self.assertFalse(any(p.is_symlink() for p in (run_dir, *run_dir.parents)))
+        self.assertTrue(run_dir.is_relative_to(real))
+        # And the guard still refuses the same artifacts by the configured path.
+        through_link = link / run_dir.name / "artifacts"
+        invocation = next(through_link.glob("*/worker/invocation.json"))
+        with self.assertRaisesRegex(ContractError, "must not contain symlinks"):
+            read_regular(invocation)
+
     def test_approved_attempt_cancellation_and_infrastructure_error_are_not_quality_failures(self):
         from anvil.execution import verify
         from anvil.processes import ProcessError
