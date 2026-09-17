@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from anvil.config import WorkerConfig
+from anvil.environment import managed_environment
 from anvil.contracts import ContractError
 from anvil.execution import run_serial
 from anvil.parallel import run_parallel
@@ -321,7 +322,8 @@ run_serial(RunConfig.load(Path(sys.argv[1])),runner=FakeRunner())
         def work():
             with scope.activate():
                 return run_process([sys.executable,'-c','import time;time.sleep(20)'],
-                    cwd=self.repo,stdin=None,stdout_path=directory/'out',stderr_path=directory/'err',timeout=30)
+                    cwd=self.repo,stdin=None,stdout_path=directory/'out',stderr_path=directory/'err',
+                    timeout=30,env=managed_environment())
         with ThreadPoolExecutor(1) as pool:
             future=pool.submit(work)
             try:

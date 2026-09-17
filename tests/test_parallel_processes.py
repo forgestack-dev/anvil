@@ -12,6 +12,7 @@ import time
 import unittest
 from unittest.mock import patch
 
+from anvil.environment import managed_environment
 from anvil.processes import ProcessCancelled, ProcessError, ProcessScope, _defer_sigint, run_process
 
 
@@ -27,6 +28,7 @@ class ParallelProcessTests(unittest.TestCase):
             cwd=self.root, stdin=None, timeout=timeout,
             stdout_path=self.root / f"{name}.stdout",
             stderr_path=self.root / f"{name}.stderr",
+            env=managed_environment(),
         )
         argv = [sys.executable, "-c", code]
         if scope is None:
@@ -181,6 +183,7 @@ class ParallelProcessTests(unittest.TestCase):
                 run_process(
                     [str(self.root / "missing")], cwd=self.root, stdin=None, timeout=3,
                     stdout_path=self.root / "missing.stdout", stderr_path=self.root / "missing.stderr",
+                    env=managed_environment(),
                 )
             self.assertEqual(self.run_command("after", "pass").returncode, 0)
 

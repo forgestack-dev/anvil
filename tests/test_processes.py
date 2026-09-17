@@ -11,6 +11,7 @@ import time
 import unittest
 from unittest.mock import patch
 
+from anvil.environment import managed_environment
 from anvil.processes import ProcessError, run_process
 
 
@@ -28,6 +29,7 @@ class ProcessTests(unittest.TestCase):
             [sys.executable, "-c", code, *args], cwd=self.root,
             stdin=stdin, stdout_path=self.root / "stdout.log",
             stderr_path=self.root / "stderr.log", timeout=timeout,
+            env=managed_environment(),
         )
 
     def test_literal_arguments_and_large_streams_do_not_deadlock(self):
@@ -49,6 +51,17 @@ class ProcessTests(unittest.TestCase):
         outcome = self.run_command("import sys; assert sys.stdin.read() == ''; sys.exit(7)")
         self.assertEqual(outcome.returncode, 7)
         self.assertFalse(outcome.timed_out)
+
+    def test_an_omitted_environment_is_a_type_error_rather_than_inheritance(self):
+        # Popen(env=None) inherits everything, so a default here would make a
+        # forgotten argument leak silently. The caller must name the environment.
+        with self.assertRaises(TypeError):
+            run_process(
+                [sys.executable, "-c", "pass"], cwd=self.root, stdin=None,
+                stdout_path=self.root / "omitted.stdout",
+                stderr_path=self.root / "omitted.stderr", timeout=3,
+            )
+        self.assertFalse((self.root / "omitted.stdout").exists())
 
     def test_explicit_environment_is_literal_and_does_not_merge_parent_values(self):
         literal = 'spaces; $(touch injected)\n"quoted"'
@@ -250,6 +263,7 @@ class ProcessTests(unittest.TestCase):
                         cwd=self.root, stdin=None, timeout=3,
                         stdout_path=self.root / f"stdout-{index}-{succeeds}",
                         stderr_path=self.root / f"stderr-{index}-{succeeds}",
+                        env=managed_environment(),
                     )
                     if succeeds:
                         self.assertEqual(run_process(argv, **kwargs).returncode, 0)
@@ -263,6 +277,7 @@ class ProcessTests(unittest.TestCase):
             run_process(
                 [str(self.root / "no-such-executable")], cwd=self.root, stdin=None,
                 stdout_path=self.root / "stdout.log", stderr_path=self.root / "stderr.log", timeout=1,
+                env=managed_environment(),
             )
 
     def test_existing_outputs_and_symlinks_are_not_overwritten(self):
@@ -283,7 +298,7 @@ class ProcessTests(unittest.TestCase):
                 self.run_command("pass", timeout=timeout)
         for argv in ([], "echo hello", [""], ["echo", "bad\0argument"]):
             with self.subTest(argv=argv), self.assertRaises(ProcessError):
-                run_process(argv, cwd=self.root, stdin=None,
+                run_process(argv, cwd=self.root, stdin=None, env=managed_environment(),
                             stdout_path=self.root / "stdout.log", stderr_path=self.root / "stderr.log", timeout=1)
         with patch("anvil.processes.os.name", "nt"), self.assertRaisesRegex(ProcessError, "POSIX"):
             self.run_command("pass")

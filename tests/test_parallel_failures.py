@@ -19,6 +19,7 @@ from anvil.config import RunConfig, WorkerConfig
 from anvil.contracts import ContractError
 from anvil.execution import verify
 from anvil.parallel import run_parallel
+from anvil.environment import managed_environment
 from anvil.processes import ProcessError, run_process
 from anvil.store import RunStore
 
@@ -242,7 +243,8 @@ class ParallelFailureTests(unittest.TestCase):
                        f"Path({str(started)!r}).write_text(str(os.getpid())); time.sleep(60)")
             try:
                 run_process([sys.executable, "-c", program], cwd=repo, stdin=None,
-                            stdout_path=artifacts / "stdout", stderr_path=artifacts / "stderr", timeout=20)
+                            stdout_path=artifacts / "stdout", stderr_path=artifacts / "stderr",
+                            timeout=20, env=managed_environment())
             finally:
                 stopped.set()
 

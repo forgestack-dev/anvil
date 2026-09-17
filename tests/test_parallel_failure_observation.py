@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from anvil.config import WorkerConfig
+from anvil.environment import managed_environment
 from anvil.parallel import run_parallel
 from anvil.processes import run_process
 from anvil.workspaces import Repository
@@ -58,7 +59,8 @@ class ParallelFailureObservationTests(unittest.TestCase):
                                str(started), str(completed)]
                     run_process(command, cwd=kwargs["repo"], stdin=None,
                                 stdout_path=kwargs["artifact_dir"] / "out",
-                                stderr_path=kwargs["artifact_dir"] / "err", timeout=8)
+                                stderr_path=kwargs["artifact_dir"] / "err", timeout=8,
+                                env=managed_environment())
                 (kwargs["repo"] / (self.name + ".txt")).write_text(self.name)
                 return execution_fixture.result_for(self.name)
 

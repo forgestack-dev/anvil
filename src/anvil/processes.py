@@ -168,7 +168,7 @@ def run_process(
     stdout_path: Path,
     stderr_path: Path,
     timeout: float,
-    env: Mapping[str, str] | None = None,
+    env: Mapping[str, str],
 ) -> ProcessOutcome:
     """Run a literal argv with an elapsed-time limit and exclusive output files.
 
@@ -176,7 +176,11 @@ def run_process(
     directly to disk; stdin uses a temporary file so neither a full output pipe
     nor a child that ignores stdin can block supervision. A timeout returns an
     outcome; interrupts are propagated after terminating the process group.
-    An explicit env replaces the inherited environment without merging it.
+    env is required and replaces the inherited environment without merging it:
+    a launch that omits it is a launch nothing withheld a credential from, so
+    the omission is a type error rather than a silent inheritance. Callers build
+    it with environment.managed_environment(), passing the run's configured
+    credential_exclusion where one exists.
     An active ProcessScope also bounds concurrent groups and allows the owning
     run to cancel queued or executing commands. Queue time is outside timeout.
     """
