@@ -20,7 +20,7 @@ is between authorship and acceptance: the agent that wrote a change never
 establishes that it is finished, and review runs against the integrated revision
 rather than the one the worker reported.
 
-It also validates ticket graphs, prepares committed Markdown specifications as reviewable JSON tickets, previews dependency waves, checks local prerequisites, reads saved run state, serves that state read-only over local HTTP, and installs or updates AI Hero skills in both agents' native directories. Tickets can explicitly select installed AI Hero text skills or opt into deterministic runtime selection; Anvil pins their exact files, checks reviewed tool and interaction requirements, and supplies compatible instructions to Codex, Claude, or Muse implementation turns. Native resume continues interrupted runs created by this version. Pause commands, general failure retries, model-assisted skill selection, and issue-tracker closeout remain planned. Package installation does not register skills or modify an application repository automatically.
+It also validates ticket graphs, prepares committed Markdown specifications as reviewable JSON tickets behind an adversarial readiness gate, previews dependency waves, checks local prerequisites, reads saved run state, serves that state read-only over local HTTP, and installs or updates AI Hero skills in both agents' native directories. Tickets can explicitly select installed AI Hero text skills or opt into deterministic runtime selection; Anvil pins their exact files, checks reviewed tool and interaction requirements, and supplies compatible instructions to Codex, Claude, or Muse implementation turns. Native resume continues interrupted runs created by this version. Pause commands, general failure retries, model-assisted skill selection, and issue-tracker closeout remain planned. Package installation does not register skills or modify an application repository automatically.
 
 Prepare a specification before execution:
 
@@ -30,7 +30,11 @@ anvil validate tickets.json
 anvil plan tickets.json --json
 ```
 
-Preparation uses one read-only turn from the selected Codex, Claude Code, or Muse adapter. It records the source hash and repository commit, requires a source reference on every ticket, initializes ticket status to `todo`, and writes the result atomically. It does not start implementation. See [spec preparation](docs/SPEC_PREPARATION.md).
+Preparation is two read-only turns from the selected Codex, Claude Code, or Muse adapters. One converts the specification into a ticket graph. The second is a gate: it runs on the adapter the first did not use, sees the graph and the specification but not the turn that wrote them, and can only ask questions -- it has no approval verdict, so an empty result records the absence of an objection rather than readiness. `--gate-agent` selects it, and `--gate-agent none` disables it and records that in the ticket document; `prepare` refuses a gate on the adapter that authored the graph.
+
+A question from either turn means no tickets are written, and `anvil prepare` exits `3` rather than the `2` it uses for errors, because a question is not an error. Each names the criterion contract rule it invokes and cites exact specification lines. Answer them by editing and committing the specification, which changes the recorded source hash and makes the next preparation traceably a different input.
+
+Preparation records the source hash, repository commit, and gate, requires a source reference on every ticket, initializes ticket status to `todo`, and writes the result atomically. It does not start implementation. See [spec preparation](docs/SPEC_PREPARATION.md) and the [criterion contract](docs/CRITERIA.md).
 
 ## Install and plan
 
@@ -46,7 +50,7 @@ anvil doctor
 anvil doctor --agent claude-code
 ```
 
-Validation and planning work without an agent CLI. `doctor` checks Git and the selected executable's version and advertised flags; it does not authenticate or make a model request. It defaults to Codex. To probe a custom executable, supply `--agent-binary /path/to/executable`; `doctor` does not read run configurations. The planner's dependency waves describe possible parallelism; actual dispatch also respects available workers and declared shared resources.
+Validation and planning work without an agent CLI. `doctor` checks Git and the selected executable's version and advertised flags; it does not authenticate or make a model request. It defaults to Codex. To probe a custom executable, supply `--agent-binary /path/to/executable`. With `--config <run.json>` it adopts that run's agent, probes each adaptive profile's controls, and withholds the run's `credential_exclusion` from every probe it launches; without it, `doctor` reads no run configuration. The planner's dependency waves describe possible parallelism; actual dispatch also respects available workers and declared shared resources.
 
 To use the CLI directly from a source checkout:
 

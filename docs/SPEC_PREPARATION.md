@@ -22,7 +22,7 @@ Anvil refuses to overwrite a file. Model artifacts default to
 `~/.local/state/anvil/preparations`; `--artifact-root` selects another location.
 
 The selected adapter gets one read-only planning turn and may inspect repository
-files. Codex uses its read-only sandbox, Claude receives only its bounded read
+files; the readiness gate below adds a second read-only turn on another adapter. Codex uses its read-only sandbox, Claude receives only its bounded read
 tools, and Muse uses the operator handoff. `--agent-binary` selects a trusted
 custom executable. This turn consumes the selected provider's normal usage.
 

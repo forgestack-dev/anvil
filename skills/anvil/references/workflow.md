@@ -8,7 +8,18 @@ Commit the specification and all relevant repository context, then require a
 clean repository. Run `anvil prepare SPEC.md --output tickets.json --repo .` with
 the user's chosen agent; add `--agent claude-code` or `--agent muse` when
 requested. The output path must be new and inside the repository. This command
-uses one read-only planning turn and therefore consumes provider usage.
+uses two read-only turns and therefore consumes provider usage twice: a planning
+turn, and a readiness gate that runs on the execution adapter `--agent` did not
+select. `--gate-agent` names another; `--gate-agent none` disables it and is
+recorded in the ticket document. Both agents must be installed unless the gate is
+disabled, and `prepare` refuses a gate on the adapter that authored the graph.
+
+The gate cannot approve and cannot propose a graph. It returns questions, each
+naming the criterion contract rule it invokes and citing exact specification
+lines. Any question from either turn means no tickets were written and the
+command exits 3, which is not an error: bring the questions to the user, answer
+them in the specification, commit it, and prepare again. Do not disable the gate
+to get past a question, and do not answer one on the user's behalf.
 
 Inspect the generated `source_refs`, scope, dependencies, risks, resources,
 acceptance criteria, and skill arrays. Anvil records source and commit provenance
