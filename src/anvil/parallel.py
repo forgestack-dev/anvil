@@ -22,8 +22,9 @@ from .adapters import create_runner
 from .config import RunConfig, WorkerConfig
 from .contracts import ContractError, Task
 from .evidence import (REVIEW_SCHEMA, WORKER_SCHEMA, concedes, format_findings,
-                       rejection_reason, validate_result)
-from .execution import (VerificationFailure, assert_located, _review_prompt, _worker_prompt,
+                       rejection_reason, undeclared_findings, validate_result)
+from .execution import (VerificationFailure, assert_located, assert_sites,
+                        _review_prompt, _worker_prompt,
                         orientation_text, verify)
 from .planning import TaskGraph
 from .processes import ProcessCancelled, ProcessScope, _defer_sigint
@@ -180,6 +181,7 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
     with RepositoryLock(repo), scope.activate(), _interrupt_cancels(scope):
         repo.assert_clean()
         base = repo.head()
+        assert_sites(repo, base, graph.tasks)
         run_id = uuid.uuid4().hex
         branch = f"anvil/{run_id}"
         run_dir = config.state_dir / run_id
@@ -408,7 +410,8 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                             store.record_message(item.task.id, attempt_id=item.attempt_id,
                                                  kind="review_result", body=outcome)
                             if outcome["verdict"] != "approve":
-                                reason = rejection_reason(outcome)
+                                outside = undeclared_findings(item.task, outcome)
+                                reason = rejection_reason(outcome, outside)
                                 details = {"review": outcome,
                                            "integration_sha": integration.sha}
                                 # A conceded rejection names a requirement the
@@ -419,6 +422,12 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                                 # stops for the author. docs/ACCEPTANCE.md
                                 if concedes(outcome):
                                     details["failure_category"] = "unlisted_requirement"
+                                elif outside:
+                                    # The ticket bounded this criterion and the
+                                    # finding falls outside it. Another attempt
+                                    # would work to the same declared set, so
+                                    # this returns as an authoring decision.
+                                    details["failure_category"] = "undeclared_site"
                                 elif retry(item, reason, "review_rejection"):
                                     integration = None
                                     continue

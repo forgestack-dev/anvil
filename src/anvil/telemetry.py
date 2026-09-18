@@ -135,7 +135,8 @@ def attempt_record(run_dir, attempt, *, decision=None, review_started=False):
     # sample is dropped as insufficient evidence instead.
     attributable_rejection = (
         "retry_reason" in details
-        or (review.get("verdict") == "request_changes" and not concedes(review))
+        or (review.get("verdict") == "request_changes" and not concedes(review)
+            and details.get("failure_category") != "undeclared_site")
         or any(check.get("returncode") not in (None, 0) or check.get("timed_out")
                for check in details.get("verification", [])))
     evaluation = "observed_sufficient" if attempt["status"] == "done" else (
@@ -145,7 +146,8 @@ def attempt_record(run_dir, attempt, *, decision=None, review_started=False):
     # attempt; prefer it over re-deriving from whatever evidence survived.
     stored_category = details.get("failure_category")
     if stored_category not in ("review_rejection", "verification_failure",
-                               "retryable_rejection", "unlisted_requirement"):
+                               "retryable_rejection", "unlisted_requirement",
+                               "undeclared_site"):
         stored_category = None
     return {"attempt_id": attempt["id"], "task_id": attempt["task_id"],
             "status": attempt["status"], "decision": decision,

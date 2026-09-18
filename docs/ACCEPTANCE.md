@@ -1,6 +1,6 @@
 # The acceptance decision
 
-Status: Stages 1 to 3 implemented; Stage 4 is proposed and not implemented.
+Status: Stages 1 to 4 implemented.
 The stage order was revised on 2026-09-17 after Stage 1 landed:
 bounding and locating a rejection now precedes the conceded-rejection stop,
 because the stop's trigger is vacuous until the acceptance map is mandatory.
@@ -195,7 +195,7 @@ No new status and no schema change. A blocked run already exits 3, which is the
 code `prepare` uses for a question, so a conceded rejection reaches a caller as
 a question rather than as an error without inventing a second convention.
 
-## Stage 4: declared sites (proposed)
+## Stage 4: declared sites (implemented)
 
 A typed home for the enumeration `OBSERVED_LIMITS.md` already asks authors to
 write, with paths checked to exist at the base revision and read verbatim by
@@ -206,6 +206,33 @@ attempt and returns as a named authoring decision.
 It cannot check completeness, and this is not a small caveat. The human's own
 rewritten enumeration omitted `cli.py`, which is the site that ended the
 measured run.
+
+### As implemented
+
+A ticket may carry `sites`: per criterion, the paths that criterion's claim
+holds over. Criteria stay plain strings, so this is not the typed-criteria
+design this document rejects; the enumeration sits beside them and is optional.
+A criterion that declares nothing stays unbounded, which is every ticket written
+so far.
+
+`execution.assert_sites` resolves every declared path against the base revision
+before a run directory or a ledger exists, so a stale or mistyped enumeration
+raises like an invalid ticket graph rather than failing a started run. A site
+therefore names a place that already exists: the enumeration is about where an
+existing property must hold, not about files the ticket will create.
+
+`evidence.undeclared_findings` consumes Stage 2's locations. When a rejection's
+finding names a criterion that declared sites, and its location falls outside
+them, the run records `failure_category: "undeclared_site"`, stops, and does not
+escalate -- another attempt would work to the same declared set. A declared
+directory contains the paths beneath it. As with a conceded rejection, telemetry
+treats it as evidence about the ticket rather than the worker.
+
+Both prompts carry the list verbatim, and both are told what it means: the
+worker treats a criterion's sites as its full extent instead of searching for
+more, and the reviewer reports what it finds outside them as a finding anyway,
+so the supervisor can return it as a scope decision. Withholding it would trade
+a bounded argument for a silent one.
 
 The authoring side of this stage is rule 3 of [CRITERIA.md](CRITERIA.md), which
 also proposes asking the question at intake, where `prepare` currently has no

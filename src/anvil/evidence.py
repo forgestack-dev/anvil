@@ -70,13 +70,37 @@ def concedes(review: dict) -> bool:
             and all(item["satisfied"] for item in review["acceptance"]))
 
 
-def rejection_reason(review: dict) -> str:
+def undeclared_findings(task: Task, review: dict) -> list[dict]:
+    """Findings that point outside the set their criterion declared.
+
+    Only a criterion that declared sites is bounded. One that declared none is
+    unbounded by the ticket's own choice, so nothing here applies to it and the
+    rejection is an ordinary one.
+    """
+    declared = {criterion: paths for criterion, paths in task.sites}
+    outside = []
+    for item in review.get("findings", []):
+        paths = declared.get(item["criterion"])
+        if not paths:
+            continue
+        path, _ = _location(item["location"])
+        if not any(path == name.rstrip("/") or path.startswith(name.rstrip("/") + "/")
+                   for name in paths):
+            outside.append(item)
+    return outside
+
+
+def rejection_reason(review: dict, undeclared: list[dict] = ()) -> str:
     """The rejection as the ticket's author needs to read it."""
     findings = format_findings(review["findings"])
-    if not concedes(review):
-        return findings
-    return ("every acceptance criterion is satisfied, so this names a requirement "
-            f"the ticket does not carry: {findings}")
+    if concedes(review):
+        return ("every acceptance criterion is satisfied, so this names a requirement "
+                f"the ticket does not carry: {findings}")
+    if undeclared:
+        places = ", ".join(sorted({item["location"] for item in undeclared}))
+        return (f"the ticket does not declare {places} for the criterion it fails, so this "
+                f"names a place the ticket did not claim: {findings}")
+    return findings
 
 
 def format_findings(findings: list[dict]) -> str:

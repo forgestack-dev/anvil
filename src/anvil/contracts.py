@@ -11,7 +11,7 @@ from typing import Any
 _ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
 _TASK_REQUIRED = {"id", "title", "objective", "depends_on", "acceptance_criteria"}
 _TASK_OPTIONAL = {"skills", "worker", "resources", "exclusive", "execution", "profile", "risk",
-                  "source_refs"}
+                  "source_refs", "sites"}
 _HASH = re.compile(r"[0-9a-f]{64}\Z")
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 
@@ -37,6 +37,7 @@ class Task:
     risk: str | None = None
     execution: dict | None = None
     source_refs: tuple[str, ...] = ()
+    sites: tuple[tuple[int, tuple[str, ...]], ...] = ()
 
     def __post_init__(self) -> None:
         if self.profile is not None:
@@ -61,6 +62,39 @@ class Task:
             raise ContractError("task.source_refs must be a tuple of nonempty text")
         if len(set(self.source_refs)) != len(self.source_refs):
             raise ContractError("task.source_refs contains duplicate references")
+        self._validate_sites()
+
+    def _validate_sites(self) -> None:
+        """A criterion whose subject is an absence names the set it holds over.
+
+        Shape only: the supervisor checks the paths exist once it knows the base
+        revision. Declaring nothing is the default and keeps today's behavior,
+        because a criterion that is not about an absence has no set to name.
+        """
+        if not isinstance(self.sites, tuple):
+            raise ContractError("task.sites must be a tuple of criterion declarations")
+        seen = set()
+        for entry in self.sites:
+            if not isinstance(entry, tuple) or len(entry) != 2:
+                raise ContractError("each task.sites entry must be a criterion and its paths")
+            criterion, paths = entry
+            if (type(criterion) is not int or type(criterion) is bool
+                    or not 1 <= criterion <= len(self.acceptance_criteria)):
+                raise ContractError("task.sites must name a criterion of this ticket")
+            if criterion in seen:
+                raise ContractError(f"task.sites declares criterion {criterion} twice")
+            seen.add(criterion)
+            if not isinstance(paths, tuple) or not paths:
+                raise ContractError("task.sites paths must be a nonempty tuple")
+            if len(set(paths)) != len(paths):
+                raise ContractError(f"task.sites for criterion {criterion} repeats a path")
+            for path in paths:
+                if not isinstance(path, str) or not path.strip() or "\0" in path:
+                    raise ContractError("task.sites paths must be nonempty text without NUL")
+                if (path.startswith("/") or path.startswith("../") or path == ".."
+                        or "/../" in path or path.endswith("/..")):
+                    raise ContractError(
+                        f"task.sites path must be relative and inside the repository: {path}")
 
     def to_dict(self) -> dict[str, Any]:
         result = {
@@ -86,6 +120,9 @@ class Task:
             result["exclusive"] = True
         if self.source_refs:
             result["source_refs"] = list(self.source_refs)
+        if self.sites:
+            result["sites"] = [{"criterion": criterion, "paths": list(paths)}
+                               for criterion, paths in self.sites]
         for key in ("profile", "risk", "execution"):
             if getattr(self, key) is not None:
                 result[key] = getattr(self, key)
@@ -199,6 +236,15 @@ def parse_tasks(document: Any) -> tuple[Task, ...]:
         resources = _string_array(value.get("resources", []), f"{label}.resources")
         source_refs = _string_array(value.get("source_refs", []), f"{label}.source_refs",
                                     nonempty="source_refs" in value)
+        sites = []
+        if "sites" in value:
+            if not isinstance(value["sites"], list) or not value["sites"]:
+                raise ContractError(f"{label}.sites must be a nonempty array")
+            for position, entry in enumerate(value["sites"]):
+                _object_fields(entry, {"criterion", "paths"}, set(), f"{label}.sites[{position}]")
+                sites.append((entry["criterion"],
+                              _string_array(entry["paths"], f"{label}.sites[{position}].paths",
+                                            nonempty=True)))
         tasks.append(
             Task(
                 id=task_id,
@@ -214,6 +260,7 @@ def parse_tasks(document: Any) -> tuple[Task, ...]:
                 exclusive=value.get("exclusive", False),
                 profile=value.get("profile"), risk=value.get("risk"), execution=value.get("execution"),
                 source_refs=source_refs,
+                sites=tuple(sites),
             )
         )
     return tuple(tasks)

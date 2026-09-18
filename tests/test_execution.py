@@ -656,6 +656,84 @@ class SerialExecutionTests(unittest.TestCase):
         self.assertNotIn("failure_category", details)
         self.assertNotIn("every acceptance criterion is satisfied", result["error"])
 
+    # -- Stage 4: declared sites (docs/ACCEPTANCE.md) -----------------------
+
+    def tickets_with_sites(self, paths):
+        doc = json.loads(self.tickets.read_text())
+        doc["tasks"][0]["sites"] = [{"criterion": 1, "paths": list(paths)}]
+        doc["tasks"] = doc["tasks"][:1]
+        self.tickets.write_text(json.dumps(doc))
+
+    class RejectsAt(FakeRunner):
+        """Rejects one criterion at a caller-chosen location."""
+        location = "value.txt:1"
+
+        def run(self, **kwargs):
+            outcome = super().run(**kwargs)
+            if kwargs.get("read_only"):
+                outcome.update(verdict="request_changes",
+                               acceptance=[{"criterion": 1, "satisfied": False, "evidence": "e"}],
+                               findings=[{"criterion": 1, "location": self.location,
+                                          "finding": "the behavior is missing"}])
+            return outcome
+
+    def test_a_declared_site_must_exist_at_the_base_revision(self):
+        """A stale or mistyped enumeration fails before the run spends anything.
+
+        It is an authoring error in the ticket, so it raises before a run
+        directory or a ledger exists, the way an invalid ticket graph does.
+        """
+        self.tickets_with_sites(["src/never_existed.py"])
+        runner = FakeRunner()
+        with self.assertRaises(ContractError) as caught:
+            run_serial(self.config, runner=runner)
+        self.assertIn("src/never_existed.py", str(caught.exception))
+        self.assertIn("does not exist at", str(caught.exception))
+        self.assertEqual(runner.workers, [])
+        self.assertFalse(list((self.root / "state").glob("*/state.sqlite")))
+
+    def test_a_finding_outside_the_declared_sites_returns_to_the_author(self):
+        self.tickets_with_sites(["README.md"])
+        runner = self.RejectsAt()
+        runner.location = "value.txt:1"
+        result = run_serial(self.config, runner=runner)
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["tasks"][0]["details"]["failure_category"], "undeclared_site")
+        self.assertIn("the ticket does not declare value.txt:1", result["error"])
+
+    def test_a_finding_inside_the_declared_sites_is_an_ordinary_rejection(self):
+        """The contrast: declaring a set must not turn every rejection into a
+        scope decision, or the stop would be indistinguishable from noise."""
+        # A site must exist at the base revision, so it names a file the ticket
+        # works on rather than one it creates.
+        self.tickets_with_sites(["README.md"])
+        runner = self.RejectsAt()
+        runner.location = "README.md:1"
+        result = run_serial(self.config, runner=runner)
+        self.assertEqual(result["status"], "blocked")
+        self.assertNotIn("failure_category", result["tasks"][0]["details"])
+        self.assertNotIn("does not declare", result["error"])
+
+    def test_a_directory_site_contains_the_files_beneath_it(self):
+        self.tickets_with_sites(["src"])
+        runner = self.RejectsAt()
+        runner.location = "src/anvil/cli.py:1"
+        (self.repo / "src" / "anvil").mkdir(parents=True)
+        (self.repo / "src" / "anvil" / "cli.py").write_text("x\n")
+        git(self.repo, "add", ".")
+        git(self.repo, "-c", "user.name=T", "-c", "user.email=t@e.invalid", "commit", "-qm", "src")
+        self.base = git(self.repo, "rev-parse", "HEAD")
+        result = run_serial(self.config, runner=runner)
+        self.assertEqual(result["status"], "blocked")
+        self.assertNotIn("failure_category", result["tasks"][0]["details"])
+
+    def test_a_criterion_declaring_nothing_stays_unbounded(self):
+        runner = self.RejectsAt()
+        runner.location = "README.md:1"
+        result = run_serial(self.config, runner=runner)
+        self.assertEqual(result["status"], "blocked")
+        self.assertNotIn("failure_category", result["tasks"][0]["details"])
+
     def test_case_distinct_ticket_ids_use_distinct_workspaces_and_evidence(self):
         document = json.loads(self.tickets.read_text())
         document["tasks"][0]["id"] = "Ticket"

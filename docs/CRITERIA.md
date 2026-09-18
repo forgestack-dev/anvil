@@ -102,8 +102,9 @@ whole ticket directly in about half an hour.
   the rule fired on 36 of the 128 criteria then in this repository's own backlog,
   including three tickets that are done. The backlog has grown since; the point
   is the proportion, not the pair of numbers. Rules 1 through 6 are authoring guidance, read by a human and by the
-  planning turn. Only rule 3's enumeration has a proposed typed home, as Stage 4
-  declared sites.
+  planning turn. Only rule 3's enumeration has a typed home: a ticket's `sites`
+  field, checked against the base revision and consumed when a rejection points
+  outside it (Stage 4 of [ACCEPTANCE.md](ACCEPTANCE.md)).
 - **Not executable commands in ticket files.** A ticket file sits inside the
   target repository and is worker-writable when `ticket_status` is off. A
   per-criterion command field would make ticket content host argv, which the

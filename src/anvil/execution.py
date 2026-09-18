@@ -12,7 +12,8 @@ from .config import RunConfig
 from .contracts import ContractError, Task
 from .environment import managed_environment
 from .evidence import (REVIEW_SCHEMA, WORKER_SCHEMA, _location, concedes,
-                       format_findings, rejection_reason, validate_result)
+                       format_findings, rejection_reason, undeclared_findings,
+                       validate_result)
 from .planning import TaskGraph
 from .processes import ProcessError, ProcessScope, run_process
 from .store import RunStore, StoreError
@@ -46,6 +47,25 @@ def verify(config: RunConfig, workspace: Path, artifacts: Path) -> list[dict]:
         if outcome.returncode != 0 or outcome.timed_out:
             raise VerificationFailure(records)
     return records
+
+
+def assert_sites(repo, base: str, tasks, *, cwd: Path | None = None) -> None:
+    """Every declared site must name a path the base revision already has.
+
+    A site is where an existing property must hold, so a path the run cannot
+    resolve is an authoring mistake: a stale enumeration, a typo, or a file the
+    ticket means to create. Checking at the base costs nothing and fails before
+    the run spends a turn, which is the point of declaring the set at all.
+    """
+    for task in tasks:
+        for criterion, paths in task.sites:
+            for path in paths:
+                try:
+                    repo.git("cat-file", "-t", f"{base}:{path}", cwd=cwd)
+                except WorkspaceError as exc:
+                    raise ContractError(
+                        f"ticket {task.id} declares {path} for criterion {criterion}, "
+                        f"which does not exist at {base[:12]}") from exc
 
 
 def assert_located(repo, sha: str, findings: list[dict], *, cwd: Path | None = None) -> None:
@@ -125,7 +145,10 @@ def _worker_prompt(task: Task, base: str, *, file_tools_only: bool = False,
         "acceptance criterion. Criteria are numbered from 1 in their listed order. "
         "The supervisor owns Git: do not commit, change branches, move refs, push, publish, or "
         "modify any other checkout. Do not create background agents or services. Keep the change "
-        "within this ticket. If a required decision or capability is missing, report blocked with "
+        "within this ticket. A criterion listed in sites holds over exactly the paths declared "
+        "for it: cover every one, and treat that list as the criterion's full extent rather than "
+        "searching for more. "
+        "If a required decision or capability is missing, report blocked with "
         "the reason instead of assuming an answer. Report concrete evidence for each criterion; "
         "your result will be independently reviewed and checked. A completed result must have "
         "blockers: []; put explanatory notes in summary, not in blockers. Base commit: " + base + "\n\n"
@@ -163,6 +186,10 @@ def _review_prompt(task: Task, base: str, candidate: str, claims: dict,
         "location against this exact revision and rejects the review if one does not exist. "
         "Use findings only for actionable changes, never for 'no findings' statements or optional "
         "style notes; put explanatory notes in summary. "
+        "When a criterion declares sites, that list is the extent the ticket claims for it. "
+        "Report what you find outside it as a finding on that criterion anyway, located as usual: "
+        "the supervisor returns it to the ticket's author as a scope decision instead of asking "
+        "for more work. Do not widen a criterion silently, and do not withhold the finding. "
         "The supervisor has already run the configured checks on this exact revision and they "
         "passed. That is a precondition for this review, not evidence for any criterion: do "
         "not treat it as satisfying a criterion, and do not request changes on the ground "
@@ -220,6 +247,7 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
     with RepositoryLock(repo), scope.activate():
         repo.assert_clean()
         base = repo.head()
+        assert_sites(repo, base, graph.tasks)
         run_id = uuid.uuid4().hex
         branch = f"anvil/{run_id}"
         run_dir = config.state_dir / run_id
@@ -331,13 +359,18 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
                         assert_located(repo, integrated, review["findings"], cwd=integration)
                         if review["verdict"] != "approve":
                             details = {"review": review, "integration_sha": integrated}
+                            outside = undeclared_findings(task, review)
                             if concedes(review):
                                 # Nothing the ticket asked for is missing, so this
                                 # stops for its author rather than for a worker.
                                 details["failure_category"] = "unlisted_requirement"
+                            elif outside:
+                                # The ticket bounded this criterion and the finding
+                                # falls outside it: an authoring decision, not work.
+                                details["failure_category"] = "undeclared_site"
                             store.transition(task.id, "blocked", attempt_id=attempt_id,
                                              details=details)
-                            store.set_run("blocked", error=rejection_reason(review))
+                            store.set_run("blocked", error=rejection_reason(review, outside))
                             break
                         store.transition(task.id, "reviewed", attempt_id=attempt_id,
                                          details={"review": review, "reviewed_sha": integrated})
