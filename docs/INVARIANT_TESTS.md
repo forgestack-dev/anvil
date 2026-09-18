@@ -401,10 +401,10 @@ Each slice is independently mergeable and leaves the suite green.
 Slice 4 is the only one that changes execution behavior and should be reviewed
 on its own. Slice 7 is last by necessity.
 
-Slices 1, 3 and 5 are done. The credential-exclusion invariant is closed from
-both sides: 4.1 against sites nothing exercises, 4.2 against expressions that
-are wrong. `tests/test_invariants.py` exists and holds slice 1, so slices 6, 5.3
-and 5.4 extend a module rather than create one. Slices 4, 6 and 7 remain.
+All seven are done. The credential-exclusion invariant is closed from both
+sides: 4.1 against sites nothing exercises, 4.2 against expressions that are
+wrong. `tests/test_invariants.py` existed from slice 1, so slices 6, 5.3 and 5.4
+extended a module rather than creating one.
 
 ## 10. What remains prose, and completion
 
