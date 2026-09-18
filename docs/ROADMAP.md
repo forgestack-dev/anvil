@@ -77,6 +77,24 @@ These are native skills for ordinary agent sessions. Ticket-selected text instru
 
 Measured limits from running this graph are in [observed execution limits](OBSERVED_LIMITS.md). See [the delivery and dashboard specification](DELIVERY_DASHBOARD_PLAN.md) for the proposed contracts, provider boundaries, six implementation slices, and acceptance matrix. This milestone is not implemented; its commands and configuration are design targets.
 
+## 7. Calibrated judgments — specified
+
+- Detect a review that marked an acceptance criterion satisfied without the means
+  to decide it, the defect recorded at run `51fec4cd`.
+- Give `docs/CRITERIA.md` rules 1, 3, 4, and 6 an enforcement point at `prepare`,
+  at a precision the rejected keyword approach could not reach.
+- Bound the capability to tightening only: a judgment may convert an acceptance
+  into a stop, never satisfy a criterion, approve a candidate, or widen a scope.
+- Record every judgment with its full probability distribution and pinned model
+  version; freeze thresholds for a run as routing policy is frozen.
+
+See [the judgment specification](JUDGMENT.md) for the module contract, the two
+question sets, ten implementation slices, and the acceptance matrix. This
+milestone is not implemented; its thresholds are unset by design, and the two
+enforcing slices are gated on the calibration study in its section 11 rather than
+on the preceding code. The capability is open and brings its own key; calibrated
+threshold sets are the paid artifact, per `docs/PRODUCT_BOUNDARY.md`.
+
 ## Later integrations
 
 - Add further coding-agent adapters based on usage.
