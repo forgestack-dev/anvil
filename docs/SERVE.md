@@ -163,6 +163,22 @@ stays reachable underneath, so a rendering that misses something hides
 nothing. Each row is a `button` with a keyboard handler rather than a bare
 click target, and the panel takes focus when it opens.
 
+The panel's left edge is a separator: drag it, or focus it and use the arrow
+keys, `Home` and `End`. Width is clamped between a column the grouping tables
+still fit in and half the viewport, and re-clamped when the window narrows so a
+remembered width cannot exceed the ceiling. Moves are tracked on the window
+rather than on the handle, because pointer capture would otherwise have to hold
+a pointer that leaves an eight pixel strip immediately, and a browser refusing
+the capture would drop the drag.
+
+The page itself never scrolls. The header is fixed and each column scrolls
+independently, so a long event stream cannot push the run list out of the
+viewport. Grid columns carry `min-width: 0`, without which one unrecorded path
+sets a column's minimum and widens the document past the window. Text breaks
+only where a word cannot fit, except for values that carry no break opportunity
+at all -- paths, hashes, argv -- and a column too narrow for a table scrolls the
+table rather than the page.
+
 Two shortcuts, each also reachable as a button so neither is the only way in:
 `Cmd`/`Ctrl` and `B` hides and shows the run list, `Cmd`/`Ctrl` and `I` closes
 the side panel and reopens whichever subject was last shown, and `Escape` closes

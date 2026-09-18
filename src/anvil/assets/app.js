@@ -618,6 +618,70 @@ runsToggle.addEventListener("click", () => {
   setRunsHidden(!mainEl.classList.contains("runs-hidden"));
 });
 document.getElementById("ticket-close").addEventListener("click", closeTicket);
+
+// -- side panel width -------------------------------------------------------
+//
+// The panel's left edge is a separator the reader can drag or drive with the
+// arrow keys. Width is a custom property the grid template reads, clamped so
+// the panel can take half the viewport and never less than a column the tables
+// still fit in.
+
+const resizer = document.getElementById("ticket-resizer");
+const MIN_TICKET = 260;
+
+function maxTicket() {
+  return Math.round(window.innerWidth * 0.5);
+}
+
+function setTicketWidth(px) {
+  const width = Math.round(Math.min(Math.max(px, MIN_TICKET), maxTicket()));
+  mainEl.style.setProperty("--ticket-w", width + "px");
+  resizer.setAttribute("aria-valuenow",
+                       String(Math.round((width / window.innerWidth) * 100)));
+  return width;
+}
+
+function currentTicketWidth() {
+  return ticketPanel.getBoundingClientRect().width || MIN_TICKET;
+}
+
+// Moves are tracked on the window rather than the handle. Pointer capture
+// would keep them on an 8px strip the pointer leaves immediately, and a
+// browser that refuses the capture would drop the drag entirely.
+resizer.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  const startX = event.clientX, startWidth = currentTicketWidth();
+  try { resizer.setPointerCapture(event.pointerId); } catch (ignored) { /* optional */ }
+  resizer.classList.add("dragging");
+  document.body.classList.add("resizing");
+  const move = (moved) => setTicketWidth(startWidth + (startX - moved.clientX));
+  const done = () => {
+    try { resizer.releasePointerCapture(event.pointerId); } catch (ignored) { /* optional */ }
+    resizer.classList.remove("dragging");
+    document.body.classList.remove("resizing");
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", done);
+    window.removeEventListener("pointercancel", done);
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", done);
+  window.addEventListener("pointercancel", done);
+});
+
+resizer.addEventListener("keydown", (event) => {
+  const step = event.shiftKey ? 96 : 32;
+  if (event.key === "ArrowLeft") setTicketWidth(currentTicketWidth() + step);
+  else if (event.key === "ArrowRight") setTicketWidth(currentTicketWidth() - step);
+  else if (event.key === "Home") setTicketWidth(MIN_TICKET);
+  else if (event.key === "End") setTicketWidth(maxTicket());
+  else return;
+  event.preventDefault();
+});
+
+// A narrower viewport can leave a remembered width above the ceiling.
+window.addEventListener("resize", () => {
+  if (!ticketPanel.hidden) setTicketWidth(currentTicketWidth());
+});
 document.addEventListener("keydown", (event) => {
   if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "b") {
     event.preventDefault();

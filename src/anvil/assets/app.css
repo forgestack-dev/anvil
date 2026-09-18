@@ -15,6 +15,7 @@
 body {
   margin: 0; background: var(--bg); color: var(--ink);
   font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  height: 100vh; overflow: hidden; display: flex; flex-direction: column;
 }
 .skip { position: absolute; left: -999px; }
 .skip:focus { left: 8px; top: 8px; background: var(--panel); padding: 8px; z-index: 2; }
@@ -34,13 +35,15 @@ h3 { font-size: 14px; margin: 18px 0 8px; }
 }
 .badge[data-live="live"] { color: var(--ok); border-color: currentColor; }
 .badge[data-live="error"] { color: var(--bad); border-color: currentColor; }
-main { display: grid; grid-template-columns: minmax(240px, 22rem) 1fr; align-items: start; }
-main.ticket-open { grid-template-columns: minmax(240px, 22rem) 1fr minmax(260px, 24rem); }
+main { display: grid; grid-template-columns: minmax(240px, 22rem) 1fr;
+       flex: 1; min-height: 0; overflow: hidden; }
+main > * { min-width: 0; height: 100%; overflow-y: auto; overflow-x: hidden; }
+main.ticket-open { grid-template-columns: minmax(240px, 22rem) 1fr var(--ticket-w, 24rem); }
 main.runs-hidden { grid-template-columns: 1fr; }
-main.runs-hidden.ticket-open { grid-template-columns: 1fr minmax(260px, 24rem); }
+main.runs-hidden.ticket-open { grid-template-columns: 1fr var(--ticket-w, 24rem); }
 main.runs-hidden > nav { display: none; }
-nav { padding: 16px; border-right: 1px solid var(--line); min-height: calc(100vh - 56px); }
-section { padding: 16px 20px; min-width: 0; }
+nav { padding: 16px; border-right: 1px solid var(--line); }
+section { padding: 16px 20px; }
 .runs { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .runs li {
   border: 1px solid var(--line); border-radius: 7px; padding: 9px 11px;
@@ -100,8 +103,15 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-
          border-radius: 5px; padding: 3px 8px; font: inherit; font-size: 12px; cursor: pointer; }
 .ghost:hover { color: var(--ink); border-color: var(--ink); }
 kbd { font: inherit; font-size: 11px; color: var(--muted); }
-aside#ticket { padding: 16px; border-left: 1px solid var(--line);
-               min-height: calc(100vh - 56px); background: var(--panel); }
+aside#ticket { position: relative; padding: 16px 16px 16px 22px;
+               border-left: 1px solid var(--line); background: var(--panel); }
+#ticket-resizer { position: absolute; left: 0; top: 0; bottom: 0; width: 8px;
+                  cursor: col-resize; touch-action: none; }
+#ticket-resizer::before { content: ""; position: absolute; left: 3px; top: 0; bottom: 0;
+                          width: 2px; background: transparent; }
+#ticket-resizer:hover::before, #ticket-resizer:focus-visible::before,
+#ticket-resizer.dragging::before { background: var(--accent); }
+body.resizing { cursor: col-resize; user-select: none; }
 .ticket-bar { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .ticket-body h3 { margin: 16px 0 6px; }
 .ticket-body ol, .ticket-body ul { margin: 0; padding-left: 20px; }
@@ -112,7 +122,9 @@ tr.pick { cursor: pointer; }
 tr.pick:hover td:first-child { text-decoration: underline; }
 @media (max-width: 980px) {
   main.ticket-open, main.runs-hidden.ticket-open { grid-template-columns: 1fr; }
-  aside#ticket { border-left: 0; border-top: 1px solid var(--line); min-height: 0; }
+  aside#ticket { border-left: 0; border-top: 1px solid var(--line);
+                 min-height: 0; padding-left: 16px; }
+  #ticket-resizer { display: none; }
 }
 .detail-json { margin: 0; padding: 8px; border: 1px solid var(--line); border-radius: 5px;
                background: var(--bg); font-size: 12px; white-space: pre-wrap;
@@ -128,3 +140,15 @@ table.grouping td { vertical-align: top; padding: 4px 6px 4px 0;
 table.grouping td.long { white-space: normal; overflow-wrap: anywhere; font: inherit; }
 .ticket-body details { margin-top: 14px; }
 .ticket-body summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+
+/* Break only where a word genuinely cannot fit. `anywhere` is reserved for the
+   values that carry no break opportunity at all: paths, hashes, argv. */
+.facts dd, .ticket-body li, .ticket-body p, td, th, .runs .meta {
+  overflow-wrap: break-word; min-width: 0;
+}
+.facts dd, .runs .id, .mono, td.mono, .detail-json { overflow-wrap: anywhere; }
+.facts div { flex: 0 1 auto; max-width: 100%; min-width: 0; }
+.facts dd { min-width: 0; }
+table.grouping { table-layout: fixed; }
+/* A column too narrow for a table scrolls the table, not the page. */
+.events, #panel-tasks, #panel-spend { overflow-x: auto; }
