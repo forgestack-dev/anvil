@@ -232,6 +232,55 @@ prompt = sys.stdin.read()''')
         failed=next(a for a in result['routing']['attempts'] if a['status']=='failed')
         self.assertEqual(failed['failure_category'],'verification_failure')
 
+    def test_exhaustion_categories_survive_to_evidence_and_are_excluded_from_the_gate(self):
+        """turn_exhaustion/budget_exhaustion mark an invocation that hit a
+        ceiling before producing any accepted candidate. The category must
+        survive from the ledger event through the telemetry evidence a
+        routing policy gate reads, and that gate must then treat the sample
+        as insufficient evidence rather than as a scored rejection: it must
+        not be promoted or demoted as if a candidate had been judged."""
+        from anvil.adaptive_runtime import report
+        from anvil.learning import import_run, history
+        from anvil.contracts import Task
+        for category in ("turn_exhaustion", "budget_exhaustion"):
+            with self.subTest(category=category):
+                state_dir = self.root / f"exhaustion-{category}"
+                with RunStore(state_dir / "state.sqlite") as store:
+                    task = Task(category, "Implement it", "Deliver it", (), ("It works",))
+                    store.initialize(run_id=f"run-{category}", repo=str(self.repo),
+                                     branch="anvil/exhaustion", base_sha=self.base,
+                                     tasks=(task,),
+                                     config={"verification": [["true"]],
+                                             "adaptive": config_options()})
+                    store.set_run("running")
+                    attempt = store.start_attempt(category, self.base, "/workspace/attempt")
+                    decision = {"profile": "standard", "recommended_profile": "standard",
+                               "reason": "deterministic complexity/risk rules",
+                               "policy_version": "v1", "learned_policy": None,
+                               "assessment": {"cohort": "rank-1", "input_digest": "digest"}}
+                    store.record_message(category, attempt_id=attempt,
+                                         kind="routing_decision", body=decision)
+                    store.transition(category, "candidate", attempt_id=attempt,
+                                     details={"candidate_sha": "candidate"})
+                    store.record_rejection(category, attempt_id=attempt,
+                                           reason="ceiling reached before any candidate was judged",
+                                           failure_category=category)
+                    store.transition(category, "blocked", attempt_id=attempt,
+                                     details={"error": "ceiling reached"})
+                    store.set_run("blocked")
+                    result = store.snapshot()
+                result["run_dir"] = state_dir
+                report(result)
+                record = result["routing"]["attempts"][0]
+                self.assertEqual(record["failure_category"], category)
+                self.assertEqual(record["evaluation"], "insufficient_evidence")
+                imported = import_run(Repository(self.repo), result)
+                self.assertEqual(imported["imported_or_existing"], 1)
+                with history(Repository(self.repo)) as db:
+                    row = db.execute("SELECT data FROM samples WHERE run_id=?",
+                                     (result["run_id"],)).fetchone()
+                self.assertFalse(json.loads(row[0])["eligible"])
+
     def test_benchmark_keeps_configured_retry_limit_for_evidence_catalog(self):
         import anvil.benchmark as benchmark_module
         from anvil.routing import learning_catalog

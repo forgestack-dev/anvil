@@ -132,8 +132,12 @@ def attempt_record(run_dir, attempt, *, decision=None, review_started=False):
     # A conceded rejection is not evidence about the worker or its profile: the
     # candidate satisfied every criterion the ticket stated. Scoring it as a
     # rejection would train routing on the ticket's incompleteness, so the
-    # sample is dropped as insufficient evidence instead.
-    attributable_rejection = (
+    # sample is dropped as insufficient evidence instead. The same is true of
+    # turn_exhaustion/budget_exhaustion: the invocation hit a ceiling before
+    # producing any candidate, so there is no outcome attributable to the
+    # worker or reviewer.
+    exhausted = details.get("failure_category") in ("turn_exhaustion", "budget_exhaustion")
+    attributable_rejection = not exhausted and (
         "retry_reason" in details
         or (review.get("verdict") == "request_changes" and not concedes(review)
             and details.get("failure_category") != "undeclared_site")
@@ -147,7 +151,7 @@ def attempt_record(run_dir, attempt, *, decision=None, review_started=False):
     stored_category = details.get("failure_category")
     if stored_category not in ("review_rejection", "verification_failure",
                                "retryable_rejection", "unlisted_requirement",
-                               "undeclared_site"):
+                               "undeclared_site", "turn_exhaustion", "budget_exhaustion"):
         stored_category = None
     return {"attempt_id": attempt["id"], "task_id": attempt["task_id"],
             "status": attempt["status"], "decision": decision,

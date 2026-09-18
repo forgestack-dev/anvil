@@ -27,6 +27,10 @@ class StoreError(ValueError):
 _PHASES = ("running", "candidate", "verified", "reviewed", "integrating", "done")
 _STOPPED = {"failed", "blocked", "interrupted"}
 _RUN_TRANSITIONS = {"created": {"running", *_STOPPED}, "running": {"success", *_STOPPED}}
+# turn_exhaustion and budget_exhaustion cover an invocation that hit a ceiling
+# before producing any candidate, distinct from a candidate that was rejected.
+_FAILURE_CATEGORIES = {"review_rejection", "verification_failure",
+                       "turn_exhaustion", "budget_exhaustion"}
 TERMINAL_RUN_STATUSES = frozenset({"success", *_STOPPED})
 
 
@@ -392,8 +396,9 @@ class RunStore:
         retry merges the same reason and category again.
         """
         _text(reason, "reason")
-        if failure_category not in ("review_rejection", "verification_failure"):
-            raise StoreError("failure_category must be review_rejection or verification_failure")
+        if failure_category not in _FAILURE_CATEGORIES:
+            raise StoreError(
+                "failure_category must be one of: " + ", ".join(sorted(_FAILURE_CATEGORIES)))
         with self._transaction() as connection:
             task = self._active_task(connection, task_id, attempt_id)
             if task["status"] not in {"candidate", "verified"}:
@@ -420,8 +425,9 @@ class RunStore:
         alongside the formatted reason for diagnostics and learning evidence.
         """
         _text(reason, "reason")
-        if failure_category not in ("review_rejection", "verification_failure"):
-            raise StoreError("failure_category must be review_rejection or verification_failure")
+        if failure_category not in _FAILURE_CATEGORIES:
+            raise StoreError(
+                "failure_category must be one of: " + ", ".join(sorted(_FAILURE_CATEGORIES)))
         _text(new_attempt_id, "new_attempt_id")
         _text(base_sha, "base_sha")
         _text(workspace, "workspace")
