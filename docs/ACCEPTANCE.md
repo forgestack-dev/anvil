@@ -1,6 +1,6 @@
 # The acceptance decision
 
-Status: Stage 1 implemented and merged; Stages 2 to 4 are proposed and not
+Status: Stages 1 and 2 implemented; Stages 3 and 4 are proposed and not
 implemented. The stage order was revised on 2026-09-17 after Stage 1 landed:
 bounding and locating a rejection now precedes the conceded-rejection stop,
 because the stop's trigger is vacuous until the acceptance map is mandatory.
@@ -98,7 +98,7 @@ README`. Escalation to `demanding` proceeds on a real defect; attempt 4 runs as
 recorded, is green, and its review rejects on `cli.py:173`. Saved: $1.03 and,
 more importantly, the false record.
 
-## Stage 2: bound and located rejections (proposed)
+## Stage 2: bound and located rejections (implemented)
 
 A finding carries the criterion number it fails and a `file:line` that exists at
 the reviewed revision, and **a rejection must return a full acceptance map**.
@@ -110,6 +110,34 @@ any criterion.
 The measured run's error would have read `criterion 1 (src/anvil/cli.py:173):
 pass exclude=config.credential_exclusion to routing.preflight` in the run error,
 the published ticket and any retry prompt, instead of a 700-character paragraph.
+
+### As implemented
+
+`REVIEW_SCHEMA.findings` are objects carrying `criterion`, `finding` and
+`location`. `validate_result` requires a full acceptance map for *both* verdicts
+and checks each finding's shape, its criterion against the ticket, and its
+location's form. The supervisor then resolves every location against the
+reviewed revision with `execution.assert_located`, which refuses a path the
+revision does not contain and a line past the end of a real file. Formatting
+moved into `evidence.format_findings`, so the run error, the published ticket
+reason and any retry prompt all read the same way.
+
+Three decisions the stage description did not settle:
+
+- **A location may name a directory.** A finding about something missing has no
+  line to point at, and requiring one would push reviewers toward inventing a
+  plausible number. A path alone is accepted; a line is checked when given.
+- **A finding may cite a criterion the same review marks satisfied.** Refusing
+  that would make Stage 3 unreachable, because a conceded rejection is exactly a
+  finding whose criterion is satisfied, and it would arrive as a contract error
+  instead of a question for the ticket's author. The contract permits it on
+  purpose, and a test pins the behavior.
+- **The coordinator decides every review verdict.** A non-adaptive reviewing
+  thread used to reject on its own. It cannot resolve locations, because that is
+  Git work a thread must not do, and its rejection cancelled the scope, which
+  made the coordinator's own Git unreliable before it ever read the verdict. So
+  the thread now validates shape and returns, and both pool modes reach the same
+  coordinator branch as the serial path.
 
 ### Why this precedes the conceded-rejection stop
 

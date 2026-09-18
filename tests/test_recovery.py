@@ -220,7 +220,10 @@ class RecoveryTests(unittest.TestCase):
         class RejectThenInterrupt(FakeRunner):
             def run(self, **kw):
                 if kw.get('read_only'):
-                    return {'verdict':'request_changes','summary':'Fix it','acceptance':[], 'findings':['bug']}
+                    return {'verdict':'request_changes','summary':'Fix it',
+                            'acceptance':[{'criterion':1,'satisfied':False,'evidence':'value.txt read'}],
+                            'findings':[{'criterion':1,'location':'value.txt',
+                                         'finding':'The value is wrong'}]}
                 if self.workers:
                     raise KeyboardInterrupt
                 return super().run(**kw)

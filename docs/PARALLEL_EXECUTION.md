@@ -38,7 +38,13 @@ Completed candidates enter one integration queue. The supervisor applies each
 candidate to the latest accepted commit, runs required checks on that exact
 integration revision, independently reviews it once they pass, checks for
 subsequent mutations, and advances the managed branch with compare-and-swap.
-A candidate the checks reject never occupies a review invocation. Dependencies are released
+A candidate the checks reject never occupies a review invocation.
+
+The coordinator decides every review verdict. A reviewing thread validates the
+result's shape and returns it; it never rejects on its own, because resolving a
+finding's location against the reviewed revision is Git work that belongs to the
+coordinator, and a thread that cancelled the run first would leave that check
+unreachable. Dependencies are released
 only after the corresponding `done` transaction. Conflicts or rejected checks
 stop the run with work and evidence preserved.
 

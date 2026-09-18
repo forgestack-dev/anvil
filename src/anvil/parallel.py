@@ -21,8 +21,8 @@ import uuid
 from .adapters import create_runner
 from .config import RunConfig, WorkerConfig
 from .contracts import ContractError, Task
-from .evidence import REVIEW_SCHEMA, WORKER_SCHEMA, validate_result
-from .execution import (VerificationFailure, _review_prompt, _worker_prompt,
+from .evidence import REVIEW_SCHEMA, WORKER_SCHEMA, format_findings, validate_result
+from .execution import (VerificationFailure, assert_located, _review_prompt, _worker_prompt,
                         orientation_text, verify)
 from .planning import TaskGraph
 from .processes import ProcessCancelled, ProcessScope, _defer_sigint
@@ -247,8 +247,6 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                             validate_result(outcome, task, review=role == "review")
                             if role == "worker" and outcome["status"] == "blocked":
                                 raise _Blocked("; ".join(outcome["blockers"]), {"worker": outcome})
-                            if role == "review" and outcome["verdict"] != "approve" and adaptive is None:
-                                raise _Blocked("; ".join(outcome["findings"]), {"review": outcome})
                         return outcome
                 except (Exception, KeyboardInterrupt) as exc:
                     # Notify cancellation without waiting for coordinator Git
@@ -405,13 +403,15 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                                                         task=item.task, role="review")
                         else:
                             validate_result(outcome, item.task, review=True)
+                            assert_located(repo, integration.sha, outcome["findings"], cwd=workspace)
                             store.record_message(item.task.id, attempt_id=item.attempt_id,
                                                  kind="review_result", body=outcome)
                             if outcome["verdict"] != "approve":
-                                if retry(item, "; ".join(outcome["findings"]), "review_rejection"):
+                                reason = format_findings(outcome["findings"])
+                                if retry(item, reason, "review_rejection"):
                                     integration = None
                                     continue
-                                raise _Blocked("; ".join(outcome["findings"]),
+                                raise _Blocked(reason,
                                                {"review": outcome, "integration_sha": integration.sha})
                             store.transition(item.task.id, "reviewed", attempt_id=item.attempt_id,
                                              details={"review": outcome, "reviewed_sha": integration.sha})

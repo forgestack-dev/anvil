@@ -19,6 +19,7 @@ from anvil.config import RunConfig, WorkerConfig
 from anvil.contracts import ContractError
 from anvil.execution import verify
 from anvil.parallel import run_parallel
+from test_adaptive import config_options
 from anvil.environment import managed_environment
 from anvil.processes import ProcessError, run_process
 from anvil.store import RunStore
@@ -50,9 +51,17 @@ class Reviewer:
         self.workspaces.append(kwargs["repo"])
         if self.mode == "mutates":
             (kwargs["repo"] / "README.md").write_text("Unreviewed mutation\n")
+        if self.mode == "phantom":
+            return {"verdict": "request_changes", "summary": "The change is incomplete",
+                    "acceptance": [{"criterion": 1, "satisfied": False, "evidence": "read"}],
+                    "findings": [{"criterion": 1, "location": "src/invented.py:5",
+                                  "finding": "points at a path this revision has never had"}]}
         if self.mode == "rejects":
             return {"verdict": "request_changes", "summary": "The change is incomplete",
-                    "acceptance": [], "findings": ["The acceptance criterion is not met"]}
+                    "acceptance": [{"criterion": 1, "satisfied": False,
+                                    "evidence": "The changed file is incomplete"}],
+                    "findings": [{"criterion": 1, "location": "README.md",
+                                  "finding": "The acceptance criterion is not met"}]}
         return {"verdict": "approve", "summary": "The candidate meets its criterion",
                 "acceptance": [{"criterion": 1, "satisfied": True, "evidence": "Changed file inspected"}],
                 "findings": []}
@@ -142,6 +151,39 @@ class ParallelFailureTests(unittest.TestCase):
         self.assertEqual(attempts["a"]["base_sha"], self.base)
         self.assertEqual(attempts["b"]["base_sha"], self.base)
         self.assertIn("conflict", result["error"].lower())
+
+    def test_a_phantom_location_is_refused_in_both_pool_modes(self):
+        """Stage 2 covers all three review sites, not only the serial one.
+
+        A non-adaptive rejection is raised by the reviewing thread, which must
+        not touch Git, so the coordinator resolves its locations when it catches
+        the rejection. An adaptive one is resolved where the coordinator already
+        handles the verdict. Both must refuse a location the revision lacks.
+        """
+        self.write_tickets([self.ticket("a", "codex-worker"),
+                            self.ticket("dependent", "claude-worker", ["a"])])
+
+        def implement(repo, artifacts):
+            (repo / "left.txt").write_text("changed\n")
+
+        # The pool here mixes agents, so the routing policy needs a default for
+        # each; config_options alone covers codex.
+        mixed = config_options()
+        mixed["profiles"]["claude"] = {"agent": "claude-code", "model": "claude-sonnet-5",
+                                       "effort": "medium", "rank": 1}
+        mixed["defaults"]["claude-code"] = "claude"
+        for adaptive in (None, mixed):
+            with self.subTest(adaptive=adaptive is not None):
+                worker = Worker(implement)
+                config = replace(self.config, adaptive=adaptive)
+                result = run_parallel(config, runners={"codex-worker": worker,
+                                                       "claude-worker": worker},
+                                      review_runner=Reviewer("phantom"))
+                self.assertEqual(result["status"], "failed", result["error"])
+                self.assertIn("src/invented.py:5", result["error"])
+                self.assertIn("does not exist", result["error"])
+                self.assertEqual(self.git("rev-parse", result["branch"]), self.base)
+                self.assertNotIn("reviewed_sha", result["tasks"][0]["details"])
 
     def test_clean_cherry_pick_requires_checks_on_combined_changes(self):
         runners, progress = self.staggered_workers("left.txt", "right.txt")

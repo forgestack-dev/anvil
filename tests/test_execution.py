@@ -14,7 +14,8 @@ from unittest.mock import patch
 from anvil.config import RunConfig
 from anvil.adapters.codex import CodexRunner
 from anvil.contracts import ContractError
-from anvil.evidence import validate_result
+from anvil.contracts import Task
+from anvil.evidence import format_findings, validate_result
 from anvil.execution import run_serial
 from anvil.store import RunStore
 from anvil.workspaces import Repository, RepositoryLock, WorkspaceError
@@ -37,7 +38,10 @@ class FakeRunner:
                 (workspace / "README.md").write_text("changed after candidate creation")
             if self.mode == "review-rejects":
                 return {"verdict": "request_changes", "summary": "Incorrect behavior",
-                        "acceptance": [], "findings": ["The change does not meet the ticket"]}
+                        "acceptance": [{"criterion": 1, "satisfied": False,
+                                        "evidence": "value.txt holds the wrong number"}],
+                        "findings": [{"criterion": 1, "location": "value.txt:1",
+                                      "finding": "The change does not meet the ticket"}]}
             return {"verdict": "approve", "summary": "Diff and acceptance checked",
                     "acceptance": [{"criterion": 1, "satisfied": True, "evidence": "value.txt inspected"}],
                     "findings": []}
@@ -352,8 +356,11 @@ class SerialExecutionTests(unittest.TestCase):
                     elif MODE == 'contradictory-approve':
                         result['findings'] = ['No actionable findings. Non-blocking nit: prefer a trailing newline.']
                     elif MODE == 'review-rejects':
-                        result.update(verdict='request_changes', acceptance=[],
-                                      findings=['The requested behavior is missing'])
+                        result.update(verdict='request_changes',
+                                      acceptance=[{'criterion': 1, 'satisfied': False,
+                                                   'evidence': 'Value inspected'}],
+                                      findings=[{'criterion': 1, 'location': 'value.txt:1',
+                                                 'finding': 'The requested behavior is missing'}])
                     elif MODE == 'review-mutates':
                         Path('README.md').write_text('Unexpected reviewer mutation')
                 else:
@@ -536,6 +543,88 @@ class SerialExecutionTests(unittest.TestCase):
                 self.assertEqual(git(self.repo, "status", "--porcelain"), "")
                 self.assertFalse((self.repo / "value.txt").exists())
                 self.assertEqual(json.loads((Path(result["run_dir"]) / "report.json").read_text()), result)
+
+    # -- Stage 2: bound and located rejections (docs/ACCEPTANCE.md) ----------
+
+    @staticmethod
+    def review(acceptance, findings, verdict="request_changes"):
+        return {"verdict": verdict, "summary": "Reviewed", "acceptance": acceptance,
+                "findings": findings}
+
+    def test_a_rejection_must_assess_every_criterion(self):
+        """A rejection that assesses nothing cannot be acted on downstream."""
+        task = Task("a", "T", "O", (), ("first", "second"))
+        full = [{"criterion": 1, "satisfied": True, "evidence": "e"},
+                {"criterion": 2, "satisfied": False, "evidence": "e"}]
+        finding = [{"criterion": 2, "location": "value.txt", "finding": "wrong"}]
+        for acceptance, why in (([], "empty map"), (full[:1], "partial map")):
+            with self.subTest(why=why), self.assertRaisesRegex(ContractError, "every acceptance criterion"):
+                validate_result(self.review(acceptance, finding), task, review=True)
+        validate_result(self.review(full, finding), task, review=True)
+
+    def test_a_conceded_rejection_stays_valid(self):
+        """Every criterion satisfied plus a finding is the case Stage 3 acts on.
+
+        Refusing it here would turn a conceded rejection into a contract error
+        and make that stage unreachable, so the contract permits it on purpose.
+        """
+        task = Task("a", "T", "O", (), ("only",))
+        conceded = self.review([{"criterion": 1, "satisfied": True, "evidence": "e"}],
+                               [{"criterion": 1, "location": "README.md", "finding": "undocumented"}])
+        self.assertEqual(validate_result(conceded, task, review=True)["verdict"], "request_changes")
+
+    def test_findings_must_bind_to_a_criterion_of_this_ticket(self):
+        task = Task("a", "T", "O", (), ("only",))
+        full = [{"criterion": 1, "satisfied": False, "evidence": "e"}]
+        for finding, pattern in (
+                ([{"criterion": 9, "location": "x", "finding": "f"}], "criterion of this ticket"),
+                (["a bare string"], "must be an object"),
+                ([{"criterion": 1, "location": "/etc/passwd", "finding": "f"}], "relative path"),
+                ([{"criterion": 1, "location": "x:0", "finding": "f"}], "line must be positive")):
+            with self.subTest(finding=finding), self.assertRaises(ContractError) as caught:
+                validate_result(self.review(full, finding), task, review=True)
+            self.assertRegex(str(caught.exception), pattern)
+
+    def test_a_phantom_location_fails_the_run_and_names_itself(self):
+        """A location that does not resolve is not evidence, so it is refused."""
+        class Phantom(FakeRunner):
+            def run(self, **kwargs):
+                outcome = super().run(**kwargs)
+                if kwargs.get("read_only"):
+                    outcome.update(verdict="request_changes",
+                                   acceptance=[{"criterion": 1, "satisfied": False, "evidence": "e"}],
+                                   findings=[{"criterion": 1, "location": "src/invented.py:5",
+                                              "finding": "missing"}])
+                return outcome
+        result = run_serial(self.config, runner=Phantom())
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("src/invented.py:5", result["error"])
+        self.assertIn("does not exist", result["error"])
+        self.assertEqual(git(self.repo, "rev-parse", result["branch"]), self.base)
+
+    def test_a_line_past_the_end_of_a_real_file_is_refused(self):
+        class PastEnd(FakeRunner):
+            def run(self, **kwargs):
+                outcome = super().run(**kwargs)
+                if kwargs.get("read_only"):
+                    outcome.update(verdict="request_changes",
+                                   acceptance=[{"criterion": 1, "satisfied": False, "evidence": "e"}],
+                                   findings=[{"criterion": 1, "location": "value.txt:9999",
+                                              "finding": "missing"}])
+                return outcome
+        result = run_serial(self.config, runner=PastEnd())
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("9999", result["error"])
+        self.assertIn("lines at", result["error"])
+
+    def test_a_rejection_reports_its_criterion_and_place(self):
+        """The run error names the criterion and the file, not a prose blob."""
+        result = run_serial(self.config, runner=FakeRunner("review-rejects"))
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["error"],
+                         "criterion 1 (value.txt:1): The change does not meet the ticket")
+        self.assertEqual(format_findings(
+            result["tasks"][0]["details"]["review"]["findings"]), result["error"])
 
     def test_case_distinct_ticket_ids_use_distinct_workspaces_and_evidence(self):
         document = json.loads(self.tickets.read_text())

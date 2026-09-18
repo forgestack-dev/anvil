@@ -183,7 +183,10 @@ class Publisher:
                     reason = task["details"].get("error")
                     for key in ("worker", "review"):
                         result = task["details"].get(key, {})
-                        reason = reason or "; ".join(result.get("blockers", []) or result.get("findings", []))
+                        from .evidence import format_findings
+                        findings = result.get("findings") or []
+                        reason = reason or ("; ".join(result.get("blockers", []))
+                                            or format_findings(findings))
                     if status == "todo" and task["depends_on"]:
                         reason = "Waiting for dependencies: " + ", ".join(task["depends_on"])
                     if reason:
