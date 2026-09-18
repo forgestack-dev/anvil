@@ -1,11 +1,11 @@
 # Hardening AGENTS.md invariants into tests
 
-Status: slices 1, 2, 3 and 5 implemented; slices 4, 6 and 7 are proposed and
-not implemented. The analysis below is based on `main` at `17ebf0e`, and its line
+Status: slices 1, 2, 3 and 5 implemented; slice 6 is half implemented and half
+withdrawn; slices 4 and 7 are proposed and not implemented. The analysis below is based on `main` at `17ebf0e`, and its line
 counts and violation list are that revision's. Module paths, test names, and
 constants for the unimplemented slices remain design targets. The extractor in
 section 4.1 was prototyped against `17ebf0e` and its output is reproduced here.
-Nothing in sections 4.3, 5.3, 5.4 or 6 runs yet.
+Nothing in sections 4.3 or 6 runs yet, and 5.4 is withdrawn.
 
 ## 1. Outcome and scope
 
@@ -242,7 +242,7 @@ Presence of the literal `anvil <name>` is a weak check. It is also the right
 one. A stronger check would constrain how the README is written, and the failure
 this needs to catch is a subcommand nobody documented at all.
 
-### 5.3 Standard library only
+### 5.3 Standard library only — implemented
 
 An AST walk over `src/anvil/` resolving every absolute import root against
 `sys.stdlib_module_names`, with `anvil` itself allowed. It passes at `17ebf0e`.
@@ -250,17 +250,44 @@ Making it permanent turns "unless a dependency has a concrete benefit" into a
 deliberate act: adding a dependency means editing an allowlist in the test, next
 to a comment naming the benefit.
 
-### 5.4 No live models in ordinary tests
+Implemented as `tests/test_invariants.py::StandardLibraryOnly`. Thirty-six
+import roots, none outside the standard library, so `ALLOWED` ships empty.
+Mutation-tested with a `requests` import, which fails and names the module and
+line.
 
-Scan test sources for argv literals naming `codex` or `claude` that are not
-fabricated fixture paths. The existing convention makes this clean: fakes are
-written as `self.root / "fake codex"` and similar, so a bare executable name in
-a test module is the signal.
+### 5.4 No live models in ordinary tests — withdrawn
 
-A stronger version would have the adapters refuse any executable resolving
-outside the test temporary directory when a test-runner variable is set. That
-changes production code for a test-only concern and is deferred. Revisit it only
-if the scan produces false negatives in practice.
+The design here does not survive contact, and the reason is worth recording
+rather than implementing around.
+
+It assumed "a bare executable name in a test module is the signal". It is not.
+Three progressively narrower prototypes were run against the tree at `fef9417`:
+
+| Scan | Hits | All benign? |
+| --- | --- | --- |
+| Bare `codex`/`claude` string literals | 209 | yes -- almost all are agent *names*, not executables |
+| Literals in executable positions (`agent_binary=`, `create_runner` argument, argv head) | 43 | yes |
+| Run entry points called without an injected runner | 7 | yes |
+
+The first two fail because a bare agent name is pervasive and legitimate:
+`agent="codex"` is an identifier, `("codex", "codex")` is an assertion, and
+`context.preflight(task, "codex")` names an agent rather than a binary. The third
+fails because runner injection is not the only guarantee in use: the Claude and
+mixed-pool tests pass a fabricated executable written into the test's temporary
+directory, so no real CLI can be resolved even though nothing is injected.
+
+Every mechanism is legitimate and none is syntactically distinctive. A scan that
+accepted all three would need an allowlist longer than its findings, which is
+the "pile of exceptions" failure this milestone exists to avoid, and a real
+violation could then hide among them.
+
+The deferred stronger version is the honest one, and it is now the recommended
+one: have the adapters refuse an executable resolving outside the test temporary
+directory when a test-runner variable is set. It costs a guard in production
+code for a test-only concern, which is why it was deferred, but it checks the
+property directly at the moment it matters rather than guessing at syntax. Until
+then this claim belongs with the group in section 10: it carries no marker, and
+a reader learns the guarantee is convention rather than mechanism.
 
 ## 6. Marking what is enforced
 
@@ -328,7 +355,7 @@ Each slice is independently mergeable and leaves the suite green.
 | 3 | Section 4.1 | Done; the `51fec4cd` class |
 | 4 | Section 4.3 | Needs the `adopt()` design first |
 | 5 | Section 4.2 | Done; pairs with slice 3 |
-| 6 | Sections 5.3 and 5.4 | Locks what already holds |
+| 6 | Sections 5.3 and 5.4 | 5.3 done; 5.4 withdrawn, see that section |
 | 7 | Section 6 | Last, because it names the tests the earlier slices create |
 
 Slice 4 is the only one that changes execution behavior and should be reviewed
