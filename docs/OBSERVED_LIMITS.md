@@ -4,6 +4,39 @@ Measurements from running this repository's own ticket graph through Anvil.
 They are evidence, not specification, and each section records what it does not
 establish. Nothing here is a fix.
 
+## Correction, 2026-09-18: what the estimate column measures
+
+Every dollar figure in this document is a list-price estimate, not spend.
+
+The saved streams settle it. Each of the seven runs cited below — `bc5a107b`,
+`bbc8fc75`, `78817f4a`, `5abe55ea`, `3658a8d9`, `51fec4cd` and `55bca6a2` —
+reports `apiKeySource: "none"` on its init event and
+`modelUsage[...].costBasis: "list"` on its result, across all ten invocations.
+These runs executed against a Max subscription. `total_cost_usd` is Claude Code
+reporting what those tokens would have cost at first-party list prices, which is
+what Anvil records and what the tables below reproduce. Nothing was billed.
+
+Every comparison in this document survives, because all of it rests on one basis
+and one model family. The 32% fall between the second and third turn-budget runs
+is real, the relative weight of the five attempts is real, and so is the
+observation that a completed ticket costs a second invocation for review. What
+does not survive is any reading of the absolute figures as money leaving an
+account, and with it the force the phrase "spent about $18.76" was carrying.
+
+One consequence is not merely presentational. `max_budget_usd` enforces a ceiling
+against this same estimate, so runs `3658a8d9` and `55bca6a2` were terminated as
+`budget_exhausted` at 70 and 118 turns — 188 turns discarded to stay under a
+limit on money that was never charged. `AGENTS.md` already states that cost
+estimates are not invoices or hard budget caps; the implementation does not yet
+honor it. Milestone 8 in [ROADMAP.md](ROADMAP.md) specifies the split between a
+billed cost and a subscription estimate, and gates the ceiling on the former.
+
+This does not establish that the work was free. A subscription meters a finite
+quota, and an exhausted quota blocks every run rather than only the one that
+consumed it, which makes the discarded invocations above worse under this basis
+rather than better. A billed run would reprice these figures; on the evidence of
+milestone 8's decomposition it would not reorder them.
+
 ## The Claude adapter turn budget
 
 Recorded 2026-09-16 against `main` at `293ad94`, from four real invocations.
@@ -14,7 +47,7 @@ Four Claude Code implementation turns were dispatched against tickets in
 `tickets/delivery-dashboard.json`, on this repository as the target. Every turn
 that produced a result ended the same way.
 
-| Run | Ticket | Turns | Reads/searches | Edits | Cost | Terminal reason |
+| Run | Ticket | Turns | Reads/searches | Edits | Estimate | Terminal reason |
 | --- | --- | --- | --- | --- | --- | --- |
 | `bc5a107b` | `strip-integration-credentials` | 33 | 29 | 6 | $2.08 | `max_turns` |
 | `bc5a107b` | `ledger-query-layer` | — | — | — | — | interrupted by the sibling failure |
@@ -75,7 +108,8 @@ supervised attempts.
 
 `apply-credential-exclusion` asked for a configured set of environment
 variables to be withheld from every managed subprocess, and for tests proving
-the values do not escape. Five attempts spent about $18.76 and merged nothing.
+the values do not escape. Five attempts consumed about $18.76 of list-price
+estimate and merged nothing.
 
 | Attempt | Profile | Worker | Review | Outcome |
 | --- | --- | --- | --- | --- |
