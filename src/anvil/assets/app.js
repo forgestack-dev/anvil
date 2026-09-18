@@ -95,6 +95,25 @@ function elapsed(from, to) {
 
 // -- run list ---------------------------------------------------------------
 
+function started(iso) {
+  const at = Date.parse(iso);
+  if (Number.isNaN(at)) return "unknown";
+  const d = new Date(at), pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+         `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// The cursor's ordering is frozen by the read contract, so the newest-first
+// ordering a reader wants is applied here over the rows already loaded. A run
+// whose ledger could not be read carries no start time and sorts last.
+function byNewest(a, b) {
+  const at = Date.parse(a.created_at || ""), bt = Date.parse(b.created_at || "");
+  if (Number.isNaN(at) && Number.isNaN(bt)) return a.run_id < b.run_id ? -1 : 1;
+  if (Number.isNaN(at)) return 1;
+  if (Number.isNaN(bt)) return -1;
+  return bt - at;
+}
+
 function runItem(run) {
   const item = element("li", null, { role: "option", "aria-selected": String(run.run_id === selected) });
   item.dataset.runId = run.run_id;
@@ -107,19 +126,22 @@ function runItem(run) {
   const status = element("span", run.status, { class: "state", "data-state": run.status });
   const meta = element("div", null, { class: "meta" });
   meta.append(status, document.createTextNode(` · ${done}/${run.task_total} accepted · `),
-              element("span", run.branch));
+              element("span", started(run.created_at), { class: "when" }));
   item.append(meta);
   return item;
 }
 
+let loadedRuns = [];
+
 async function loadRuns(append) {
   const query = append && nextRunCursor ? `?after=${encodeURIComponent(nextRunCursor)}` : "";
   const page = await api("/api/runs" + query);
-  const items = page.items.map(runItem);
-  if (append) runsList.append(...items); else replace(runsList, items);
+  loadedRuns = append ? loadedRuns.concat(page.items) : page.items.slice();
+  loadedRuns.sort(byNewest);
+  replace(runsList, loadedRuns.map(runItem));
   nextRunCursor = page.next_after;
   moreButton.hidden = page.next_after === null;
-  if (!append && !selected && page.items.length) select(page.items[0].run_id);
+  if (!append && !selected && loadedRuns.length) select(loadedRuns[0].run_id);
 }
 
 // -- detail -----------------------------------------------------------------
@@ -139,6 +161,8 @@ async function loadSummary(runId) {
     fact("status", summary.status),
     fact("branch", summary.branch),
     fact("repo", summary.repo),
+    fact("saved state", summary.run_dir || "unknown"),
+    fact("started", started(summary.created_at)),
     fact("base", summary.base_sha.slice(0, 12)),
     fact("tasks", `${counts.done || 0}/${summary.task_total} accepted` + (parts ? ` (${parts})` : "")),
     fact("elapsed", elapsed(summary.created_at, summary.updated_at)),

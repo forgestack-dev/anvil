@@ -89,3 +89,5 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-
   main { grid-template-columns: 1fr; }
   nav { border-right: 0; border-bottom: 1px solid var(--line); min-height: 0; }
 }
+
+.when { color: var(--muted, #6b6b6b); font-variant-numeric: tabular-nums; }

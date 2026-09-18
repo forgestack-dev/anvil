@@ -60,6 +60,9 @@ def run_summary(run_dir: Path) -> dict:
             raise StoreError(f"run ledger is not initialized: {path}")
         summary = dict(row)
         del summary["singleton"]
+        # Where this run's saved state lives, so a reader can go straight to the
+        # artifacts, worktrees and event streams the ledger only points at.
+        summary["run_dir"] = str(Path(run_dir).resolve())
         summary["config"] = json.loads(summary["config"])
         counts = dict(connection.execute("SELECT status, COUNT(*) FROM tasks GROUP BY status"))
         summary["task_counts"] = counts
