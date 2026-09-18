@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sqlite3
+import threading
 from typing import Any
 from uuid import uuid4
 
@@ -69,6 +70,8 @@ class RunStore:
             raise StoreError(f"cannot open run ledger {self.path}: {exc}") from exc
         self._connection = connection
         self.after_commit = None
+        self._owner = threading.get_ident()
+        self._adoptions: list[tuple[int, int]] = []
 
     def __enter__(self) -> RunStore:
         return self
@@ -88,8 +91,31 @@ class RunStore:
         finally:
             self._connection.close()
 
+    def adopt(self) -> None:
+        """Transfer ledger ownership to the calling thread, and record it.
+
+        Deliberately narrow: it moves ownership rather than suspending the
+        check, so a caller must say which thread owns the ledger now and the
+        previous owner starts failing. A flag that disabled the check would be
+        used the first time the guard was inconvenient, and the invariant would
+        return to prose.
+        """
+        previous, self._owner = self._owner, threading.get_ident()
+        self._adoptions.append((previous, self._owner))
+
+    def _assert_owner(self, operation: str) -> None:
+        current = threading.get_ident()
+        if current != self._owner:
+            raise StoreError(
+                f"only the owning thread writes the run ledger: {operation} came from "
+                f"thread {current}, owned by {self._owner}. AGENTS.md: only the "
+                "coordinator thread writes Git or SQLite. Use adopt() to transfer "
+                "ownership deliberately.")
+
     @contextmanager
     def _transaction(self, *, write: bool = True) -> Iterator[sqlite3.Connection]:
+        if write:
+            self._assert_owner("a ledger write")
         connection = self._connection
         try:
             connection.execute("BEGIN IMMEDIATE" if write else "BEGIN")

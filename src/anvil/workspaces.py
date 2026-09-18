@@ -11,6 +11,7 @@ from __future__ import annotations
 from contextlib import AbstractContextManager
 import fcntl
 import re
+import threading
 from pathlib import Path
 import tempfile
 from typing import IO
@@ -43,6 +44,8 @@ class Repository:
     def __init__(self, path: Path, *, exclude=()):
         self.path = Path(path).resolve()
         self.exclude = tuple(exclude)
+        self._owner = threading.get_ident()
+        self._adoptions: list[tuple[int, int]] = []
         self._managed_worktrees: set[Path] = set()
         self.control_ticket = None
         top = Path(self.git("rev-parse", "--show-toplevel")).resolve()
@@ -51,6 +54,26 @@ class Repository:
         common = self.git("rev-parse", "--git-common-dir")
         self.common_dir = (self.path / common).resolve()
         self.head()  # Reject unborn branches before creating any run artifacts.
+
+    def adopt(self) -> None:
+        """Transfer repository-write ownership to the calling thread, recording it.
+
+        Deliberately narrow: it moves ownership rather than suspending the
+        check, so a caller must say which thread owns writes now and the
+        previous owner starts failing. A flag that disabled the check would be
+        used the first time the guard was inconvenient, and the invariant would
+        return to prose.
+        """
+        previous, self._owner = self._owner, threading.get_ident()
+        self._adoptions.append((previous, self._owner))
+
+    def _assert_owner(self, operation: str) -> None:
+        current = threading.get_ident()
+        if current != self._owner:
+            raise WorkspaceError(
+                f"only the owning thread writes Git: {operation} came from thread "
+                f"{current}, owned by {self._owner}. AGENTS.md: the supervisor owns "
+                "Git entirely and worker turns never commit, branch, or push.")
 
     def git(self, *args: str, cwd: Path | None = None) -> str:
         """Run literal, noninteractive Git and stop any filter/helper descendants.
@@ -137,6 +160,7 @@ class Repository:
         self._assert_clean(path)
 
     def create_worktree(self, path: Path, base: str) -> None:
+        self._assert_owner("create_worktree")
         path = Path(path).resolve()
         if path.exists() or path == self.path:
             raise WorkspaceError(f"workspace path already exists: {path}")
@@ -153,6 +177,7 @@ class Repository:
         return ref
 
     def create_branch(self, branch: str, base: str) -> None:
+        self._assert_owner("create_branch")
         ref, base = self._branch_ref(branch), self._commit(base)
         self.git("update-ref", ref, base, "0" * len(base))
 
@@ -162,6 +187,7 @@ class Repository:
             raise WorkspaceError("candidate must be one commit with the expected single parent")
 
     def commit_candidate(self, worktree: Path, base: str, message: str) -> str:
+        self._assert_owner("commit_candidate")
         path, base = self._managed(worktree), self._commit(base)
         if self._commit("HEAD", cwd=path) != base:
             raise WorkspaceError("worker moved HEAD; Anvil must own candidate commits")
@@ -184,6 +210,7 @@ class Repository:
 
     def prepare_integration(self, path: Path, expected_base: str, candidate: str) -> str:
         """Create a detached integration candidate without advancing any branch."""
+        self._assert_owner("prepare_integration")
         path = self._managed(path)
         self._assert_clean(path)
         expected_base, candidate = self._commit(expected_base), self._commit(candidate)
@@ -209,6 +236,7 @@ class Repository:
         Nothing reads them. They are evidence, not input: no acceptance,
         rejection, retry or recovery decision may depend on one existing.
         """
+        self._assert_owner("retain")
         if kind not in self.RETAINED:
             raise WorkspaceError(f"retained revision kind must be one of {self.RETAINED}")
         for name, value in (("run ID", run_id), ("attempt ID", attempt_id)):
@@ -220,6 +248,7 @@ class Repository:
 
     def advance_branch(self, branch: str, old: str, new: str) -> None:
         """Compare-and-swap an unchecked-out branch after successful verification."""
+        self._assert_owner("advance_branch")
         ref = self._branch_ref(branch)
         old, new = self._commit(old), self._commit(new)
         self._single_parent(new, old)
@@ -229,6 +258,7 @@ class Repository:
         self.git("update-ref", ref, new, old)
 
     def remove_worktree(self, path: Path) -> None:
+        self._assert_owner("remove_worktree")
         path = self._managed(path)
         self._assert_clean(path)
         self.git("worktree", "remove", "--", str(path))

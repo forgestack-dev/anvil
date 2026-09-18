@@ -1,11 +1,13 @@
 # Hardening AGENTS.md invariants into tests
 
-Status: slices 1, 2, 3, 5 and 7 implemented; slice 6 is half implemented and
-half withdrawn; slice 4 is proposed and not implemented. The analysis below is based on `main` at `17ebf0e`, and its line
+Status: slices 1, 2, 3, 4, 5 and 7 implemented; slice 6 is half implemented
+and half withdrawn. The milestone is complete.
+
+The analysis below is based on `main` at `17ebf0e`, and its line
 counts and violation list are that revision's. Module paths, test names, and
-constants for the unimplemented slices remain design targets. The extractor in
+constants for the one withdrawn section remain as written. The extractor in
 section 4.1 was prototyped against `17ebf0e` and its output is reproduced here.
-Nothing in section 4.3 runs yet, and 5.4 is withdrawn.
+Only 5.4 is withdrawn.
 
 ## 1. Outcome and scope
 
@@ -163,7 +165,7 @@ failure reports counts only. The first version printed the offending
 environments, which put every value on the host into the failure log -- the
 thing the invariant exists to prevent.
 
-### 4.3 Thread ownership
+### 4.3 Thread ownership — implemented
 
 "Only the coordinator thread writes Git or SQLite" is the one Class B claim
 worth enforcing in the code rather than in a test. `RunStore` captures
@@ -185,6 +187,27 @@ calling a `Repository` write raises; `adopt()` transfers ownership and the
 previous owner then raises; the existing parallel execution tests still pass
 unchanged, which is the real evidence that the coordinator is the only writer
 today.
+
+Implemented as `tests/test_parallel_store.py::LedgerOwnership` and
+`tests/test_workspaces.py::RepositoryOwnership`. The whole suite passed with the
+guards in place on the first run, which is the evidence above.
+
+The two halves turned out to be unequal. sqlite already binds a connection to
+its creating thread, so a cross-thread ledger write failed before this change --
+but with a `ProgrammingError` about thread affinity, which names no rule and
+does not mention `adopt()`. `Repository` had nothing: a worker thread reaching a
+Git write would simply have worked, and that is the half that needed code. A
+further consequence recorded in the tests: the live ledger cannot be *read*
+across threads either, so an observer opens its own connection, which is what
+`serve.py` already does.
+
+`adopt()` has no production caller. Neither path section 4.3 anticipated crosses
+threads: `after_commit` runs inside the writing thread rather than another one,
+and recovery constructs its store on the coordinator. It is kept anyway, because
+its purpose is to be the narrow thing someone reaches for instead of adding a
+bypass flag, and a test pins that the previous owner then fails. A test also
+asserts the guard covers all seven write methods rather than one convenient
+member of the set.
 
 ## 5. Cross-artifact consistency
 
@@ -370,7 +393,7 @@ Each slice is independently mergeable and leaves the suite green.
 | 1 | Section 5.2, plus the four documentation fixes | Done at `f5688d0` |
 | 2 | Section 5.1, including the `RunConfig` frozenset refactor | Done |
 | 3 | Section 4.1 | Done; the `51fec4cd` class |
-| 4 | Section 4.3 | Needs the `adopt()` design first |
+| 4 | Section 4.3 | Done; `adopt()` has no caller and is kept deliberately |
 | 5 | Section 4.2 | Done; pairs with slice 3 |
 | 6 | Sections 5.3 and 5.4 | 5.3 done; 5.4 withdrawn, see that section |
 | 7 | Section 6 | Done; nine claims marked |

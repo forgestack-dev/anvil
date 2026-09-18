@@ -8,6 +8,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -316,3 +317,68 @@ class WorkspaceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RepositoryOwnership(unittest.TestCase):
+    """AGENTS.md: the supervisor owns Git entirely; worker turns never commit.
+
+    Nothing in the library enforces this the way sqlite enforces its connection
+    affinity, so a worker thread reaching a Repository write would simply have
+    worked. This is the half of the claim that needed code rather than review.
+    """
+
+    # Borrow the real-repository fixture without inheriting its tests, which
+    # subclassing would re-run in full.
+    raw_git = WorkspaceTests.raw_git
+    setUp = WorkspaceTests.setUp
+
+    @staticmethod
+    def elsewhere(call):
+        outcome = {}
+
+        def run():
+            try:
+                outcome["value"] = call()
+            except BaseException as exc:  # noqa: BLE001 - reported, not handled
+                outcome["error"] = exc
+
+        thread = threading.Thread(target=run)
+        thread.start()
+        thread.join()
+        return outcome
+
+    def test_a_worker_thread_cannot_write_git(self):
+        repo = Repository(self.path)
+        base = repo.head()
+        outcome = self.elsewhere(
+            lambda: repo.create_worktree(self.root / "elsewhere", base))
+        self.assertIsInstance(outcome.get("error"), WorkspaceError)
+        self.assertIn("only the owning thread writes Git", str(outcome["error"]))
+        self.assertFalse((self.root / "elsewhere").exists())
+
+    def test_reads_stay_available_to_any_thread(self):
+        """Only writes are owned: a thread may still look."""
+        repo = Repository(self.path)
+        outcome = self.elsewhere(repo.head)
+        self.assertEqual(outcome.get("value"), repo.head(), outcome.get("error"))
+
+    def test_adopt_moves_ownership_and_the_previous_owner_then_fails(self):
+        repo = Repository(self.path)
+        base = repo.head()
+        self.elsewhere(repo.adopt)
+        with self.assertRaisesRegex(WorkspaceError, "only the owning thread writes Git"):
+            repo.create_worktree(self.root / "after", base)
+        outcome = self.elsewhere(
+            lambda: repo.create_worktree(self.root / "after", base))
+        self.assertIsNone(outcome.get("error"), outcome.get("error"))
+        self.assertTrue((self.root / "after").exists())
+        self.assertEqual(len(repo._adoptions), 1)
+
+    def test_every_write_method_is_owned(self):
+        """The guard covers the write API, not one convenient member of it."""
+        import inspect
+        owned = {name for name, member in inspect.getmembers(Repository, inspect.isfunction)
+                 if 'self._assert_owner("' in inspect.getsource(member)}
+        self.assertEqual(owned, {"create_worktree", "create_branch", "commit_candidate",
+                                 "prepare_integration", "retain", "advance_branch",
+                                 "remove_worktree"})

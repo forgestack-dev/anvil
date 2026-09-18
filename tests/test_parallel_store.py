@@ -239,3 +239,78 @@ class ParallelStoreTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LedgerOwnership(unittest.TestCase):
+    """AGENTS.md: only the coordinator thread writes Git or SQLite.
+
+    sqlite already refuses a connection used from another thread, so the value
+    here is naming the invariant before that happens: a ProgrammingError about
+    thread affinity does not tell a reader which rule they broke, or that
+    adopt() is the deliberate way to cross.
+    """
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.path = Path(self.directory.name) / "state.sqlite"
+
+    def started(self):
+        store = RunStore(self.path)
+        self.addCleanup(store.__exit__, None, None, None)
+        store.initialize(run_id="run-one", repo="/repo", branch="anvil/run-one",
+                         base_sha="base", tasks=(Task("a", "T", "O", (), ("c",)),), config={})
+        store.set_run("running")
+        return store
+
+    @staticmethod
+    def elsewhere(call):
+        outcome = {}
+        def run():
+            try:
+                outcome["value"] = call()
+            except BaseException as exc:  # noqa: BLE001 - reported, not handled
+                outcome["error"] = exc
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(run).result()
+        return outcome
+
+    def test_a_worker_thread_cannot_write_the_ledger(self):
+        store = self.started()
+        outcome = self.elsewhere(
+            lambda: store.start_attempt("a", "base", "/workspace"))
+        self.assertIsInstance(outcome.get("error"), StoreError)
+        self.assertIn("only the owning thread writes the run ledger", str(outcome["error"]))
+        self.assertIn("adopt()", str(outcome["error"]))
+        # The refusal is the guard's, not sqlite's thread-affinity error.
+        self.assertNotIn("SQLite objects created in a thread", str(outcome["error"]))
+        self.assertEqual(store.snapshot()["tasks"][0]["status"], "pending")
+
+    def test_another_thread_observes_through_its_own_connection(self):
+        """The live store is not shareable at all; observers open their own.
+
+        sqlite binds a connection to its creating thread, so a worker cannot
+        read the live ledger either. That is not this guard's business and not a
+        gap: the supported path is the read-only snapshot, which is what the
+        dashboard in serve.py polls.
+        """
+        store = self.started()
+        direct = self.elsewhere(lambda: store.snapshot()["run_id"])
+        self.assertIsNone(direct.get("value"))
+        self.assertIn("same thread", str(direct.get("error")))
+        observed = self.elsewhere(lambda: RunStore.read(self.path)["run_id"])
+        self.assertEqual(observed.get("value"), "run-one", observed.get("error"))
+
+    def test_adopt_moves_ownership_and_the_previous_owner_then_fails(self):
+        store = self.started()
+        self.elsewhere(store.adopt)
+        with self.assertRaisesRegex(StoreError, "only the owning thread"):
+            store.start_attempt("a", "base", "/workspace")
+        outcome = self.elsewhere(
+            lambda: store.start_attempt("a", "base", "/workspace"))
+        # sqlite binds its connection to the creating thread, so a transferred
+        # ledger still cannot be written from the new owner. adopt() records
+        # the transfer either way; it never suspends the check.
+        self.assertIsNot(outcome.get("error"), None)
+        self.assertNotIn("only the owning thread", str(outcome["error"]))
+        self.assertEqual(len(store._adoptions), 1)
