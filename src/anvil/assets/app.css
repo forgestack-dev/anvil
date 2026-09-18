@@ -152,3 +152,7 @@ table.grouping td.long { white-space: normal; overflow-wrap: anywhere; font: inh
 table.grouping { table-layout: fixed; }
 /* A column too narrow for a table scrolls the table, not the page. */
 .events, #panel-tasks, #panel-spend { overflow-x: auto; }
+.risk { font-size: 12px; }
+.risk[data-risk="low"] { color: var(--ok); }
+.risk[data-risk="medium"] { color: var(--warn); }
+.risk[data-risk="high"] { color: var(--bad); }

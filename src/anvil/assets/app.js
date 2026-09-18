@@ -412,7 +412,7 @@ function taskTable(label, tasks) {
   const table = element("table");
   table.append(element("caption", label));
   const head = document.createElement("tr");
-  for (const name of ["Ticket", "State", "Depends on", "Attempt"]) head.append(element("th", name));
+  for (const name of ["Ticket", "State", "Risk", "Depends on", "Attempt"]) head.append(element("th", name));
   table.append(element("thead").appendChild(head).parentNode);
   const body = element("tbody");
   for (const task of tasks) {
@@ -427,6 +427,10 @@ function taskTable(label, tasks) {
     });
     row.append(element("td", task.id, { class: "mono" }));
     row.append(stateCell(task.status));
+    // Risk is an optional ticket field: a graph that declares none reads as
+    // absent rather than as low.
+    row.append(element("td", task.risk || "—",
+                       task.risk ? { class: "risk", "data-risk": task.risk } : null));
     row.append(element("td", (task.depends_on || []).join(", ") || "—", { class: "mono" }));
     row.append(element("td", task.attempt_id ? task.attempt_id.slice(0, 8) : "—", { class: "mono" }));
     body.append(row);
