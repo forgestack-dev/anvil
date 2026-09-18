@@ -1,11 +1,11 @@
 # Hardening AGENTS.md invariants into tests
 
-Status: slices 1, 2, 3 and 5 implemented; slice 6 is half implemented and half
-withdrawn; slices 4 and 7 are proposed and not implemented. The analysis below is based on `main` at `17ebf0e`, and its line
+Status: slices 1, 2, 3, 5 and 7 implemented; slice 6 is half implemented and
+half withdrawn; slice 4 is proposed and not implemented. The analysis below is based on `main` at `17ebf0e`, and its line
 counts and violation list are that revision's. Module paths, test names, and
 constants for the unimplemented slices remain design targets. The extractor in
 section 4.1 was prototyped against `17ebf0e` and its output is reproduced here.
-Nothing in sections 4.3 or 6 runs yet, and 5.4 is withdrawn.
+Nothing in section 4.3 runs yet, and 5.4 is withdrawn.
 
 ## 1. Outcome and scope
 
@@ -289,7 +289,7 @@ property directly at the moment it matters rather than guessing at syntax. Until
 then this claim belongs with the group in section 10: it carries no marker, and
 a reader learns the guarantee is convention rather than mechanism.
 
-## 6. Marking what is enforced
+## 6. Marking what is enforced — implemented
 
 The tests above make roughly a dozen claims checkable. The rest of `AGENTS.md`
 stays prose, and a reader currently cannot tell which is which.
@@ -303,6 +303,23 @@ which is accurate rather than embarrassing.
 This is the part that compounds. Without it the new tests are a pile of checks
 whose relationship to the document is itself undocumented, and the next person
 to add an invariant has no cue that enforcement is expected.
+
+Implemented as `tests/test_invariants.py::EnforcedClaimsNameRealTests`. Nine
+claims in `AGENTS.md` now carry markers. The form is extended to
+`::Class::test_method` where no whole class is dedicated to a single claim,
+which is what the acceptance sentences need: `SerialExecutionTests` enforces
+many things, and citing it for one sentence would be true but useless.
+
+The validator resolves each marker explicitly -- import the module, fetch the
+attribute, check it is a `TestCase`, check the method exists -- rather than
+through `loadTestsFromName`. That matters: for a name it cannot find the loader
+returns a suite holding a `_FailedTest` rather than raising, so a marker citing a
+renamed class counts as one collected test and passes. The first version did
+exactly that and let the renamed-class mutation through, which is the case this
+test most needs to catch.
+
+Mutation-tested four ways: a renamed class, a renamed method, a module that does
+not exist, and markers stripped from the document entirely.
 
 ## 7. Placement and runner impact
 
@@ -356,7 +373,7 @@ Each slice is independently mergeable and leaves the suite green.
 | 4 | Section 4.3 | Needs the `adopt()` design first |
 | 5 | Section 4.2 | Done; pairs with slice 3 |
 | 6 | Sections 5.3 and 5.4 | 5.3 done; 5.4 withdrawn, see that section |
-| 7 | Section 6 | Last, because it names the tests the earlier slices create |
+| 7 | Section 6 | Done; nine claims marked |
 
 Slice 4 is the only one that changes execution behavior and should be reviewed
 on its own. Slice 7 is last by necessity.
