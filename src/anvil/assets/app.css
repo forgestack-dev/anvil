@@ -71,7 +71,8 @@ th, td { text-align: left; padding: 6px 10px 6px 0; border-bottom: 1px solid var
          vertical-align: top; }
 th { color: var(--muted); font-weight: 600; font-size: 12px;
      text-transform: uppercase; letter-spacing: .05em; }
-td.num { text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+th.num, td.num { text-align: right; }
+td.num { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
          padding-right: 14px; white-space: nowrap; }
 code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .state { font-weight: 600; }
@@ -156,3 +157,10 @@ table.grouping { table-layout: fixed; }
 .risk[data-risk="low"] { color: var(--ok); }
 .risk[data-risk="medium"] { color: var(--warn); }
 .risk[data-risk="high"] { color: var(--bad); }
+
+/* A numeric column takes only the width its digits need, so the text columns
+   absorb the slack instead of the numbers drifting away from their headings.
+   Tabular figures keep the digits in a column under each other. */
+th.num, td.num { width: 1%; white-space: nowrap; font-variant-numeric: tabular-nums; }
+th.num { padding-left: 14px; }
+td.num { padding-left: 14px; }

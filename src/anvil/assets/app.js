@@ -451,14 +451,19 @@ async function loadTasks(runId) {
   replace(panels.tasks, nodes);
 }
 
+// One definition for both the header and the cells: classing them separately
+// is how Model and Outcome came to be right-aligned as if they were figures.
+const SPEND_COLUMNS = ["Ticket", "State", "Model", "In", "Out", "Cost", "Duration", "Outcome"];
+const SPEND_NUMERIC = new Set(["In", "Out", "Cost", "Duration"]);
+
 async function loadSpend(runId) {
   const page = await api(`/api/runs/${encodeURIComponent(runId)}/telemetry?limit=500`);
   if (!page.items.length) return replace(panels.spend, [element("p", "No attempts yet.", { class: "empty" })]);
   const table = element("table");
   table.append(element("caption", "Per attempt, worker and review combined"));
   const head = document.createElement("tr");
-  for (const name of ["Ticket", "State", "Model", "In", "Out", "Cost", "Duration", "Outcome"]) {
-    head.append(element("th", name, name === "Ticket" || name === "State" ? null : { class: "num" }));
+  for (const name of SPEND_COLUMNS) {
+    head.append(element("th", name, SPEND_NUMERIC.has(name) ? { class: "num" } : null));
   }
   table.append(element("thead").appendChild(head).parentNode);
   const body = element("tbody");
@@ -483,9 +488,9 @@ async function loadSpend(runId) {
     row.append(element("td", record.duration_seconds ? record.duration_seconds.toFixed(1) + "s" : "—"));
     row.append(element("td", record.failure_category === "none" ? record.evaluation
       : `${record.evaluation} · ${record.failure_category}`));
-    for (const cell of row.querySelectorAll("td")) {
-      if (["3", "4", "5", "6"].includes(String([...row.children].indexOf(cell)))) cell.classList.add("num");
-    }
+    [...row.children].forEach((cell, index) => {
+      if (SPEND_NUMERIC.has(SPEND_COLUMNS[index])) cell.classList.add("num");
+    });
     body.append(row);
   }
   table.append(body);
