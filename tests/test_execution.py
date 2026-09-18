@@ -734,6 +734,59 @@ class SerialExecutionTests(unittest.TestCase):
         self.assertEqual(result["status"], "blocked")
         self.assertNotIn("failure_category", result["tasks"][0]["details"])
 
+    # -- retained candidate refs (tickets/candidate-retention.json) ---------
+
+    def assert_retained(self, result, kinds=("candidate", "integration")):
+        """Every named revision resolves and survives an immediate prune."""
+        attempt = result["attempts"][0]["id"]
+        run = result["run_id"]
+        prunable = git(self.repo, "prune", "--dry-run", "--expire=now")
+        for kind in kinds:
+            ref = f"refs/anvil/{kind}/{run}/{attempt}"
+            sha = git(self.repo, "rev-parse", ref)
+            self.assertEqual(len(sha), 40, f"{ref} does not resolve")
+            self.assertNotIn(sha, prunable, f"{ref} names a revision git would prune")
+        return attempt
+
+    def test_an_accepted_ticket_keeps_its_candidate_and_integration_revisions(self):
+        result = run_serial(self.config, runner=FakeRunner())
+        self.assertEqual(result["status"], "success", result.get("error"))
+        attempt = self.assert_retained(result)
+        details = result["attempts"][0]["details"]
+        self.assertEqual(git(self.repo, "rev-parse",
+                             f"refs/anvil/candidate/{result['run_id']}/{attempt}"),
+                         details["candidate_sha"])
+
+    def test_a_rejected_candidate_survives_the_run_that_discarded_it(self):
+        """The case the refs exist for: nothing else references it afterwards."""
+        result = run_serial(self.config, runner=FakeRunner("review-rejects"))
+        self.assertEqual(result["status"], "blocked")
+        attempt = self.assert_retained(result)
+        rejected = result["attempts"][0]["details"]["candidate_sha"]
+        # The managed branch never moved, so only the retained ref holds it.
+        self.assertEqual(git(self.repo, "rev-parse", result["branch"]), self.base)
+        self.assertEqual(
+            git(self.repo, "for-each-ref", "--contains", rejected,
+                "--format=%(refname)").splitlines(),
+            [f"refs/anvil/candidate/{result['run_id']}/{attempt}",
+             f"refs/anvil/integration/{result['run_id']}/{attempt}"])
+
+    def test_a_candidate_that_failed_its_checks_is_kept_too(self):
+        result = run_serial(self.config, runner=FakeRunner("bad-check"))
+        self.assertEqual(result["status"], "failed")
+        self.assert_retained(result)
+
+    def test_retained_refs_are_evidence_and_never_an_input(self):
+        """Deleting every retained ref must not change what a run decides."""
+        first = run_serial(self.config, runner=FakeRunner())
+        self.assertEqual(first["status"], "success", first.get("error"))
+        for ref in git(self.repo, "for-each-ref", "refs/anvil/",
+                       "--format=%(refname)").splitlines():
+            git(self.repo, "update-ref", "-d", ref)
+        self.assertEqual(git(self.repo, "for-each-ref", "refs/anvil/"), "")
+        second = run_serial(self.config, runner=FakeRunner())
+        self.assertEqual(second["status"], "success", second.get("error"))
+
     def test_case_distinct_ticket_ids_use_distinct_workspaces_and_evidence(self):
         document = json.loads(self.tickets.read_text())
         document["tasks"][0]["id"] = "Ticket"

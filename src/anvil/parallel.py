@@ -366,6 +366,7 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                         candidate = repo.commit_candidate(
                             item.workspace, item.base, f"Anvil: {item.task.id} — {item.task.title}")
                         item.candidate = candidate
+                        repo.retain("candidate", run_id, item.attempt_id, candidate)
                         store.transition(item.task.id, "candidate", attempt_id=item.attempt_id,
                                          details={"candidate_sha": candidate, "worker": claims})
                         item.future = None
@@ -485,6 +486,10 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                         if saved_candidate and saved_candidate["base_sha"] == base:
                             # Only the immutable commit is reused; no old artifacts or mutable files.
                             item.candidate = repo.prepare_integration(item.workspace, base, saved_candidate["candidate_sha"])
+                            # A reused commit is re-integrated onto the current
+                            # base, and the ledger records the result as this
+                            # attempt's candidate_sha; retain it as one.
+                            repo.retain("candidate", run_id, item.attempt_id, item.candidate)
                             item.claims = saved_candidate["worker"]
                             store.transition(task.id, "candidate", attempt_id=attempt_id,
                                              details={"candidate_sha": item.candidate, "worker": item.claims,
@@ -519,6 +524,7 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                         item = candidates.pop(0)
                         current = item.task.id
                         sha = repo.prepare_integration(workspace, base, item.candidate)
+                        repo.retain("integration", run_id, item.attempt_id, sha)
                         store.record_message(item.task.id, attempt_id=item.attempt_id, kind="integration",
                                              body={"worker_base": item.base, "accepted_base": base,
                                                    "integration_sha": sha, "review_agent": config.agent})

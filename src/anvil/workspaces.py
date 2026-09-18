@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from contextlib import AbstractContextManager
 import fcntl
+import re
 from pathlib import Path
 import tempfile
 from typing import IO
@@ -31,6 +32,9 @@ def _output_tail(path: Path) -> str:
 
 class WorkspaceError(RuntimeError):
     """A Git workspace cannot be safely used or integrated."""
+
+
+_REF_COMPONENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 
 class Repository:
@@ -190,6 +194,29 @@ class Repository:
         self._single_parent(integrated, expected_base)
         self.assert_revision(path, integrated)
         return integrated
+
+    RETAINED = ("candidate", "integration")
+
+    def retain(self, kind: str, run_id: str, attempt_id: str, sha: str) -> str:
+        """Name a revision under refs/anvil/ so it survives an ordinary prune.
+
+        The ledger records candidate_sha and integration_sha, but a rejected
+        attempt's commits are reachable from no ref once its worktree is gone,
+        so `git gc` destroys the evidence the ledger points at. The managed
+        branch already holds accepted work; these refs are what make a rejection
+        auditable, which is the replay docs/OBSERVED_LIMITS.md describes.
+
+        Nothing reads them. They are evidence, not input: no acceptance,
+        rejection, retry or recovery decision may depend on one existing.
+        """
+        if kind not in self.RETAINED:
+            raise WorkspaceError(f"retained revision kind must be one of {self.RETAINED}")
+        for name, value in (("run ID", run_id), ("attempt ID", attempt_id)):
+            if not isinstance(value, str) or not _REF_COMPONENT.fullmatch(value):
+                raise WorkspaceError(f"retained {name} must match {_REF_COMPONENT.pattern}")
+        ref = f"refs/anvil/{kind}/{run_id}/{attempt_id}"
+        self.git("update-ref", ref, self._commit(sha))
+        return ref
 
     def advance_branch(self, branch: str, old: str, new: str) -> None:
         """Compare-and-swap an unchecked-out branch after successful verification."""

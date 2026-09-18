@@ -79,6 +79,16 @@ class RecoveryTests(unittest.TestCase):
                 self.assertEqual(len(runner.reviews), 2)
                 self.assertEqual((old/'value.txt').read_text(), 'late old worker mutation')
                 self.assertTrue(result['tasks'][0]['details']['recovered_candidate'])
+                # The reused candidate is integrated afresh on resume, and that
+                # revision is retained like any other; see
+                # tickets/candidate-retention.json.
+                # The resumed attempt, not the interrupted one whose ref the
+                # first run already created under the same run ID.
+                reused = next(a for a in result['attempts']
+                              if 'recovered_candidate' in a['details'])
+                ref = f"refs/anvil/candidate/{result['run_id']}/{reused['id']}"
+                self.assertEqual(len(git(self.repo, 'rev-parse', ref)), 40,
+                                 f'{ref} does not resolve after candidate reuse')
 
     def test_branch_advance_before_ledger_completion_reconciles_once(self):
         advance = Repository.advance_branch

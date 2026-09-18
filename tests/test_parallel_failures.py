@@ -185,6 +185,26 @@ class ParallelFailureTests(unittest.TestCase):
                 self.assertEqual(self.git("rev-parse", result["branch"]), self.base)
                 self.assertNotIn("reviewed_sha", result["tasks"][0]["details"])
 
+    def test_a_pool_run_retains_its_candidate_and_integration_revisions(self):
+        """The pool reaches three of the five retention sites the ticket lists."""
+        self.write_tickets([self.ticket("a", "codex-worker")])
+
+        def implement(repo, artifacts):
+            (repo / "left.txt").write_text("changed\n")
+
+        worker = Worker(implement)
+        result = run_parallel(self.config, runners={"codex-worker": worker,
+                                                    "claude-worker": worker},
+                              review_runner=Reviewer())
+        self.assertEqual(result["status"], "success", result["error"])
+        attempt = result["attempts"][0]["id"]
+        prunable = self.git("prune", "--dry-run", "--expire=now")
+        for kind in ("candidate", "integration"):
+            ref = f"refs/anvil/{kind}/{result['run_id']}/{attempt}"
+            sha = self.git("rev-parse", ref)
+            self.assertEqual(len(sha), 40, f"{ref} does not resolve")
+            self.assertNotIn(sha, prunable, f"{ref} names a revision git would prune")
+
     def test_clean_cherry_pick_requires_checks_on_combined_changes(self):
         runners, progress = self.staggered_workers("left.txt", "right.txt")
         check = (sys.executable, "-c", "from pathlib import Path; "

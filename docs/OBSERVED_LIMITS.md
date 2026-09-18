@@ -166,9 +166,13 @@ git worktree add --detach /tmp/replay evidence/apply-credential-exclusion/attemp
 cd /tmp/replay && env PYTHONPATH=src python3 -m unittest discover -s tests
 ```
 
-Pinning by hand does not generalize. `tickets/candidate-retention.json` covers
-retaining a ref at each of the five sites that create one of these revisions,
-and bounding their growth afterwards.
+Pinning by hand was a stopgap. A run now names every candidate and integration
+revision it creates under `refs/anvil/<kind>/<run id>/<attempt id>`, so a
+rejected attempt survives the run that discarded it and this section's method
+works without anyone remembering to pin anything. The refs are evidence and
+never an input: no acceptance, rejection, retry or recovery decision reads one.
+Bounding their growth is `reap-candidate-refs` in
+`tickets/candidate-retention.json` and is not implemented.
 
 ### What this does not establish
 

@@ -327,9 +327,11 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
                             store.set_run("blocked", error="; ".join(claims["blockers"]))
                             break
                         candidate = repo.commit_candidate(workspace, base, f"Anvil: {task.id} — {task.title}")
+                        repo.retain("candidate", run_id, attempt_id, candidate)
                         store.transition(task.id, "candidate", attempt_id=attempt_id,
                                          details={"candidate_sha": candidate, "worker": claims})
                         integrated = repo.prepare_integration(integration, base, candidate)
+                        repo.retain("integration", run_id, attempt_id, integrated)
                         # Checks first: a reviewer with no shell is never asked to judge a
                         # candidate the configured commands already reject. docs/ACCEPTANCE.md
                         notify(f"{task.id}: verifying {integrated[:12]}")
