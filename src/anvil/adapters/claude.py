@@ -20,13 +20,19 @@ import stat
 from tempfile import TemporaryDirectory
 
 from anvil.environment import managed_environment
-from anvil.processes import ProcessError, run_process
+from anvil.processes import InvocationExhausted, ProcessError, run_process
 
 
 MINIMUM_VERSION = (2, 1, 260)
 MAX_TURNS = 32
 MAX_STREAM_BYTES = 32 * 1024 * 1024
 MAX_RESULT_BYTES = 4 * 1024 * 1024
+# Claude Code's own terminal vocabulary for a result that stopped at a
+# configured ceiling rather than finishing; see the result envelope docs at
+# the top of this module. Any other subtype, or a stream this best-effort
+# scan cannot parse, is not reclassified and keeps the plain exit-code error.
+_EXHAUSTION_SUBTYPES = {"error_max_turns": "turn_exhaustion",
+                        "error_max_budget_usd": "budget_exhaustion"}
 _REQUIRED_FLAGS = (
     "--print", "--input-format", "--output-format", "--verbose", "--json-schema",
     "--no-session-persistence", "--safe-mode", "--strict-mcp-config", "--mcp-config",
@@ -141,6 +147,29 @@ def build_invocation(
     )
 
 
+def _terminal_subtype(data: bytes) -> str | None:
+    """Best-effort scan for the stream's own terminal subtype; never raises.
+
+    Deliberately lenient, unlike _extract_result: it exists only to classify
+    a nonzero exit before falling back to the generic exit-code error, never
+    to accept a result. A malformed, truncated, or ambiguous stream returns
+    None and the exit stays a plain ProcessError.
+    """
+    subtype = None
+    try:
+        for line in data.splitlines():
+            if not line.strip():
+                continue
+            event = json.loads(line)
+            if isinstance(event, dict) and event.get("type") == "result":
+                candidate = event.get("subtype")
+                if isinstance(candidate, str):
+                    subtype = candidate
+    except (ValueError, TypeError, RecursionError):
+        return None
+    return subtype
+
+
 def _extract_result(data: bytes) -> dict:
     terminal = None
     for line in data.splitlines():
@@ -244,6 +273,17 @@ class ClaudeRunner:
         if outcome.timed_out:
             raise ProcessError(f"Claude Code execution timed out after {timeout} seconds; artifacts: {artifact_dir}")
         if outcome.returncode:
+            # Parse the stream's own terminal subtype before raising on the
+            # exit code, so a turn or budget ceiling reaches the coordinator
+            # as that classification rather than only a bare exit code.
+            try:
+                subtype = _terminal_subtype(_read_regular(artifact_dir / "events.jsonl", MAX_STREAM_BYTES))
+            except (OSError, ValueError, UnicodeError, RecursionError):
+                subtype = None
+            category = _EXHAUSTION_SUBTYPES.get(subtype)
+            if category is not None:
+                raise InvocationExhausted(
+                    f"Claude Code stopped ({subtype}) before finishing; artifacts: {artifact_dir}", category)
             raise ProcessError(f"Claude Code execution exited with code {outcome.returncode}; artifacts: {artifact_dir}")
         try:
             result = _extract_result(_read_regular(artifact_dir / "events.jsonl", MAX_STREAM_BYTES))

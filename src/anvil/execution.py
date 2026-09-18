@@ -15,7 +15,7 @@ from .evidence import (REVIEW_SCHEMA, WORKER_SCHEMA, _location, concedes,
                        format_findings, rejection_reason, undeclared_findings,
                        validate_result)
 from .planning import TaskGraph
-from .processes import ProcessError, ProcessScope, run_process
+from .processes import InvocationExhausted, ProcessError, ProcessScope, run_process
 from .store import RunStore, StoreError
 from .workspaces import Repository, RepositoryLock, WorkspaceError
 
@@ -396,6 +396,8 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
                 details = {"error": str(exc)}
                 if isinstance(exc, VerificationFailure):
                     details["verification"] = exc.records
+                if isinstance(exc, InvocationExhausted):
+                    details["failure_category"] = exc.category
                 if not record_stop("failed", str(exc), details):
                     raise
             result = store.snapshot()

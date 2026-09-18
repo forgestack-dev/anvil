@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from anvil.adapters.claude import ClaudeRunner, doctor
-from anvil.processes import ProcessError
+from anvil.processes import InvocationExhausted, ProcessError
 
 
 CLAUDE_HELP = (
@@ -189,6 +189,44 @@ class ClaudeExecutionTests(unittest.TestCase):
                 with self.assertRaisesRegex(ProcessError, expected):
                     self.run_fake(artifact_dir=artifacts, timeout=0.15 if name == "timeout" else 3)
                 self.assertFalse((artifacts / "result.json").exists())
+
+    def test_a_nonzero_exit_carrying_a_turn_or_budget_result_is_classified(self):
+        for subtype, category in (("error_max_turns", "turn_exhaustion"),
+                                  ("error_max_budget_usd", "budget_exhaustion")):
+            with self.subTest(subtype=subtype):
+                self.fake(
+                    "print(json.dumps({'type':'result','subtype':" + repr(subtype) + ","
+                    "'is_error':True,'permission_denials':[]}))\nsys.exit(1)")
+                artifacts = self.root / f"exhausted-{subtype}"
+                with self.assertRaises(InvocationExhausted) as raised:
+                    self.run_fake(artifact_dir=artifacts)
+                self.assertEqual(raised.exception.category, category)
+                self.assertIn(subtype, str(raised.exception))
+                self.assertFalse((artifacts / "result.json").exists())
+
+    def test_a_malformed_stream_with_a_nonzero_exit_keeps_the_exit_code_error(self):
+        self.fake("print('not json')\nsys.exit(1)")
+        artifacts = self.root / "malformed-nonzero"
+        with self.assertRaisesRegex(ProcessError, "code 1") as raised:
+            self.run_fake(artifact_dir=artifacts)
+        self.assertNotIsInstance(raised.exception, InvocationExhausted)
+
+    def test_a_permission_denial_with_a_nonzero_exit_keeps_the_exit_code_error(self):
+        self.fake(
+            "print(json.dumps({'type':'system','subtype':'permission_denied'}))\nsys.exit(1)")
+        artifacts = self.root / "denied-nonzero"
+        with self.assertRaisesRegex(ProcessError, "code 1") as raised:
+            self.run_fake(artifact_dir=artifacts)
+        self.assertNotIsInstance(raised.exception, InvocationExhausted)
+
+    def test_an_ordinary_result_subtype_with_a_nonzero_exit_is_not_reclassified(self):
+        self.fake(
+            "print(json.dumps({'type':'result','subtype':'error_during_execution',"
+            "'is_error':True,'permission_denials':[]}))\nsys.exit(1)")
+        artifacts = self.root / "ordinary-nonzero"
+        with self.assertRaisesRegex(ProcessError, "code 1") as raised:
+            self.run_fake(artifact_dir=artifacts)
+        self.assertNotIsInstance(raised.exception, InvocationExhausted)
 
     def test_malformed_or_ambiguous_streams_are_rejected(self):
         cases = (

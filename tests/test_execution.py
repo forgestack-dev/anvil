@@ -17,6 +17,7 @@ from anvil.contracts import ContractError
 from anvil.contracts import Task
 from anvil.evidence import format_findings, validate_result
 from anvil.execution import run_serial
+from anvil.processes import InvocationExhausted
 from anvil.store import RunStore
 from anvil.workspaces import Repository, RepositoryLock, WorkspaceError
 
@@ -48,6 +49,10 @@ class FakeRunner:
         self.workers.append(git(workspace, "rev-parse", "HEAD"))
         if self.mode == "interrupt":
             raise KeyboardInterrupt
+        if self.mode == "turn-exhaustion":
+            raise InvocationExhausted("stopped after exhausting its configured turns", "turn_exhaustion")
+        if self.mode == "budget-exhaustion":
+            raise InvocationExhausted("stopped after exhausting its configured budget", "budget_exhaustion")
         if self.mode == "blocked":
             return {"status": "blocked", "summary": "Need a decision", "acceptance": [],
                     "blockers": ["Clarify the output format"]}
@@ -113,6 +118,18 @@ class SerialExecutionTests(unittest.TestCase):
             self.assertEqual(details["verified_sha"], reviewed)
             self.assertEqual(details["reviewed_sha"], reviewed)
         self.assertEqual(json.loads((Path(result["run_dir"]) / "report.json").read_text())["status"], "success")
+
+    def test_a_classified_invocation_exhaustion_reaches_the_ledger_as_its_category(self):
+        for mode, category in (("turn-exhaustion", "turn_exhaustion"),
+                               ("budget-exhaustion", "budget_exhaustion")):
+            with self.subTest(mode=mode):
+                result, runner = self.run_mode(mode)
+                self.assertEqual(result["status"], "failed")
+                failed_task = next(task for task in result["tasks"] if task["status"] == "failed")
+                self.assertEqual(failed_task["details"]["failure_category"], category)
+                saved = RunStore.read(Path(result["run_dir"]) / "state.sqlite")
+                failed_attempt = next(a for a in saved["attempts"] if a["status"] == "failed")
+                self.assertEqual(failed_attempt["details"]["failure_category"], category)
 
     def test_failures_never_advance_branch_or_unlock_dependents(self):
         for mode in ("bad-check", "missing-evidence", "review-mutates", "worker-commits"):

@@ -190,6 +190,12 @@ class CodexRunner:
         if outcome.timed_out:
             raise ProcessError(f"Codex execution timed out after {timeout} seconds; artifacts: {artifact_dir}")
         if outcome.returncode:
+            # Unlike Claude Code's result envelope, `codex exec --json` has no
+            # documented terminal subtype for a turn or budget ceiling: its
+            # streamed events report incremental per-turn usage, not a reason
+            # the run stopped. There is no vocabulary here to classify against,
+            # so every nonzero exit stays a plain ProcessError; see
+            # RUN_ECONOMICS.md slice 1.
             raise ProcessError(f"Codex execution exited with code {outcome.returncode}; artifacts: {artifact_dir}")
         try:
             if result_path.is_symlink() or not result_path.is_file():

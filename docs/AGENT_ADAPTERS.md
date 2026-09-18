@@ -31,6 +31,8 @@ Safe mode still honors managed policy, including policy-configured hooks. Authen
 
 Anvil preserves `schema.json`, `events.jsonl`, and `stderr.log`. It accepts structured output only from exactly one successful result with no permission denials, then writes the normalized `result.json` and applies the shared evidence validation. Claude Code 2.1.260 can emit informational `system/task_summary` events after the result; Anvil accepts these trailers and retains them in the raw event log. The adapter parses the entire stream and rejects other trailing events, duplicate results, and permission denials anywhere in the stream. Missing or malformed output, an error result, a nonzero exit, or a timeout fails the turn even if an earlier message claimed success. Session resumption is not used; saved Anvil state supports inspection only.
 
+A nonzero exit is first checked against the stream's own terminal `subtype`: `error_max_turns` and `error_max_budget_usd` raise a classified error (`turn_exhaustion`/`budget_exhaustion`) that the coordinator records as the matching failure category, instead of only "exited with code N". A timeout, a malformed or unparseable stream, a permission denial, and any other nonzero exit are unaffected and keep the plain exit-code error. `codex exec --json` has no documented equivalent vocabulary, so a Codex nonzero exit is never classified this way; see `RUN_ECONOMICS.md` slice 1.
+
 Explicit adaptive profiles pass provider-specific model and effort controls per invocation. See [routing](ADAPTIVE_ROUTING.md) for preflight, telemetry provenance, and supported limits.
 
 ## Muse
