@@ -19,6 +19,19 @@ def _executable_path(binary: str, agent: str, base: Path) -> str:
     return binary
 
 
+#: The fields each document accepts, kept at module level so
+#: tests/test_run_config.py can compare them with schemas/run.schema.json.
+#: AGENTS.md: update the JSON schema and runtime validation together.
+WORKER_REQUIRED = frozenset({"id", "agent"})
+WORKER_OPTIONAL = frozenset({"agent_binary"})
+RUN_REQUIRED = frozenset({"version", "repo", "tickets", "verification"})
+RUN_OPTIONAL = frozenset({
+    "state_dir", "codex_binary", "agent", "agent_binary", "agent_timeout",
+    "check_timeout", "workers", "max_processes", "ticket_status", "adaptive",
+    "skill_selection", "agent_turns", "orientation", "credential_exclusion",
+})
+
+
 @dataclass(frozen=True)
 class WorkerConfig:
     """One named worker slot; the run's selected agent remains its reviewer."""
@@ -49,7 +62,7 @@ class WorkerConfig:
 
     @classmethod
     def from_document(cls, value: object, *, base: Path) -> WorkerConfig:
-        _object_fields(value, {"id", "agent"}, {"agent_binary"}, "worker")
+        _object_fields(value, WORKER_REQUIRED, WORKER_OPTIONAL, "worker")
         # An explicit JSON null is not the same as omitting the executable.
         if "agent_binary" in value and value["agent_binary"] is None:
             raise ContractError("worker.agent_binary must be nonempty text without NUL")
@@ -154,12 +167,7 @@ class RunConfig:
 
     @classmethod
     def from_document(cls, value: object, *, base: Path) -> RunConfig:
-        _object_fields(value, {"version", "repo", "tickets", "verification"},
-                       {"state_dir", "codex_binary", "agent", "agent_binary",
-                        "agent_timeout", "check_timeout", "workers", "max_processes",
-                        "ticket_status", "adaptive", "skill_selection",
-                        "agent_turns", "orientation",
-                        "credential_exclusion"},
+        _object_fields(value, RUN_REQUIRED, RUN_OPTIONAL,
                        "run configuration")
         if type(value["version"]) is not int or value["version"] != 1:
             raise ContractError("run configuration.version must be the integer 1")

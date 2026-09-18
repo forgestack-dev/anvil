@@ -433,3 +433,47 @@ class OrientationPrompt(unittest.TestCase):
                                 supplied_diff="DIFF BODY", orientation="MODULE MAP")
         self.assertTrue(prompt.rstrip().endswith("DIFF BODY"))
         self.assertLess(prompt.index("MODULE MAP"), prompt.index("DIFF BODY"))
+
+
+class SchemaMatchesRuntimeValidation(unittest.TestCase):
+    """AGENTS.md: update the JSON schema and runtime validation together.
+
+    Nothing loads the schemas at runtime, so the two can disagree indefinitely:
+    a configuration matching the published contract would be refused, or one the
+    runtime accepts would be undocumented. Field names only. The runtime's rules
+    are richer than the schema's -- types, ranges, and conditional validation --
+    and a test asserting equivalence would be asserting something false.
+    """
+
+    SCHEMAS = Path(__file__).resolve().parents[1] / "schemas"
+
+    def schema(self, name):
+        return json.loads((self.SCHEMAS / name).read_text(encoding="utf-8"))
+
+    def assert_fields_agree(self, where, declared, required, accepted, mandatory):
+        self.assertEqual(set(declared), set(accepted),
+                         f"{where}: schema properties and runtime fields differ; "
+                         "add the field to both or to neither")
+        self.assertEqual(set(required), set(mandatory),
+                         f"{where}: schema required and runtime required differ")
+
+    def test_run_configuration_fields_agree(self):
+        from anvil.config import RUN_OPTIONAL, RUN_REQUIRED
+        document = self.schema("run.schema.json")
+        self.assert_fields_agree("run.schema.json", document["properties"],
+                                 document["required"], RUN_REQUIRED | RUN_OPTIONAL,
+                                 RUN_REQUIRED)
+
+    def test_worker_fields_agree(self):
+        from anvil.config import WORKER_OPTIONAL, WORKER_REQUIRED
+        worker = self.schema("run.schema.json")["$defs"]["worker"]
+        self.assert_fields_agree("run.schema.json $defs.worker", worker["properties"],
+                                 worker["required"], WORKER_REQUIRED | WORKER_OPTIONAL,
+                                 WORKER_REQUIRED)
+
+    def test_ticket_fields_agree(self):
+        from anvil.contracts import _TASK_OPTIONAL, _TASK_REQUIRED
+        task = self.schema("tickets.schema.json")["$defs"]["task"]
+        self.assert_fields_agree("tickets.schema.json $defs.task", task["properties"],
+                                 task["required"], _TASK_REQUIRED | _TASK_OPTIONAL,
+                                 _TASK_REQUIRED)

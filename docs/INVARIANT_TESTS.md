@@ -1,11 +1,11 @@
 # Hardening AGENTS.md invariants into tests
 
-Status: slices 1, 3 and 5 implemented; slices 2, 4, 6 and 7 are proposed and
+Status: slices 1, 2, 3 and 5 implemented; slices 4, 6 and 7 are proposed and
 not implemented. The analysis below is based on `main` at `17ebf0e`, and its line
 counts and violation list are that revision's. Module paths, test names, and
 constants for the unimplemented slices remain design targets. The extractor in
 section 4.1 was prototyped against `17ebf0e` and its output is reproduced here.
-Nothing in sections 4.3, 5.1, 5.3, 5.4 or 6 runs yet.
+Nothing in sections 4.3, 5.3, 5.4 or 6 runs yet.
 
 ## 1. Outcome and scope
 
@@ -188,7 +188,7 @@ today.
 
 ## 5. Cross-artifact consistency
 
-### 5.1 Schema and runtime validation
+### 5.1 Schema and runtime validation — implemented
 
 `RunConfig.from_document` passes two set literals to `_object_fields` at
 `config.py:157`. `schemas/run.schema.json` declares eighteen properties and four
@@ -208,6 +208,18 @@ This closes "Update the JSON schema and runtime validation together" for field
 names. It does not check types, ranges, or conditional validation, and should
 not pretend to; the runtime's rules are richer than the schema's and a test that
 asserted equivalence would be asserting something false.
+
+Implemented as `tests/test_run_config.py::SchemaMatchesRuntimeValidation`, three
+tests covering the run document, `$defs.worker`, and `$defs.task`. The refactor
+landed as described: `RUN_REQUIRED`, `RUN_OPTIONAL`, `WORKER_REQUIRED` and
+`WORKER_OPTIONAL` are module-level frozensets that `from_document` now passes
+rather than rebuilding literals at the call site.
+
+All three agreed when the tests landed, including the `sites` field added to the
+ticket contract by stage 4 of `docs/ACCEPTANCE.md`, so this locks in behavior
+that was already correct. Mutation-tested in both directions and on `required`:
+a property added to a schema alone, a field added to the runtime alone, and a
+`required` entry added to a schema alone each fail.
 
 ### 5.2 CLI, README, and entry skill — implemented
 
@@ -312,7 +324,7 @@ Each slice is independently mergeable and leaves the suite green.
 | Slice | Content | Notes |
 | --- | --- | --- |
 | 1 | Section 5.2, plus the four documentation fixes | Done at `f5688d0` |
-| 2 | Section 5.1, including the `RunConfig` frozenset refactor | Touches `config.py` |
+| 2 | Section 5.1, including the `RunConfig` frozenset refactor | Done |
 | 3 | Section 4.1 | Done; the `51fec4cd` class |
 | 4 | Section 4.3 | Needs the `adopt()` design first |
 | 5 | Section 4.2 | Done; pairs with slice 3 |
@@ -325,7 +337,7 @@ on its own. Slice 7 is last by necessity.
 Slices 1, 3 and 5 are done. The credential-exclusion invariant is closed from
 both sides: 4.1 against sites nothing exercises, 4.2 against expressions that
 are wrong. `tests/test_invariants.py` exists and holds slice 1, so slices 6, 5.3
-and 5.4 extend a module rather than create one.
+and 5.4 extend a module rather than create one. Slices 4, 6 and 7 remain.
 
 ## 10. What remains prose, and completion
 
