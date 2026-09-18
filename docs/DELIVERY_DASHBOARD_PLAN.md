@@ -10,15 +10,9 @@ three dashboard tickets are additive views on the serve contract, and the
 `serve` version is the thing an added decomposition has to move. The delivery
 and issue-synchronization slices are unaffected.
 
-Three of section 11's requirements are already met more strictly than written
-here, and the added views must not loosen them. The server refuses a
-non-loopback bind outright rather than guarding one, so the session token
-exchange this document requires has no condition left to meet on loopback and is
-not to be added. Its page reaches the document through `textContent` only and
-builds no markup from ledger content, so the sanitized-Markdown option below is
-withdrawn: escaped text is the rule. Artifact excerpts by opaque ID remain this
-document's to specify, and are the one new exposure the added views introduce,
-because nothing below a run directory is served today. This document describes a new
+Section 11 is rewritten accordingly: it now specifies what the delivery work
+adds to that server, and records the three places where it is already stricter
+than this document originally required. This document describes a new
 milestone after PR #12, based on `main` at `4f23a5d`. Commands, configuration
 fields, and modules below are design targets. They are not available in the
 current CLI. Provider documentation was checked on 2026-09-15.
@@ -86,9 +80,10 @@ network dependencies. `recovery.py` reconciles the same run and accepted history
 Delivery synchronization must not reset attempts, invoke agents, or advance the
 managed branch.
 
-`RunStore.read()` offers a consistent read-only snapshot. The dashboard should
-use a bounded query layer over the ledger, not repeatedly read the entire event
-history or use the final-only `report.json` as its live data source. Existing
+`RunStore.read()` offers a consistent read-only snapshot, and `queries.py` now
+provides the bounded paginated layer a long-lived consumer needs, so the
+dashboard neither re-reads the whole event history nor treats the final-only
+`report.json` as a live source. Existing
 adaptive usage, model/effort decisions, and skill-context events provide most
 dashboard evidence already.
 
@@ -119,7 +114,7 @@ anvil delivery publish RUN_DIR
 anvil delivery ready RUN_DIR
 anvil delivery sync RUN_DIR --json
 anvil delivery sync RUN_DIR --watch --interval 60 --timeout 1800
-anvil dashboard --state-dir ~/.local/state/anvil --port 0
+anvil serve --state-dir ~/.local/state/anvil --port 0   # already implemented
 ```
 
 `issues import` supports each tracker, repeated explicit issue identifiers, one
@@ -639,59 +634,70 @@ issue must not be automatically closed again by an old run.
 
 ## 11. Dashboard specification
 
-Ship a small Python HTTP server and packaged HTML/CSS/JavaScript assets with no
-cloud service requirement. Bind to `127.0.0.1`, use an available port when `0` is
-requested, and print the session URL. Do not depend on a Node runtime for users.
-Opening a browser is optional. The server is foreground and exits on Ctrl-C;
-stopping it cannot stop workers or delete evidence.
+The server exists. `anvil serve` binds loopback, serves a packaged page with no
+build step, exposes a versioned read API and a resumable event stream, and
+refuses a non-loopback bind; [the serve contract](SERVE.md) has the routes and
+guarantees. This section specifies what the delivery work adds to it. Nothing
+here authorizes a second server, port, asset pipeline, or read contract.
 
-Views:
-
-| View | Content |
-| --- | --- |
-| Run list | Repository, agent mix, start time, accepted/total tasks, execution state, delivery state, stale observations, sync attention |
-| Run overview | Dependency waves/graph, accepted progress, active worker slots, queued work, current review/check stage, elapsed time |
-| Ticket detail | Issue link when permitted, acceptance criteria/evidence, attempt history, model/effort selection and reasons, selected skills, local/remote states |
-| Delivery | Host, source/base refs and SHAs, PR URL/draft/review/check/merge state, issue synchronization backlog and conflicts |
-| Evidence | Independent review findings, verification command outcomes, event timeline, bounded local artifacts, usage/cost provenance |
-| Group | Epic/project/milestone/initiative identity and kind, member issues with local, delivery, and tracker states, computed rollup counts, runs that touched members, members outside this state root |
+| View | Content | Status |
+| --- | --- | --- |
+| Run list | Repository, agent mix, start time, accepted/total tasks, execution state, delivery state, stale observations, sync attention | Exists; delivery state and sync attention to add |
+| Run overview | Dependency waves/graph, accepted progress, active worker slots, queued work, current review/check stage, elapsed time | Exists |
+| Ticket detail | Issue link when permitted, acceptance criteria/evidence, attempt history, model/effort selection and reasons, selected skills, local/remote states | Exists; issue link and remote state to add |
+| Delivery | Host, source/base refs and SHAs, PR URL/draft/review/check/merge state, issue synchronization backlog and conflicts | To build |
+| Evidence | Independent review findings, verification command outcomes, event timeline, bounded local artifacts, usage/cost provenance | Partly exists; bounded artifacts to add |
+| Group | Epic/project/milestone/initiative identity and kind, member issues with local, delivery, and tracker states, computed rollup counts, runs that touched members, members outside this state root | To build |
 
 The default overview answers: What is active? What is accepted? What is blocked?
 Where is the PR? Why is an issue still open? The group view answers: How far
 along is this epic, project, or milestone, and which parts has Anvil never seen?
-Keep execution progress and externally delivered progress separate. Mark missing token/cost data as unknown; identify
-estimates and incomplete accounting. Never interpret an old heartbeat alone as
-proof a worker is alive or dead. Show last evidence time and reconciliation state.
+Keep execution progress and externally delivered progress separate. Never
+interpret an old heartbeat alone as proof a worker is alive or dead. Show last
+evidence time and reconciliation state.
 
-Proposed read API: paginated run summaries, per-run task summaries, ticket attempts,
-delivery/issue projections, events after a cursor, and allowlisted artifacts by
-opaque ID. Default to 100 rows, maximum 500 per page; bound artifact excerpts to
-256 KiB. Use incremental polling about every two seconds for the visible active
-run and slower polling for the list. Dashboard polling never triggers provider
-requests; it reads observations created by sync. The group view reads the
-state-root group index across runs. Label the two database snapshot
-cursors/timestamps so temporary projection lag is visible rather than presented
-as contradictory authoritative state.
+Added to the read API, under the existing `api_version` and the rule in
+[CLOUD_SYNC.md](CLOUD_SYNC.md): delivery and issue projections, allowlisted
+artifacts by opaque ID bounded to 256 KiB, and the state-root group index read
+across runs. Paging and cursors are the server's, unchanged. Serving never
+triggers a provider request; it reads observations sync already created. Label
+the ledger and integration journal cursors so projection lag reads as lag rather
+than as contradictory authoritative state.
 
-Security and usability requirements:
+The server already marks missing token and cost data unknown, reports a role
+that never started as a real zero, and states whether accounting was complete.
+The added views report accounting the same way.
 
-- Use a per-session local token exchanged for a scoped HTTP-only session; validate
-  Host/Origin and serve no permissive CORS. Token bootstrapping must avoid leaking
-  through referrers or request logs. LAN/public binding is outside this release.
-- GET routes are read-only. No endpoints for run, resume, shell commands, sync,
-  merge, or issue mutation. Display useful CLI commands as selectable text only.
-- Render untrusted issue text, comments, and logs as escaped text or sanitized
-  Markdown with raw HTML disabled. Serve packaged assets only, with a restrictive
-  content policy; never execute project JavaScript.
-- Resolve artifact IDs through an allowlist; reject traversal, symlinks, unrelated
-  files, and oversized reads. Stream sanitized excerpts without loading whole logs.
-  Restrict run discovery to the configured local state root and supported layouts.
+Security and usability requirements. The first three record where the shipped
+server is already stricter than this document originally specified, and must not
+be loosened:
+
+- No session token exchange. This document required one before any non-loopback
+  binding; the server refuses a non-loopback bind outright, so the condition
+  cannot arise. Reaching a run from another device is an SSH tunnel, under
+  [remote access](REMOTE_ACCESS.md).
+- Escaped text only. This document offered sanitized Markdown with raw HTML
+  disabled as an alternative; the page builds no markup from ledger content and
+  reaches the document through `textContent`, under a `default-src 'none'`
+  policy. A Markdown renderer would break both.
+- `Host` validation, no CORS header, and packaged assets from a fixed filename
+  allowlist rather than a joined path, all already in place. Run discovery stays
+  inside the configured state root, run IDs are structurally validated and
+  contained, and symlinked run directories are refused.
+- Artifact excerpts are the one new exposure. Nothing below a run directory is
+  served today. Resolve IDs through an allowlist; reject traversal, symlinks,
+  unrelated files, and oversized reads; stream excerpts without loading whole
+  logs.
+- `GET` routes stay read-only. No endpoints for run, resume, shell commands,
+  sync, merge, or issue mutation. Display useful CLI commands as selectable text
+  only.
 - No credentials, authorization headers, full environment, or hidden external
   content in responses. Public PR evidence and local operator evidence have
   distinct disclosure rules. Do not upload a local dashboard URL to providers.
 - Keyboard navigation, visible focus, accessible state labels, contrast, and a
-  table alternative to the dependency graph are acceptance requirements. Support
-  offline historical inspection and surface unreadable legacy records per run.
+  table alternative to the dependency graph are acceptance requirements for the
+  added views. Support offline historical inspection and surface unreadable
+  legacy records per run.
 
 ## 12. Delivery slices and implementation order
 
