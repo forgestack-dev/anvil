@@ -133,7 +133,9 @@ SSE loses nothing but latency.
 
 `anvil serve` also serves a single read-only page at `/`, from packaged assets in
 `src/anvil/assets`: a run list, per-run dependency waves, per-attempt spend, and
-the event timeline, updating live from the stream.
+the event timeline, updating live from the stream. It is plain HTML, CSS, and
+JavaScript with no build step, no package manager, and no external origin, as
+section 11 of the delivery plan requires.
 
 The list is ordered newest first and carries each run's start time, and the page
 selects the newest run on load, so the run worth watching is the one already
@@ -142,9 +144,7 @@ the cursor: section 3 of [CLOUD_SYNC.md](CLOUD_SYNC.md) freezes cursor ordering
 within an `api_version`, and `created_at` is already on every row. A run whose
 ledger could not be read has no start time and sorts last. `run_summary` also
 reports `run_dir`, an added field, so a reader can reach the artifacts,
-worktrees and raw event streams the ledger only points at. It is plain HTML, CSS, and
-JavaScript with no build step, no package manager, and no external origin, as
-section 11 of the delivery plan requires.
+worktrees and raw event streams the ledger only points at.
 
 Assets are served from a fixed allowlist of three filenames rather than by
 joining a request path, so there is no traversal surface. They carry a
