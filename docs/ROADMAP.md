@@ -98,11 +98,15 @@ See [the invariant test specification](INVARIANT_TESTS.md) for the claim classif
   version; freeze thresholds for a run as routing policy is frozen.
 
 See [the judgment specification](JUDGMENT.md) for the module contract, the two
-question sets, ten implementation slices, and the acceptance matrix. This
-milestone is not implemented; its thresholds are unset by design, and the two
-enforcing slices are gated on the calibration study in its section 11 rather than
-on the preceding code. The capability is open and brings its own key; calibrated
-threshold sets are the paid artifact, per `docs/PRODUCT_BOUNDARY.md`.
+question sets, the implementation slices, and the acceptance matrix. No code is
+implemented. The intake study has run: section 11.4 records that a model reads
+two of the four criterion rules materially better than any keyword rule and the
+other two no better than a regex, so the intake gate annotates and no longer
+blocks, and one slice is withdrawn rather than pending. The concession check
+remains specified and unmeasured, because section 11.1 establishes that this
+repository's ledger cannot label it. The capability is open and brings its own
+key; calibrated threshold sets are the paid artifact, per
+`docs/PRODUCT_BOUNDARY.md`.
 
 ## Later integrations
 

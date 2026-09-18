@@ -1,8 +1,13 @@
 # Calibrated judgments over review evidence and criterion shape
 
-Status: proposed specification, not ratified. Nothing here is implemented. It
+Status: proposed specification, not ratified. No code here is implemented. It
 specifies one new module and two consumers of it, plus the offline studies that
-must precede either consumer enforcing anything. Recorded 2026-09-18.
+must precede either consumer enforcing anything.
+
+Study B has run; §11.4 records its result. It withdrew the intake gate's
+blocking tier and slice 9 with it, and left the gate an annotator. Study A, for
+the concession check in §6, is blocked on labels the ledger cannot supply.
+Recorded 2026-09-18.
 
 ## 1. Outcome and scope
 
@@ -16,9 +21,10 @@ defines, and two consumers:
 - **A. The concession check** (§6), in the acceptance path. It detects a review
   that marked an acceptance criterion satisfied without the means to know, which
   is the one measured correctness defect this repository has recorded.
-- **B. The intake gate** (§7), in `anvil prepare`. It gives
-  [CRITERIA.md](CRITERIA.md) rules 1, 3, 4 and 6 an enforcement point they have
-  never had, at a precision the rejected keyword approach could not reach.
+- **B. The intake gate** (§7), in `anvil prepare`. It annotates criteria against
+  [CRITERIA.md](CRITERIA.md) rules 4 and 6, where §11.4 measured the model well
+  ahead of any keyword rule. It blocks nothing: rules 1 and 3 were specified as
+  blocking conditions and both were withdrawn on the evidence in §11.4.
 
 Both rest on one taxonomy (§5). They do **not** share a corpus: §11.1 inventories
 the saved runs and finds the intake half validatable today and the acceptance
@@ -313,39 +319,58 @@ is often named in the objective.
 | Key | Type | Rule | Asks |
 | --- | --- | --- | --- |
 | `procedure` | choice | 1 | Which procedure would settle this? (§5) |
-| `unbounded_absence` | noul | 3 | Does it assert that something is absent everywhere, without listing the places? |
-| `joins_claims` | noul | 4 | Does it join two claims that could be separately true? |
-| `self_gradable` | noul | 6 | Could the change's own author make this true without changing behavior? |
+| `asserts_absence` | noul | 3 | Does it require that something is absent? |
+| `names_the_places` | noul | 3 | Does it list the places it holds over? |
+| `joins_claims` | noul | 4 | Does it state two requirements that could be separately true? |
+| `about_tests` | noul | 6 | Is it a statement about tests? |
+| `tests_preexist` | noul | 6 | Do those tests already exist? |
 | `specificity` | score | — | How specifically does it name what must be true? |
 
-### 7.3 Two-tier composition
+Rules 3 and 6 are two questions each, combined in code, because each is two
+judgments and asking for both at once produced a different question than the one
+intended. §11.4 records what that cost: rule 6 asked as one question scored F1
+0.00 and scored 0.88 decomposed, on the same model and the same criteria.
 
-Each signal is compared against two thresholds:
+`asserts_absence`, `names_the_places`, `about_tests` and `tests_preexist` carry
+structured criteria — an object per outcome with a meaning and worked examples —
+rather than a sentence. The examples are invented rather than drawn from the
+backlog, so no criterion appears inside the question that judges it.
 
-```
-confidence >= block_min  -> emit a needs_clarification question; exit 3
-confidence >= note_min   -> annotate the criterion; emit the graph
-otherwise                -> record the raw answers only
-```
+### 7.3 Annotation only
 
-This is the direct answer to the 36-of-128 result in §2: the question is no
-longer whether a rule fires, but how certain the judgment is, and certainty is
-tunable against labeled outcomes where a regex is not.
+The gate emits no questions and blocks no document. Every signal is recorded on
+the criterion it describes and the graph is written as it would have been.
 
-**Before the calibration study reports, `block_min` is 1.0**, which is
-unreachable and makes the gate annotate-only. Enforcement is unlocked by
-evidence, not by shipping.
+An earlier draft specified a two-tier gate: a signal above `block_min` became a
+`needs_clarification` question and exited 3, a signal above `note_min`
+annotated. Both blocking conditions are withdrawn, because §11.4 measured them
+and neither survives.
 
-Blocking questions use the existing shape exactly: `kind` is `undecidable` for
-`procedure == "none"` (rule 1) and `unbounded` for `unbounded_absence` (rule 3);
-rules 4 and 6 annotate and do not block, because neither makes a criterion
-undecidable and both are cheaply fixed by a human reading the annotation.
-`source_refs` is validated against `source_lines` as today, so a question must
-cite a real line of the specification.
+**Rule 1 never fires.** `procedure == "none"` was returned for 0 of the 138
+criteria in this repository's backlog. Nothing in the corpus is undecidable by
+all three procedures, so the condition has no observed instance to block on.
 
-Whole-document refusal is unchanged: a document carrying questions writes no
-tickets. Per-ticket partial emission remains the open question CRITERIA.md
-already records, and is not resolved here.
+**Rule 3 cannot beat a regex.** Asked well — decomposed, with structured
+criteria — it reaches F1 0.69 against 0.67 for a keyword rule tuned on the same
+labels, a margin inside the measured run-to-run variance. Its own best
+formulation, `asserts_absence` at 0.95, returns precision 0.57 and recall 0.81:
+the same two figures as `no+never`. "Asserts an absence over a set it does not
+name" is very nearly a synonym for two words, and the lexicon expresses it
+already.
+
+That leaves no blocking condition, so `block_min` is removed rather than set
+unreachably. A threshold that exists but can never be crossed invites someone to
+lower it later without re-running the study.
+
+What remains is worth having. Rules 4 and 6 are where the model wins and
+vocabulary has nothing to grip — 0.83 and 0.88 against 0.66 and 0.18 — and rule
+6 reaches precision 1.00 on this corpus. A criterion flagged as resting on its
+own author's tests is worth showing whoever is reading the graph, and showing is
+all this does.
+
+`anvil prepare` therefore keeps exactly the exit codes it has today. The third
+code stays reserved for the existing adversarial gate, which is unaffected by
+any of this.
 
 ### 7.4 Annotation
 
@@ -537,6 +562,81 @@ reader. Study A gates slice 7 only, and may remain open indefinitely; slices 5
 and 6 are still worth landing in shadow, because they are how Study A ever
 becomes possible.
 
+### 11.4 Study B result, recorded 2026-09-18
+
+`tools/study-b.py`, model `jev-1.13.0`, 138 hand-labeled criteria, three runs of
+138 calls each. 414 calls, 0 failures, about 0.4 seconds per call, **$0.012
+total**. Cost is not a consideration at this scale and should not be presented
+as one.
+
+| Rule | Role | Best keyword rule | Model | |
+| --- | --- | --- | --- | --- |
+| 1 — `procedure == none` | blocks | — | **never fires** | 0 of 138 |
+| 3 — unbounded absence | blocks | **0.67** | 0.69 | inside noise |
+| 4 — joins claims | annotates | 0.66 | **0.83** | model wins |
+| 6 — self-gradable | annotates | 0.18 | **0.88** | model wins, precision 1.00 |
+
+F1 against the hand labels. The keyword rule is not a guess at the lexicon
+ACCEPTANCE.md rejected — that lexicon is not recoverable, since only its result
+was recorded and 109 subsets of the obvious vocabulary fire on exactly 36 of the
+128. It is instead the best rule found by exhaustive subset search **against the
+same labels it is scored on**: an upper bound no honestly-written lexicon
+reaches.
+
+**The rejected lexicon was right to be rejected, and now there is a number for
+it.** Scoring all 16 lexicons that fire on exactly 36 of the 128 gives precision
+between 0.19 and 0.44 against 19 actual rule-3 violations. Of the 36 criteria it
+flagged, roughly 7 to 16 were real.
+
+**Question quality dominates model capability, and fails silently.** Rule 6
+asked as one question — could the author satisfy this by writing a test —
+scored F1 0.00: not merely mis-thresholded but inverted, ranking the clear cases
+below the unclear ones. Nothing errored; the answers were well-formed and
+confidently wrong. Split into two literal questions and combined in code, the
+same model on the same criteria scored 0.88 at precision 1.00. This is the most
+important operational finding in the study, and §4.1's shadow default exists for
+it.
+
+**The same treatment does not rescue rule 3, and that is the useful contrast.**
+Decomposed and given structured criteria, rule 3 moved 0.41 to 0.69 against a
+0.67 baseline. Sweeping both of its thresholds, the best cell is precision 0.61
+and recall 0.81; `asserts_absence` alone at 0.95 is precision 0.57 and recall
+0.81, which is exactly the keyword rule. Rule 6 was a broken question hiding a
+real capability. Rule 3 is a real capability with nothing to add.
+
+The rule that follows, and the one worth carrying to any other application: **if
+the keyword list can be written and roughly works, the lexicon is the ceiling;
+where the signal cannot be described lexically, the model earns its place.** It
+is a caution for routing rank in `routing.assess` and for skill selection in
+`skill_runtime`, both of which are keyword lists today and may already be at
+that ceiling. Neither has been measured.
+
+**Calibration behaves as documented.** `procedure` accuracy rises 0.80, 0.84,
+0.85, 0.91, 1.00 as the confidence floor rises 0.50 to 0.90, at coverage falling
+from 62% to 12%. That monotonicity is what makes confidence-gating an
+architecture rather than a hope, and it is the single strongest argument for the
+concession check in §6, which leans on the same question.
+
+**Run-to-run variance is about 0.02 F1**, measured from two runs of an unchanged
+rule 3 question scoring 0.36 and 0.34. `tools/study-b.py` refuses to call a
+margin under 0.05 a win.
+
+#### What the result does not establish
+
+Every label is the author's, produced by a model, and at least one is probably
+wrong: rule 6's remaining misses include a criterion that never mentions tests,
+where the label is the more questionable half. The labels are not an independent
+human judgment, which is what §11.2 asks for, so these numbers describe the
+agreement between two models rather than agreement with ground truth. Three
+criteria carry an external check — CRITERIA.md classifies them by hand, and all
+three agree with the label — which is reassurance, not validation.
+
+Rule 6's thresholds are the most overfit numbers here: two cutoffs swept
+together against nine positives, in-sample. Its precision of 1.00 across 129
+negatives is more trustworthy than its recall of 0.78.
+
+Nothing here bears on §6. Study B measured intake only.
+
 ## 12. Implementation slices and order
 
 | # | Slice | Depends on | Lands |
@@ -548,15 +648,18 @@ becomes possible.
 | 5 | Concession check in shadow: questions, composition, `judgment` ledger events, serial path | 2–4 | `execution.py`, `evidence.py` |
 | 6 | Concession check in the worker pool: off-thread call, coordinator-owned recording | 5 | `parallel.py` |
 | 7 | Concession enforcement: re-review at rank+1, reservation, `conceded_criterion`, telemetry category | 5, 6, and a passing **Study A** (§11.2) | `execution.py`, `parallel.py`, `adaptive_runtime.py`, `telemetry.py` |
-| 8 | Intake gate, annotate-only (`block_min` 1.0) | 2–4 | `preparation.py` |
-| 9 | Intake gate blocking tier | 8, and a passing **Study B** (§11.2) | `preparation.py`, `cli.py` |
+| 8 | Intake gate, annotate-only: rules 4 and 6 recorded on each criterion | 2–4 | `preparation.py` |
+| 9 | ~~Intake gate blocking tier~~ — **withdrawn**, §11.4 | — | — |
 | 10 | Threshold policy artifact: load, fingerprint, freeze, validate | 4, 7, 9 | `judgment.py`, `config.py` |
 
-Slices 7 and 9 are gated on evidence, not on the preceding code being done, and
-on *different* evidence. Study B is runnable today, so slice 9 has a path to
-completion. Study A is blocked on labels the corpus does not contain (§11.1), so
-slice 7 may stay open indefinitely — and slices 5 and 6 are still worth landing
-in shadow, because they are the mechanism by which Study A becomes possible.
+Slice 9 is withdrawn rather than pending. Study B ran, both blocking conditions
+failed, and §11.4 records why; the slice is kept in the table struck through so
+a later reader finds the result rather than the gap.
+
+Slice 7 remains gated on Study A, which is blocked on labels the corpus does not
+contain (§11.1), so it may stay open indefinitely. Slices 5 and 6 are still
+worth landing in shadow, because they are the mechanism by which Study A
+becomes possible.
 
 ## 13. Acceptance and failure matrix
 
@@ -573,10 +676,10 @@ in shadow, because they are the mechanism by which Study A becomes possible.
 | Verdict `request_changes`, item marked `satisfied: true` | any | assessed; this is the one confirmed positive (§11.1) | yes |
 | Both `evidence.concedes` and the concession check fire | enforce | concession check takes precedence; re-review rather than `unlisted_requirement` | yes — both outcomes are stops |
 | Model asserts a criterion *is* satisfied | any | **ignored; no such composition exists** | enforced by §4.2 |
-| Intake signal, confidence ≥ `block_min` | enforce | `needs_clarification`, exit 3, no tickets written | yes — refuses to emit |
-| Intake signal, confidence ≥ `note_min` | shadow or enforce | annotate; graph emitted | yes — advisory only |
+| Intake signal, rule 4 or 6, above `note_min` | shadow or enforce | annotate; graph emitted | yes — advisory only |
 | Intake signal below `note_min` | any | raw answers recorded; graph emitted | yes |
-| `block_min` 1.0 (pre-calibration) | enforce | gate is annotate-only | yes |
+| Intake signal, rule 1 or 3 | any | recorded, never acted on (§11.4) | yes |
+| Any intake signal, at any confidence | any | **never blocks emission** | yes — the gate cannot refuse |
 | Adversarial text in a ticket or diff | any | can at most cause a stop or a re-review | yes — §4.2 |
 
 The last row is the one to re-check on every change. A composition that could
@@ -610,7 +713,14 @@ calibrated against one pinned model. A version change invalidates them, and the
 recorded model ID is what makes that detectable rather than silent.
 
 **That shadow mode is free.** It adds a network call per assessed item and a
-ledger event per judgment. The cost is small but not zero, and §11 measures it.
+ledger event per judgment. §11.4 measures it at about 0.4 seconds and $0.00003
+per criterion, which is small but not zero.
+
+**That a question asked once is a question asked well.** §11.4's central result
+is that the same model, on the same input, scored 0.00 and 0.88 on one rule
+depending only on how the question was written — and that the bad version raised
+no error. Any application of this module needs a labeled set before its answers
+are trusted, not only before they are enforced.
 
 **Nothing about the paid tier.** §10 states where the pieces land against the
 existing product record. Pricing, packaging, whether pooled thresholds are
@@ -620,25 +730,39 @@ requires are all undecided, exactly as in
 
 ## 15. Completion definition and later work
 
-This milestone is complete when slices 1 through 10 are implemented, the §11
-report is recorded in this document with its measured precision and
-false-positive rate, and the acceptance matrix in §13 is covered by tests.
-Completion means the two consumers behave as specified under a calibrated
-threshold set — not that the underlying hypothesis about review quality has been
-validated on live work, which requires runs this repository has not yet done.
+This milestone is complete when slices 1 through 8 and 10 are implemented — 9 is
+withdrawn — and the acceptance matrix in §13 is covered by tests. Slice 1 is
+done and its result is §11.4.
+
+Completion means the intake gate annotates as specified and the concession check
+records in shadow. It does not mean the concession check enforces: slice 7 waits
+on Study A, and §11.1 establishes that this repository's ledger cannot produce
+the labels Study A needs, because every recorded outcome is downstream of the
+review being judged. A milestone that completes with §6 still in shadow is the
+expected outcome, not a shortfall.
+
+Neither does completion mean the hypothesis is validated. §11.4 measured which
+rules a model reads better than a regex. Whether annotating those rules changes
+what an author writes, or what a run accepts, is unmeasured and needs live runs
+this repository has not done.
 
 Later consumers of `judgment.py`, in the order their evidence would justify:
 
-- **Routing rank** (`routing.assess`): replace keyword lists with Scores at
-  `feature_version` 2. A cost optimization rather than a correctness feature,
-  with a different enforcement posture and an existing policy mechanism to
-  integrate with; it warrants its own record.
+- **Routing rank** (`routing.assess`): not as a replacement classifier. §11.4's
+  rule-3 result is a direct warning — `assess()`'s risk words are a lexicon, and
+  a lexicon may already be its own ceiling. The shape worth trying instead is
+  scores as *features* for the trainer `learning.py` already has, since this
+  repository does hold labeled routing outcomes even though it does not hold
+  labeled review outcomes. That is a different proposal and warrants its own
+  record.
 - **Escalate / retry / stop** (`adaptive_runtime.next_profile`): today's
   escalation is positional and does not read why the attempt failed.
 - **Automatic skill selection** (`skill_runtime._RULES`): a `judged` mode beside
   `rules`, requiring an amendment to
   [AUTOMATIC_SKILL_SELECTION.md](AUTOMATIC_SKILL_SELECTION.md), which currently
-  promises the selector makes no model call.
+  promises the selector makes no model call. Carries the same §11.4 caution as
+  routing rank: six regexes over ticket text may already be at the lexical
+  ceiling, and that is measurable before anything is built.
 - **Orientation context**: relevance-ranking paths and specification sections for
   `orientation_text`. Ranked last deliberately:
   [OBSERVED_LIMITS.md](OBSERVED_LIMITS.md) records that improving navigation cut

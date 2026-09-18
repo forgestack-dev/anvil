@@ -26,6 +26,22 @@ achievable* keyword rule against the same hand labels -- the strongest baseline
 any word list could have reached. Beating a tuned upper bound is a real result;
 beating one guess would not be.
 
+## Result
+
+Run 2026-09-18 over 138 hand-labeled criteria, three passes of 138 calls, $0.012
+total. Rules 4 and 6 beat the best keyword rule that could be written (0.83 and
+0.88 against 0.66 and 0.18, rule 6 at precision 1.00). Rule 3 does not: its best
+formulation returns the same precision and recall as `no+never`. Rule 1 never
+fired. docs/JUDGMENT.md section 11.4 carries the full result and what it does
+not establish; section 7.3 records what was withdrawn because of it.
+
+The finding worth repeating here, because it is about this file rather than
+about Anvil: rule 6 asked as one question scored F1 0.00, and the same model on
+the same criteria scored 0.88 once the question was split in two. Nothing
+errored in between. A question that is wrong returns confident, well-formed
+answers, so no application of this API is trustworthy before it has a labeled
+set to check against.
+
 ## Order of operations
 
     tools/study-b.py extract                 # write the labeling template
@@ -99,12 +115,80 @@ QUESTIONS = {
             "false": "One requirement",
         },
     },
-    "self_gradable": {
+    # Rule 6 was one question asking whether the author could satisfy the
+    # criterion with their own test. The model read it as "could a test fake
+    # this behavior", ranked the clear cases below the unclear ones, and scored
+    # F1 0.00. It is two hops: what the criterion is about, and whose tests
+    # those are. Asked as two literal questions and combined in code, per the
+    # decomposition rule in section 4.3.
+    # Rule 3 as one question scored F1 0.34 against a keyword rule's 0.67, with a
+    # mean noul of 0.45 on the positives -- the model reporting genuine
+    # uncertainty rather than a wrong answer. It has the same two-hop shape rule
+    # 6 had: whether an absence is asserted, and whether the places are listed.
+    # Split, with structured criteria carrying examples. The examples are
+    # invented rather than drawn from the corpus, so no scored item appears in
+    # its own question.
+    "asserts_absence": {
         "type": "noul",
-        "instructions": "Could the author of the change make `criterion.text` true by writing a test that passes without changing the program's behavior?",
+        "instructions": {
+            "rule": "An acceptance criterion may require that something is absent: that it never happens, does not exist, is not present, or that only certain listed things occur.",
+            "question": "Does `criterion.text` require that something is absent?",
+        },
         "criteria": {
-            "true": "Satisfiable by the author's own new test alone",
-            "false": "Requires behavior the author cannot assert into existence",
+            "true": {
+                "meaning": "Something must not happen, must not exist, or must be excluded",
+                "examples": [
+                    "the cache is never written by a background thread",
+                    "no endpoint modifies stored data",
+                    "only the listed fields are serialized",
+                ],
+            },
+            "false": {
+                "meaning": "Everything it requires is something that must be present, produced, or true",
+                "examples": [
+                    "the parser accepts UTF-8 input",
+                    "the report includes a per-item total",
+                ],
+            },
+        },
+    },
+    "names_the_places": {
+        "type": "noul",
+        "instructions": {
+            "rule": "A statement about where something holds can only be settled if the places are listed. Named files, functions, commands or components count as listed; an open-ended scope does not.",
+            "question": "Does `criterion.text` list the places, files, call sites, commands, or components it holds over?",
+        },
+        "criteria": {
+            "true": {
+                "meaning": "The places are enumerated in the text itself",
+                "examples": [
+                    "in handlers.py and in the retry path of client.py, and these are the only two callers",
+                    "neither the import nor the export command writes to the log",
+                ],
+            },
+            "false": {
+                "meaning": "The scope is left open, with no list of where it holds",
+                "examples": [
+                    "the token is absent from every launched process",
+                    "nothing anywhere logs the raw payload",
+                ],
+            },
+        },
+    },
+    "about_tests": {
+        "type": "noul",
+        "instructions": "Is `criterion.text` a statement about tests -- that tests exist, or that tests cover, assert, show, prove, or pass something?",
+        "criteria": {
+            "true": "What must become true is a fact about tests",
+            "false": "What must become true is a fact about the program, a file, or a command",
+        },
+    },
+    "tests_preexist": {
+        "type": "noul",
+        "instructions": "Does `criterion.text` refer to tests that already exist, rather than to tests being introduced?",
+        "criteria": {
+            "true": "It names an existing suite, or tests written for something else, such as tests remaining green or another component's tests",
+            "false": "It does not refer to any already-existing tests",
         },
     },
     "specificity": {
@@ -180,6 +264,9 @@ def extract(_) -> int:
         "//   joins_claims      : true if it states two independently-true requirements",
         "//   self_gradable     : true if the author's own new test could satisfy it alone",
         "// Leave a row's procedure null to exclude it from the report.",
+        "//   labeled_by        : model-proposed | human. A model-proposed row is a",
+        "//     first pass, NOT ground truth. Confirm or correct it and set human,",
+        "//     or the study measures agreement with the thing under test.",
     ]
     for item in items:
         prior = existing.get(item["uid"], {})
@@ -189,6 +276,7 @@ def extract(_) -> int:
             "unbounded_absence": prior.get("unbounded_absence"),
             "joins_claims": prior.get("joins_claims"),
             "self_gradable": prior.get("self_gradable"),
+            "labeled_by": prior.get("labeled_by"),
         }))
     LABELS.write_text("\n".join(lines) + "\n")
     measured = sum(1 for i in items if i["file"] == MEASURED_FILE)
@@ -343,6 +431,47 @@ def ask(arguments) -> int:
 
 THRESHOLDS = (0.50, 0.60, 0.70, 0.80, 0.90, 0.95)
 
+#: Rule 6's second threshold, swept against these same labels rather than held
+#: out. With nine positives and two thresholds tuned together this is the most
+#: overfit number in the study; treat it as a starting point for a larger
+#: corpus, not as a calibrated value.
+PREEXIST_MAX = 0.65
+
+#: Rule 3's second threshold. Same caveat as PREEXIST_MAX: swept in-sample.
+PLACES_MAX = 0.65
+
+#: Run-to-run variance, measured: rule 3 scored 0.36 and then 0.34 on two runs
+#: of an unchanged question. A margin inside this band is not a result, so the
+#: verdict below refuses to call one a win rather than leaving that to a reader
+#: who may only look at the direction.
+MARGIN = 0.05
+
+#: (display name, hand-labeled field, model signal). Rule 3 appears twice so the
+#: one-question and decomposed forms are scored on one run, which also controls
+#: for the ~0.02 F1 of run-to-run variance between them.
+RULES = (
+    ("unbounded_absence (one question)", "unbounded_absence", "unbounded_absence"),
+    ("unbounded_absence (decomposed)", "unbounded_absence", "unbounded_absence_v2"),
+    ("joins_claims", "joins_claims", "joins_claims"),
+    ("self_gradable", "self_gradable", "self_gradable"),
+)
+
+
+def model_signal(answers: dict, field: str, limit: float) -> bool:
+    """Whether the model asserts one rule at this threshold.
+
+    Rule 6 is composed from two questions rather than asked as one, so the
+    combining happens here in code where it can be read and changed, rather
+    than inside an instruction the model interprets.
+    """
+    if field == "unbounded_absence_v2":
+        return (answers["asserts_absence"]["noul"] >= limit
+                and answers["names_the_places"]["noul"] < PLACES_MAX)
+    if field == "self_gradable":
+        return (answers["about_tests"]["noul"] >= limit
+                and answers["tests_preexist"]["noul"] < PREEXIST_MAX)
+    return answers[field]["noul"] >= limit
+
 
 def report(_) -> int:
     rows = labeled_rows(load_labels())
@@ -352,27 +481,35 @@ def report(_) -> int:
         print("No labeled rows with cached responses. Run ask.", file=sys.stderr)
         return 2
     print(f"Study B -- {len(have)} labeled criteria with responses, model {MODEL}, "
-          f"questions {QUESTION_DIGEST}\n")
+          f"questions {QUESTION_DIGEST}")
+    proposed = [r for r in have if r.get("labeled_by") == "model-proposed"]
+    if proposed:
+        print()
+        print(f"   !! {len(proposed)} of {len(have)} labels are model-proposed and not")
+        print("      human-confirmed. Every number below is agreement between a model")
+        print("      and itself on those rows, which is not evidence about anything.")
+        print("      Confirm them and set labeled_by to human before citing this.")
+    print()
 
     verdicts = []
-    for field in ("unbounded_absence", "joins_claims", "self_gradable"):
+    for display, field, signal in RULES:
         actual = [bool(r.get(field)) for r in have]
         best = best_lexicon(have, field)
-        print(f"## {field}   (positives {sum(actual)}/{len(have)})")
+        print(f"## {display}   (positives {sum(actual)}/{len(have)})")
         print(f"   best keyword rule   F1 {best['f1']:.2f}  "
               f"P {best['precision']:.2f}  R {best['recall']:.2f}  "
               f"[{'+'.join(best['words'])}]")
         peak = 0.0
         for limit in THRESHOLDS:
             predicted = [
-                cache[cache_key(r["text"])]["response"]["answers"][field]["noul"] >= limit
+                model_signal(cache[cache_key(r["text"])]["response"]["answers"], signal, limit)
                 for r in have]
             result = scores(predicted, actual)
             peak = max(peak, result["f1"])
             print(f"   noul >= {limit:.2f}      F1 {result['f1']:.2f}  "
                   f"P {result['precision']:.2f}  R {result['recall']:.2f}  "
                   f"(fires on {sum(predicted)})")
-        verdicts.append((field, peak, best["f1"]))
+        verdicts.append((display, signal, peak, best["f1"]))
         print()
 
     actual = [r["procedure"] for r in have]
@@ -391,13 +528,31 @@ def report(_) -> int:
     print()
 
     print("## Verdict (JUDGMENT.md section 11.3)")
-    wins = [(f, m, b) for f, m, b in verdicts if m > b]
-    for field, model_f1, base_f1 in verdicts:
+    # Only a rule that section 7.3 lets block is load-bearing. Rules 4 and 6
+    # annotate whatever they score, so winning on one of them unlocks nothing:
+    # counting all three equally would call a study a pass on a rule that never
+    # gates anything.
+    GATING = {"unbounded_absence", "unbounded_absence_v2"}
+    for display, signal, model_f1, base_f1 in verdicts:
         mark = "beats" if model_f1 > base_f1 else "does NOT beat"
-        print(f"   {field:<20} model {model_f1:.2f} {mark} tuned keyword {base_f1:.2f}")
-    if wins:
-        print(f"\n   {len(wins)} of {len(verdicts)} rules improve on a keyword rule tuned")
-        print("   on the same labels. Proceed to slice 9 with these thresholds.")
+        role = "blocks" if signal in GATING else "annotates"
+        print(f"   {display:<34} model {model_f1:.2f} {mark} tuned keyword {base_f1:.2f}   ({role})")
+    gating = [(d, s_, m, b) for d, s_, m, b in verdicts if s_ in GATING]
+    wins = [(d, s_, m, b) for d, s_, m, b in gating if m > b + MARGIN]
+    narrow = [(d, s_, m, b) for d, s_, m, b in gating if b < m <= b + MARGIN]
+    for d, _, m, b in narrow:
+        print(f"\n   {d}: +{m - b:.2f} is inside the {MARGIN:.2f} noise band; not a win.")
+    if gating and not wins:
+        print()
+        print("   The model loses on every rule that section 7.3 lets block, and rule 1")
+        print("   (procedure == none) did not fire on this corpus at all. A win on an")
+        print("   annotate-only rule does not unlock the blocking tier.")
+        print("   What is withdrawn is the blocking tier and its slice, not the whole")
+        print("   specification: the annotating rules stand on their own numbers.")
+        print("   Record the result in docs/JUDGMENT.md section 11.4 before building.")
+    elif wins:
+        print(f"\n   {len(wins)} of {len(gating)} blocking formulations improve on a keyword rule")
+        print("   tuned on the same labels. Proceed to slice 9 with these thresholds.")
         print()
         print("   Caveat, and it belongs in the write-up: both sides are selected on")
         print("   the labels they are scored against -- the keyword rule by subset")
