@@ -263,8 +263,119 @@ function showTicket(task) {
   openPanel(task.id, nodes, () => showTicket(task));
 }
 
-// An event's details are arbitrary recorded JSON. Pretty-print it into one text
-// node: it is ledger content and must not become markup.
+// -- recorded value rendering ----------------------------------------------
+//
+// Event details are recorded JSON whose shape varies by kind and message kind.
+// Rather than a schema per kind, which would silently drop a field the day a
+// kind gains one, this renders by structure and keeps the raw JSON reachable
+// underneath. Every value still reaches the document through textContent.
+
+const SHA = /^[0-9a-f]{40}$/;
+
+function prettyLabel(key) {
+  return key.replace(/_/g, " ");
+}
+
+function isScalar(value) {
+  return value === null || value === undefined || typeof value !== "object";
+}
+
+function scalarText(key, value) {
+  if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "boolean") return value ? "yes" : "no";
+  const text = String(value);
+  if (SHA.test(text)) return text.slice(0, 12);
+  if (key === "argv" || key === "command") return text;
+  return text;
+}
+
+// A list of objects whose values are all scalars is a table. One that carries
+// nested structure is not: a table cell holding a table reads worse than a
+// group per element.
+function tabular(rows) {
+  return rows.every((row) => row && typeof row === "object" && !Array.isArray(row)
+                    && Object.values(row).every(isScalar));
+}
+
+function columnsOf(rows) {
+  const seen = [];
+  for (const row of rows) for (const key of Object.keys(row)) {
+    if (!seen.includes(key)) seen.push(key);
+  }
+  return seen;
+}
+
+function groupTable(rows) {
+  const columns = columnsOf(rows);
+  const table = element("table", null, { class: "grouping" });
+  const head = document.createElement("tr");
+  for (const key of columns) head.append(element("th", prettyLabel(key)));
+  table.append(element("thead").appendChild(head).parentNode);
+  const body = element("tbody");
+  for (const row of rows) {
+    const tr = document.createElement("tr");
+    for (const key of columns) {
+      const value = row[key];
+      const long = typeof value === "string" && value.length > 90;
+      tr.append(element("td", scalarText(key, value), long ? { class: "long" } : { class: "mono" }));
+    }
+    body.append(tr);
+  }
+  table.append(body);
+  return table;
+}
+
+// Scalars first as a definition list, then everything with structure, so the
+// identifying facts are not pushed below a long array.
+function valueNodes(value, depth) {
+  if (isScalar(value)) return [element("p", scalarText("", value))];
+  if (Array.isArray(value)) {
+    if (!value.length) return [element("p", "none", { class: "empty" })];
+    if (tabular(value)) return [groupTable(value)];
+    if (value.every(isScalar)) {
+      const list = element("ul");
+      for (const item of value) list.append(element("li", scalarText("", item)));
+      return [list];
+    }
+    const nodes = [];
+    value.forEach((item, index) => {
+      nodes.push(element(depth > 1 ? "h5" : "h4", `${index + 1}`));
+      nodes.push(...valueNodes(item, depth + 1));
+    });
+    return nodes;
+  }
+  const nodes = [];
+  const dl = element("dl", null, { class: "facts" });
+  const structured = [];
+  for (const [key, item] of Object.entries(value)) {
+    if (isScalar(item)) {
+      dl.append(fact(prettyLabel(key), scalarText(key, item)));
+    } else if (Array.isArray(item) && item.every(isScalar) && item.length
+               && item.every((v) => String(v).length <= 40)) {
+      // Short scalars read as one value; prose does not, and joining findings
+      // into a definition list loses where one ends and the next begins.
+      dl.append(fact(prettyLabel(key), item.map((v) => scalarText(key, v)).join(", ")));
+    } else {
+      structured.push([key, item]);
+    }
+  }
+  if (dl.childNodes.length) nodes.push(dl);
+  for (const [key, item] of structured) {
+    nodes.push(element(depth > 1 ? "h5" : "h4", prettyLabel(key)));
+    nodes.push(...valueNodes(item, depth + 1));
+  }
+  if (!nodes.length) nodes.push(element("p", "none", { class: "empty" }));
+  return nodes;
+}
+
+function rawJson(value) {
+  const box = document.createElement("details");
+  box.append(element("summary", "Recorded JSON"));
+  box.append(element("pre", JSON.stringify(value, null, 2), { class: "detail-json" }));
+  return box;
+}
+
+// An event's details are arbitrary recorded JSON, rendered by structure above.
 function showEvent(event) {
   const nodes = [];
   const dl = element("dl", null, { class: "facts" });
@@ -278,7 +389,8 @@ function showEvent(event) {
   const details = event.details || {};
   if (Object.keys(details).length) {
     nodes.push(element("h3", "Details"));
-    nodes.push(element("pre", JSON.stringify(details, null, 2), { class: "detail-json" }));
+    nodes.push(...valueNodes(details, 0));
+    nodes.push(rawJson(details));
   } else {
     nodes.push(element("p", "No recorded details.", { class: "empty" }));
   }

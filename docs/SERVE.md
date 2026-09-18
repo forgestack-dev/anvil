@@ -149,8 +149,18 @@ worktrees and raw event streams the ledger only points at.
 One side panel serves two subjects. Selecting a ticket row shows that ticket's
 title, objective, numbered acceptance criteria with the sites each one declared,
 execution state, and source references. Selecting an event row shows that event's
-kind, timestamps, attempt, status transition, and its recorded details
-pretty-printed. Each row is a `button` with a keyboard handler rather than a bare
+kind, timestamps, attempt, status transition, and its recorded details.
+
+Those details are rendered by structure rather than against a schema per kind,
+because a schema would silently drop a field the day a kind gains one. Scalars
+become a definition list, a list of objects whose values are all scalars becomes
+a table with a column per key, a list carrying nested structure becomes a group
+per element, and a nested object becomes a titled section. Short scalar lists
+join into one value; longer ones stay a list, because joining review findings
+into a single line loses where one ends and the next begins. A commit hash shows
+its first twelve characters and a boolean reads as yes or no. The recorded JSON
+stays reachable underneath, so a rendering that misses something hides
+nothing. Each row is a `button` with a keyboard handler rather than a bare
 click target, and the panel takes focus when it opens.
 
 Two shortcuts, each also reachable as a button so neither is the only way in:

@@ -117,3 +117,14 @@ tr.pick:hover td:first-child { text-decoration: underline; }
 .detail-json { margin: 0; padding: 8px; border: 1px solid var(--line); border-radius: 5px;
                background: var(--bg); font-size: 12px; white-space: pre-wrap;
                overflow-wrap: anywhere; max-height: 22rem; overflow: auto; }
+.ticket-body h4 { font-size: 13px; margin: 14px 0 6px; color: var(--muted);
+                  text-transform: uppercase; letter-spacing: .06em; }
+.ticket-body h5 { font-size: 12px; margin: 10px 0 4px; color: var(--muted); }
+table.grouping { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.grouping th { text-align: left; font-weight: 600; color: var(--muted);
+                    border-bottom: 1px solid var(--line); padding: 3px 6px 3px 0; }
+table.grouping td { vertical-align: top; padding: 4px 6px 4px 0;
+                    border-bottom: 1px solid var(--line); }
+table.grouping td.long { white-space: normal; overflow-wrap: anywhere; font: inherit; }
+.ticket-body details { margin-top: 14px; }
+.ticket-body summary { cursor: pointer; color: var(--muted); font-size: 12px; }
