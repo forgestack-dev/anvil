@@ -14,7 +14,7 @@ def number(value):
 
 def usage(path, agent, profile):
     result = {"input_tokens": None, "cached_input_tokens": None, "cache_write_tokens": None,
-              "output_tokens": None, "cost_usd": None, "cost_kind": "unknown",
+              "output_tokens": None, "cost_usd": None, "cost_kind": "unknown", "cost_basis": "unknown",
               "reported_model": None, "reported_effort": None, "usage_error": None, "provider_error": None}
     try:
         data = read_regular(path)
@@ -37,7 +37,13 @@ def usage(path, agent, profile):
                 result["cost_kind"] = "provider_reported_estimate"
             models = event.get("modelUsage", {})
             if len(models) == 1:
-                result["reported_model"] = next(iter(models))
+                model_name, model_usage = next(iter(models.items()))
+                result["reported_model"] = model_name
+                # An unrecognized costBasis, or a stream with none/multiple
+                # models, cannot be attributed to a single reported basis and
+                # stays "unknown" rather than guessing "billed".
+                if isinstance(model_usage, dict) and model_usage.get("costBasis") in ("list", "billed"):
+                    result["cost_basis"] = model_usage["costBasis"]
             for e in events:
                 if e.get("type") == "system" and e.get("subtype") == "init":
                     result["reported_model"] = result["reported_model"] or e.get("model")
@@ -70,7 +76,7 @@ def usage(path, agent, profile):
             result["reported_model"] = None
     except (OSError, ValueError, TypeError, KeyError, AttributeError, OverflowError, RecursionError) as exc:
         result["usage_error"] = str(exc)
-        result["cost_usd"], result["cost_kind"] = None, "unknown"
+        result["cost_usd"], result["cost_kind"], result["cost_basis"] = None, "unknown", "unknown"
     return result
 
 

@@ -86,6 +86,35 @@ class ClaudeExecutionTests(unittest.TestCase):
             self.assertEqual(argv[argv.index("--model")+1], "test-model")
             self.assertEqual(argv[argv.index("--effort")+1], "high")
 
+    def test_max_budget_usd_is_enforced_only_when_the_session_is_billed(self):
+        self.fake("emit({'argv':args})")
+        profile = {"model": "test-model", "effort": "high", "max_budget_usd": 2.5}
+        runner = ClaudeRunner(str(self.binary), profile=profile)
+        cases = (({"PATH": os.defpath, "ANTHROPIC_API_KEY": "secret"}, "billed", True),
+                 ({"PATH": os.defpath}, "list", False))
+        for extra, expected_basis, expect_flag in cases:
+            with self.subTest(basis=expected_basis):
+                artifacts = self.root / f"budget-{expected_basis}"
+                with patch.dict(os.environ, extra, clear=True):
+                    result = runner.run(repo=self.repo, prompt="Inspect fixture", schema=self.schema,
+                                        artifact_dir=artifacts, timeout=3)
+                argv = result["argv"]
+                self.assertEqual("--max-budget-usd" in argv, expect_flag)
+                if expect_flag:
+                    self.assertEqual(argv[argv.index("--max-budget-usd") + 1], "2.5")
+                record = json.loads((artifacts / "cost_basis.json").read_text())
+                self.assertEqual(record["basis"], expected_basis)
+                self.assertEqual(record["enforced"], expect_flag)
+                self.assertTrue(record["reason"])
+
+    def test_a_profile_without_max_budget_usd_records_no_cost_basis(self):
+        self.fake("emit({'argv':args})")
+        result = ClaudeRunner(str(self.binary), profile={"model": "test-model", "effort": "high"}).run(
+            repo=self.repo, prompt="Inspect fixture", schema=self.schema,
+            artifact_dir=self.root / "no-budget", timeout=3)
+        self.assertNotIn("--max-budget-usd", result["argv"])
+        self.assertFalse((self.root / "no-budget" / "cost_basis.json").exists())
+
     def test_read_only_tools_and_inherited_git_environment_are_isolated(self):
         self.fake("emit({'tools':args[args.index('--tools')+1], 'mode':args[args.index('--permission-mode')+1],"
                   " 'git':{k:v for k,v in os.environ.items() if k.startswith('GIT_')},"
