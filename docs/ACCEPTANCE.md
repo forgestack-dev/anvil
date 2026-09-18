@@ -1,7 +1,7 @@
 # The acceptance decision
 
-Status: Stages 1 and 2 implemented; Stages 3 and 4 are proposed and not
-implemented. The stage order was revised on 2026-09-17 after Stage 1 landed:
+Status: Stages 1 to 3 implemented; Stage 4 is proposed and not implemented.
+The stage order was revised on 2026-09-17 after Stage 1 landed:
 bounding and locating a rejection now precedes the conceded-rejection stop,
 because the stop's trigger is vacuous until the acceptance map is mandatory.
 Recorded 2026-09-17, from the saved ledgers of runs `5abe55ea`, `3658a8d9`,
@@ -153,7 +153,7 @@ rejections that assessed nothing at all -- stopping the run for the author on
 precisely the signal that carries no assessment. Requiring the full map first
 turns Stage 3's trigger into the positive assertion it is supposed to be.
 
-## Stage 3: a conceded rejection stops the run (proposed)
+## Stage 3: a conceded rejection stops the run (implemented)
 
 When a reviewer returns `request_changes` with every criterion marked
 `satisfied: true`, the requirement it names is not in the ticket. Escalating a
@@ -170,6 +170,30 @@ This stage must not ship before Stage 1. Without checks-first it would have
 stopped run `51fec4cd` after attempt 3 at $4.32 while calling "criteria met" a
 candidate that fails its own tests and leaks credentials at the preflight probe.
 Nor before Stage 2, for the reason above. Both orderings are load-bearing.
+
+### As implemented
+
+`evidence.concedes` is the test: a `request_changes` whose acceptance map is
+non-empty and every entry satisfied. Stage 2 obliges a review to fill that map,
+so this is a positive assertion the reviewer makes against its own verdict.
+Both schedulers record `failure_category: "unlisted_requirement"` on the
+attempt, stop with `blocked`, and skip the retry entirely -- in the pool the
+conceded branch is taken *instead of* `retry`, so no escalation is reserved and
+no finding reaches a retry prompt.
+
+`evidence.rejection_reason` gives the author the framing rather than the
+mechanism: "every acceptance criterion is satisfied, so this names a requirement
+the ticket does not carry", followed by the bound and located finding.
+
+Telemetry treats it as evidence about the ticket, not the worker.
+`attempt_record` no longer counts a conceded rejection as an attributable
+rejection, so its evaluation is `insufficient_evidence` and `learning` drops the
+sample. Charging it to the profile would train routing on the ticket's
+incompleteness, which is the one thing a stronger model cannot fix.
+
+No new status and no schema change. A blocked run already exits 3, which is the
+code `prepare` uses for a question, so a conceded rejection reaches a caller as
+a question rather than as an error without inventing a second convention.
 
 ## Stage 4: declared sites (proposed)
 

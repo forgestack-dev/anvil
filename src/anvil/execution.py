@@ -11,8 +11,8 @@ from .adapters import create_runner
 from .config import RunConfig
 from .contracts import ContractError, Task
 from .environment import managed_environment
-from .evidence import (REVIEW_SCHEMA, WORKER_SCHEMA, _location, format_findings,
-                       validate_result)
+from .evidence import (REVIEW_SCHEMA, WORKER_SCHEMA, _location, concedes,
+                       format_findings, rejection_reason, validate_result)
 from .planning import TaskGraph
 from .processes import ProcessError, ProcessScope, run_process
 from .store import RunStore, StoreError
@@ -330,9 +330,14 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
                         repo.assert_revision(integration, integrated)
                         assert_located(repo, integrated, review["findings"], cwd=integration)
                         if review["verdict"] != "approve":
+                            details = {"review": review, "integration_sha": integrated}
+                            if concedes(review):
+                                # Nothing the ticket asked for is missing, so this
+                                # stops for its author rather than for a worker.
+                                details["failure_category"] = "unlisted_requirement"
                             store.transition(task.id, "blocked", attempt_id=attempt_id,
-                                             details={"review": review, "integration_sha": integrated})
-                            store.set_run("blocked", error=format_findings(review["findings"]))
+                                             details=details)
+                            store.set_run("blocked", error=rejection_reason(review))
                             break
                         store.transition(task.id, "reviewed", attempt_id=attempt_id,
                                          details={"review": review, "reviewed_sha": integrated})

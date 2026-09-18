@@ -405,6 +405,47 @@ prompt = sys.stdin.read()''')
         with self.assertRaisesRegex(ContractError, "must not contain symlinks"):
             read_regular(invocation)
 
+    def test_a_conceded_rejection_never_escalates(self):
+        """The stage's whole point: no retry can satisfy a requirement the
+        ticket does not state, so the run stops for its author instead of
+        spending a stronger profile on the same criteria."""
+        from anvil.learning import history
+        class Conceded(FakeRunner):
+            def run(self, **kw):
+                outcome = super().run(**kw)
+                if kw.get('read_only'):
+                    outcome.update(verdict='request_changes',
+                                   findings=[{'criterion': 1, 'location': 'README.md',
+                                              'finding': 'the field is undocumented'}])
+                return outcome
+        runner = Conceded()
+        result = run_serial(replace(self.config, adaptive=config_options(attempts=2)), runner=runner)
+        self.assertEqual(result['status'], 'blocked')
+        self.assertEqual(sum(e['kind'] == 'retry' for e in result['events']), 0)
+        self.assertEqual(len(runner.workers), 1)
+        self.assertEqual(len(result['attempts']), 1)
+        details = result['attempts'][0]['details']
+        self.assertEqual(details['failure_category'], 'unlisted_requirement')
+        self.assertIn('the ticket does not carry', result['error'])
+        # The worker met every stated criterion, so the sample teaches routing
+        # nothing and must not be charged to its profile.
+        record = result['routing']['attempts'][0]
+        self.assertEqual(record['failure_category'], 'unlisted_requirement')
+        self.assertEqual(record['evaluation'], 'insufficient_evidence')
+        with history(Repository(self.repo)) as db:
+            row = db.execute('SELECT data FROM samples WHERE run_id=?', (result['run_id'],)).fetchone()
+        if row is not None:
+            self.assertFalse(json.loads(row[0])['eligible'])
+
+    def test_an_unsatisfied_criterion_still_escalates(self):
+        """The contrast that proves the stop discriminates."""
+        runner = FakeRunner('review-rejects')
+        result = run_serial(replace(self.config, adaptive=config_options(attempts=2)), runner=runner)
+        self.assertEqual(sum(e['kind'] == 'retry' for e in result['events']), 1)
+        self.assertEqual(len(runner.workers), 2)
+        self.assertNotEqual(result['attempts'][0]['details'].get('failure_category'),
+                            'unlisted_requirement')
+
     def test_a_failing_check_never_reaches_review(self):
         """Checks-first: a red candidate costs no review invocation."""
         runner = FakeRunner("bad-check")

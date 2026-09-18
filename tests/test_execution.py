@@ -626,6 +626,36 @@ class SerialExecutionTests(unittest.TestCase):
         self.assertEqual(format_findings(
             result["tasks"][0]["details"]["review"]["findings"]), result["error"])
 
+    # -- Stage 3: a conceded rejection stops for the author -----------------
+
+    class Conceded(FakeRunner):
+        """Rejects while granting every criterion the ticket states."""
+        def run(self, **kwargs):
+            outcome = super().run(**kwargs)
+            if kwargs.get("read_only"):
+                outcome.update(verdict="request_changes",
+                               findings=[{"criterion": 1, "location": "README.md",
+                                          "finding": "the new field is undocumented"}])
+            return outcome
+
+    def test_a_conceded_rejection_stops_for_the_author(self):
+        result = run_serial(self.config, runner=self.Conceded())
+        self.assertEqual(result["status"], "blocked")
+        details = result["tasks"][0]["details"]
+        self.assertEqual(details["failure_category"], "unlisted_requirement")
+        self.assertIn("every acceptance criterion is satisfied", result["error"])
+        self.assertIn("criterion 1 (README.md): the new field is undocumented", result["error"])
+        # The candidate is not accepted, and the branch does not move.
+        self.assertEqual(git(self.repo, "rev-parse", result["branch"]), self.base)
+        self.assertNotIn("integrated_sha", details)
+
+    def test_an_ordinary_rejection_is_not_treated_as_conceded(self):
+        result = run_serial(self.config, runner=FakeRunner("review-rejects"))
+        self.assertEqual(result["status"], "blocked")
+        details = result["tasks"][0]["details"]
+        self.assertNotIn("failure_category", details)
+        self.assertNotIn("every acceptance criterion is satisfied", result["error"])
+
     def test_case_distinct_ticket_ids_use_distinct_workspaces_and_evidence(self):
         document = json.loads(self.tickets.read_text())
         document["tasks"][0]["id"] = "Ticket"

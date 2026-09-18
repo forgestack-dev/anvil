@@ -21,7 +21,8 @@ import uuid
 from .adapters import create_runner
 from .config import RunConfig, WorkerConfig
 from .contracts import ContractError, Task
-from .evidence import REVIEW_SCHEMA, WORKER_SCHEMA, format_findings, validate_result
+from .evidence import (REVIEW_SCHEMA, WORKER_SCHEMA, concedes, format_findings,
+                       rejection_reason, validate_result)
 from .execution import (VerificationFailure, assert_located, _review_prompt, _worker_prompt,
                         orientation_text, verify)
 from .planning import TaskGraph
@@ -407,12 +408,21 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                             store.record_message(item.task.id, attempt_id=item.attempt_id,
                                                  kind="review_result", body=outcome)
                             if outcome["verdict"] != "approve":
-                                reason = format_findings(outcome["findings"])
-                                if retry(item, reason, "review_rejection"):
+                                reason = rejection_reason(outcome)
+                                details = {"review": outcome,
+                                           "integration_sha": integration.sha}
+                                # A conceded rejection names a requirement the
+                                # ticket does not carry. Escalating a worker
+                                # cannot satisfy it, and feeding it to a retry
+                                # prompt would enlarge the ticket's scope while
+                                # its frozen criteria stay unchanged, so this
+                                # stops for the author. docs/ACCEPTANCE.md
+                                if concedes(outcome):
+                                    details["failure_category"] = "unlisted_requirement"
+                                elif retry(item, reason, "review_rejection"):
                                     integration = None
                                     continue
-                                raise _Blocked(reason,
-                                               {"review": outcome, "integration_sha": integration.sha})
+                                raise _Blocked(reason, details)
                             store.transition(item.task.id, "reviewed", attempt_id=item.attempt_id,
                                              details={"review": outcome, "reviewed_sha": integration.sha})
                             store.transition(item.task.id, "integrating", attempt_id=item.attempt_id,

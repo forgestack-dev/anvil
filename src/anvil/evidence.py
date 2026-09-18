@@ -56,6 +56,29 @@ def _location(value: str) -> tuple[str, int | None]:
     return path.rstrip("/") or path, number
 
 
+def concedes(review: dict) -> bool:
+    """Whether a rejection grants every criterion of the ticket it reviewed.
+
+    The reviewer's own map is the signal: it asserted, against its own verdict,
+    that nothing the ticket asked for is missing. What it objects to is then a
+    requirement the ticket does not carry, which no retry of this ticket can
+    satisfy. Stage 2 obliges a review to fill the map, so this is a positive
+    assertion rather than the vacuous truth an empty map would give.
+    """
+    return (review.get("verdict") == "request_changes"
+            and bool(review.get("acceptance"))
+            and all(item["satisfied"] for item in review["acceptance"]))
+
+
+def rejection_reason(review: dict) -> str:
+    """The rejection as the ticket's author needs to read it."""
+    findings = format_findings(review["findings"])
+    if not concedes(review):
+        return findings
+    return ("every acceptance criterion is satisfied, so this names a requirement "
+            f"the ticket does not carry: {findings}")
+
+
 def format_findings(findings: list[dict]) -> str:
     """One line per finding, naming the criterion and the place it points at."""
     return "; ".join(f"criterion {item['criterion']} ({item['location']}): {item['finding']}"

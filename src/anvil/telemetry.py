@@ -4,6 +4,7 @@ import json
 import math
 from pathlib import Path
 import time
+from .evidence import concedes
 from .ticket_status import read_regular, atomic, encoded
 
 
@@ -127,9 +128,14 @@ def attempt_record(run_dir, attempt, *, decision=None, review_started=False):
     invocations = attempt_invocations(run_dir, attempt["id"], review_started=review_started)
     costs = [r["cost_usd"] for r in invocations]
     details = attempt["details"]
+    review = details.get("review") or {}
+    # A conceded rejection is not evidence about the worker or its profile: the
+    # candidate satisfied every criterion the ticket stated. Scoring it as a
+    # rejection would train routing on the ticket's incompleteness, so the
+    # sample is dropped as insufficient evidence instead.
     attributable_rejection = (
         "retry_reason" in details
-        or details.get("review", {}).get("verdict") == "request_changes"
+        or (review.get("verdict") == "request_changes" and not concedes(review))
         or any(check.get("returncode") not in (None, 0) or check.get("timed_out")
                for check in details.get("verification", [])))
     evaluation = "observed_sufficient" if attempt["status"] == "done" else (
@@ -138,14 +144,16 @@ def attempt_record(run_dir, attempt, *, decision=None, review_started=False):
     # The coordinator records the structured retry cause when it retires the
     # attempt; prefer it over re-deriving from whatever evidence survived.
     stored_category = details.get("failure_category")
-    if stored_category not in ("review_rejection", "verification_failure", "retryable_rejection"):
+    if stored_category not in ("review_rejection", "verification_failure",
+                               "retryable_rejection", "unlisted_requirement"):
         stored_category = None
     return {"attempt_id": attempt["id"], "task_id": attempt["task_id"],
             "status": attempt["status"], "decision": decision,
             "failure_category": ("none" if attempt["status"] == "done" else
                 "provider_error" if any(i.get("provider_error") for i in invocations) else
                 stored_category if stored_category else
-                "review_rejection" if details.get("review", {}).get("verdict") == "request_changes" else
+                "unlisted_requirement" if concedes(review) else
+                "review_rejection" if review.get("verdict") == "request_changes" else
                 "verification_failure" if details.get("verification") else
                 "retryable_rejection" if "retry_reason" in details else "unknown"),
             "evaluation": evaluation, "invocations": invocations,
