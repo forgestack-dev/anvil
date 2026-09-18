@@ -553,19 +553,19 @@
     },
     {
       "id": "dashboard-run-views",
-      "title": "Dashboard server with run list, overview, and ticket views",
-      "objective": "Ship the local read-only dashboard so a user can watch current and historical runs in a browser with no integrations configured and no cloud dependency.",
+      "title": "Delivery-aware run and ticket views on the serve contract",
+      "objective": "Extend the shipped read-only server so its run and ticket views carry the delivery state a run records, rather than standing up a second server.",
       "depends_on": [
         "ledger-query-layer"
       ],
       "acceptance_criteria": [
-        "A standard-library HTTP server binds to loopback, picks a free port when asked for port 0, prints the session URL, runs in the foreground, and exits on interrupt without affecting workers or evidence.",
-        "A per-session local token is exchanged for a scoped HTTP-only session; Host and Origin are validated, no permissive CORS is served, a restrictive content policy applies, and only packaged assets are served.",
-        "Run list, run overview with dependency waves and active slots, and ticket detail with attempts, model and effort reasons, and selected skills render from the bounded query layer, polling about every two seconds for the active run and slower for the list.",
-        "All routes are read-only; no endpoint runs, resumes, syncs, merges, or mutates anything, and useful CLI commands appear only as selectable text.",
-        "Legacy runs without integration records render, unknown cost data is labeled unknown, and keyboard navigation, visible focus, accessible state labels, contrast, and a table alternative to the dependency graph are verified in a browser."
+        "The existing `anvil serve` routes, loopback binding, packaged page and resumable event stream are reused; no second HTTP server, port, or asset pipeline is introduced.",
+        "The read contract version is raised additively, so a consumer written against the previous version keeps working.",
+        "Run list and ticket detail carry each run's delivery phase and synchronization health alongside its execution status, and a run with no integrations configured renders exactly as it does today.",
+        "Runs recorded before delivery existed render without error and show delivery as absent rather than as failed."
       ],
       "source_refs": [
+        "SERVE.md the read contract and its version",
         "DELIVERY_DASHBOARD_PLAN.md section 11 Dashboard specification"
       ],
       "risk": "medium",
@@ -576,19 +576,20 @@
     {
       "id": "dashboard-delivery-evidence-views",
       "title": "Dashboard delivery and evidence views",
-      "objective": "Show where a run's PR is, why an issue is still open, and the evidence behind every state, with untrusted content rendered safely and projection lag made visible.",
+      "objective": "Add the delivery and evidence views to the shipped read-only server, so an operator can see where a run's pull request is and why an issue is still open.",
       "depends_on": [
         "merge-observation-and-sync",
         "dashboard-run-views"
       ],
       "acceptance_criteria": [
-        "The delivery view shows host, source and base refs and SHAs, PR URL, draft, review, check, and merge state, and the issue synchronization backlog and conflicts, keeping execution progress and delivered progress visually separate.",
-        "The evidence view shows independent review findings, verification outcomes, the event timeline, and usage provenance, with artifacts resolved through allowlisted opaque IDs, traversal and symlinks rejected, and excerpts streamed up to 256 KiB.",
-        "Issue text, comments, and logs render as escaped text or sanitized Markdown with raw HTML disabled; stored markup injection tests pass.",
-        "The execution ledger and integration journal cursors are labeled so projection lag reads as lag, not contradiction, and stale observations show their last evidence time.",
-        "Responses contain no credentials, authorization headers, environment contents, or hidden external content, and dashboard polling never triggers provider requests."
+        "Delivery and evidence views are served by the existing `anvil serve` process under its versioned read contract.",
+        "The delivery view shows host, source and base refs and SHAs, PR URL, draft, review, check and merge state, and the issue synchronization backlog and conflicts, keeping execution progress and delivered progress visually separate.",
+        "The evidence view resolves artifacts through allowlisted opaque IDs, rejects traversal and symlinks, and streams excerpts up to 256 KiB.",
+        "Issue text, comments and logs render as escaped text or sanitized Markdown with raw HTML disabled; stored markup injection tests pass.",
+        "Responses carry no credentials, authorization headers or environment contents, and serving never triggers a provider request."
       ],
       "source_refs": [
+        "SERVE.md the read contract and its version",
         "DELIVERY_DASHBOARD_PLAN.md section 11 Dashboard specification"
       ],
       "risk": "medium",
@@ -599,20 +600,20 @@
     {
       "id": "dashboard-group-view",
       "title": "Dashboard group view",
-      "objective": "Let a user see how far along an epic, project, milestone, or initiative is across every run that touched it, with honest rollup that never infers completion.",
+      "objective": "Add a group lens to the shipped read-only server, so an operator can see how far an epic, project, milestone or initiative has progressed across runs.",
       "depends_on": [
         "group-import-and-membership",
         "dashboard-delivery-evidence-views"
       ],
       "acceptance_criteria": [
-        "A group view lists each group's identity and kind, member issues with local, delivery, and tracker states, computed rollup counts, and the runs that touched each member, reading the state-root group index.",
-        "Members never imported under this state root are shown as unknown and are never counted complete because their external status is Done.",
-        "No group is shown or recorded as complete on the basis of external status alone.",
-        "The view meets the same accessibility and read-only requirements as the other views."
+        "The group view is served by the existing `anvil serve` process under its versioned read contract.",
+        "It lists each group's identity and kind, member issues with local, delivery and tracker states, computed rollup counts, and the runs that touched each member.",
+        "A member never imported under this state root is shown as unknown, and no group is shown complete on the basis of external status alone.",
+        "The view meets the same read-only and accessibility requirements as the other views."
       ],
       "source_refs": [
-        "DELIVERY_DASHBOARD_PLAN.md section 5 Grouping constructs",
-        "DELIVERY_DASHBOARD_PLAN.md section 11 Dashboard specification"
+        "SERVE.md the read contract and its version",
+        "DELIVERY_DASHBOARD_PLAN.md section 5 Grouping constructs"
       ],
       "risk": "low",
       "execution": {

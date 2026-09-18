@@ -1,6 +1,14 @@
 # Repository delivery, issue synchronization, and run dashboard
 
-Status: proposed specification; not implemented. This document describes a new
+Status: proposed specification; not implemented, and partly superseded.
+
+`anvil serve` shipped after this document was written. It is a read-only local
+HTTP server over the ledger with a packaged dashboard page, a versioned read
+contract and a resumable event stream; see [the serve contract](SERVE.md).
+Slice D5 below proposes building that server, and must not be built twice: its
+three dashboard tickets are additive views on the serve contract, and the
+`serve` version is the thing an added decomposition has to move. The delivery
+and issue-synchronization slices are unaffected. This document describes a new
 milestone after PR #12, based on `main` at `4f23a5d`. Commands, configuration
 fields, and modules below are design targets. They are not available in the
 current CLI. Provider documentation was checked on 2026-09-15.
@@ -686,7 +694,7 @@ in docs. Do not call the whole milestone complete after only the first provider.
 | D2: read-only issue intake | GitHub Issues, Jira Cloud, Linear resolve/import, group membership capture and import-by-group, rich text and explicit criteria/dependency mapping, read-only doctor | All three produce valid frozen graphs or actionable no-output failures |
 | D3: code-host publication | GitHub and Bitbucket Cloud branch/PR delivery, draft/ready, evidence statuses, observed checks and merges | Both pass uncertain-write/reconciliation tests and publish only manifest-bound work |
 | D4: issue lifecycle sync | Started/review-ready/completion mappings for all three trackers, issue groups, links, manual-conflict handling | All six host/tracker combinations pass the same end-to-end contract |
-| D5: local dashboard | Packaged read-only server/UI over current and historical run evidence, delivery, sync, and group views | Browser verification, bounded queries, isolation and accessibility checks |
+| D5: local dashboard | Delivery, sync and group views added to the shipped `anvil serve` contract, not a second server | Browser verification, bounded queries, isolation and accessibility checks |
 | D6: operational acceptance | Read-only plan, bounded watching, packaging, setup docs/entry skill, authorized sandbox-provider exercises | Full regression suite/CI plus recorded external acceptance for each adapter |
 
 Likely modules: `integrations/contracts.py`, `config.py`, `journal.py`,
