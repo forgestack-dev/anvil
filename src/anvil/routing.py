@@ -199,6 +199,26 @@ class Policy:
         return choices[0] if choices else None
 
 
+def resolve_cost_basis(environment):
+    """Whether the invocation launched with this environment will be billed per token.
+
+    Claude Code enforces `--max-budget-usd` against whatever it reports as
+    `total_cost_usd` regardless of how the session authenticates. Under a
+    subscription login (no `ANTHROPIC_API_KEY`) that figure is a list-price
+    estimate of tokens the plan already covers, not a charge; AGENTS.md is
+    explicit that such an estimate is not a hard budget cap. Only a session
+    launched with an API key is billed per token, and the key must already be
+    present in the exact environment the invocation runs under, since the
+    ceiling flag has to be decided before that invocation starts.
+    An absent or empty key resolves to "list", never "billed": a missing
+    signal must never enforce a ceiling against an estimate.
+    """
+    if environment.get("ANTHROPIC_API_KEY"):
+        return "billed", "ANTHROPIC_API_KEY is set for this invocation; Claude Code bills it per token"
+    return "list", ("no ANTHROPIC_API_KEY in this invocation's environment; Claude Code reports a "
+                    "subscription list-price estimate under this basis, not a billed charge")
+
+
 def preflight(agent, executable, profile, *, exclude=()):
     """Probe advertised controls; no model invocation or entitlement claim."""
     import tempfile

@@ -9,7 +9,7 @@ import test_execution
 from test_adaptive import config_options
 from anvil.config import RunConfig, WorkerConfig
 from anvil.contracts import ContractError
-from anvil.routing import validate_config, Policy, fingerprint, learning_catalog
+from anvil.routing import validate_config, Policy, fingerprint, learning_catalog, resolve_cost_basis
 from anvil.planning import TaskGraph
 from anvil.workspaces import Repository
 from anvil.telemetry import usage
@@ -46,6 +46,54 @@ class RoutingComponents(unittest.TestCase):
         data=usage(path,'claude-code',{})
         self.assertEqual(data['cost_usd'],0.2);self.assertEqual(data['input_tokens'],10)
         self.assertEqual(data['reported_model'],'test')
+
+    def test_provider_reported_cost_basis_distinguishes_billed_from_list(self):
+        path = self.root.resolve() / 'events.jsonl'
+        for basis in ('list', 'billed'):
+            events = [{'type': 'result', 'usage': {'input_tokens': 10, 'output_tokens': 5},
+                       'total_cost_usd': 0.2, 'modelUsage': {'test': {'costBasis': basis}}}]
+            path.write_text(json.dumps(events[0]))
+            data = usage(path, 'claude-code', {})
+            self.assertEqual(data['cost_basis'], basis)
+            self.assertEqual(data['cost_kind'], 'provider_reported_estimate')
+
+    def test_absent_or_unrecognized_or_multiple_model_basis_stays_unknown(self):
+        path = self.root.resolve() / 'events.jsonl'
+        cases = (
+            {'modelUsage': {'test': {}}},
+            {'modelUsage': {'test': {'costBasis': 'promotional'}}},
+            {'modelUsage': {}},
+            {'modelUsage': {'a': {'costBasis': 'billed'}, 'b': {'costBasis': 'billed'}}},
+            {},
+        )
+        for extra in cases:
+            with self.subTest(extra=extra):
+                event = {'type': 'result', 'usage': {'input_tokens': 10, 'output_tokens': 5},
+                          'total_cost_usd': 0.2, **extra}
+                path.write_text(json.dumps(event))
+                data = usage(path, 'claude-code', {})
+                self.assertEqual(data['cost_basis'], 'unknown')
+
+    def test_cost_basis_round_trips_through_saved_invocation_state(self):
+        from anvil.ticket_status import atomic, encoded, read_regular
+        path = self.root.resolve() / 'events.jsonl'
+        path.write_text(json.dumps({'type': 'result', 'usage': {'input_tokens': 10, 'output_tokens': 5},
+                                     'total_cost_usd': 0.2, 'modelUsage': {'test': {'costBasis': 'billed'}}}))
+        data = usage(path, 'claude-code', {})
+        record_path = self.root.resolve() / 'invocation.json'
+        atomic(record_path, encoded({'role': 'worker', **data, 'duration_seconds': 1}))
+        reloaded = json.loads(read_regular(record_path))
+        self.assertEqual(reloaded['cost_basis'], 'billed')
+
+    def test_resolve_cost_basis_requires_an_explicit_api_key(self):
+        billed, reason = resolve_cost_basis({'ANTHROPIC_API_KEY': 'secret'})
+        self.assertEqual(billed, 'billed')
+        self.assertTrue(reason)
+        for environment in ({}, {'ANTHROPIC_API_KEY': ''}, {'OTHER': 'value'}):
+            with self.subTest(environment=environment):
+                basis, reason = resolve_cost_basis(environment)
+                self.assertEqual(basis, 'list')
+                self.assertTrue(reason)
 
     def test_codex_cached_tokens_are_not_priced_twice_and_missing_usage_is_unknown(self):
         path=self.root.resolve()/'events.jsonl'

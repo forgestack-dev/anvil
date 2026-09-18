@@ -9,7 +9,7 @@ so this is not an operating-system sandbox.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import math
 import os
@@ -219,18 +219,23 @@ class ClaudeRunner:
             artifact_dir = artifact_dir.resolve()
             with (artifact_dir / "schema.json").open("x", encoding="utf-8") as stream:
                 stream.write(json.dumps(schema, indent=2, allow_nan=False) + "\n")
+            environment = managed_environment(self.exclude)
+            if self.profile is not None:
+                invocation = replace(invocation, argv=(*invocation.argv, "--model", self.profile["model"],
+                                                       "--effort", self.profile["effort"]))
+                # Claude's effort environment override takes precedence over the CLI flag.
+                environment["CLAUDE_CODE_EFFORT_LEVEL"] = self.profile["effort"]
+            if self.profile is not None and "max_budget_usd" in self.profile:
+                from ..routing import resolve_cost_basis
+                from ..ticket_status import atomic, encoded
+                basis, reason = resolve_cost_basis(environment)
+                atomic(artifact_dir / "cost_basis.json", encoded(
+                    {"basis": basis, "enforced": basis == "billed", "reason": reason}))
+                if basis == "billed":
+                    invocation = replace(invocation, argv=(*invocation.argv, "--max-budget-usd",
+                                                           str(self.profile["max_budget_usd"])))
         except (OSError, ValueError, TypeError, UnicodeError, RecursionError) as exc:
             raise ProcessError(f"could not prepare Claude Code execution: {exc}") from exc
-        if self.profile is not None:
-            from dataclasses import replace
-            invocation = replace(invocation, argv=(*invocation.argv, "--model", self.profile["model"],
-                                                   "--effort", self.profile["effort"]))
-        if self.profile is not None and "max_budget_usd" in self.profile:
-            invocation = replace(invocation, argv=(*invocation.argv, "--max-budget-usd", str(self.profile["max_budget_usd"])))
-        environment = managed_environment(self.exclude)
-        if self.profile is not None:
-            # Claude's effort environment override takes precedence over the CLI flag.
-            environment["CLAUDE_CODE_EFFORT_LEVEL"] = self.profile["effort"]
         outcome = run_process(
             invocation.argv, cwd=repo, stdin=invocation.stdin,
             stdout_path=artifact_dir / "events.jsonl", stderr_path=artifact_dir / "stderr.log",
