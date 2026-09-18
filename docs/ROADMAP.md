@@ -258,13 +258,15 @@ See [amend retries](AMEND_RETRIES.md). The mechanism is prototyped rather than p
 
 See [remote access](REMOTE_ACCESS.md). A mobile client is not a UI problem: it is this milestone plus packaging, and pointless before it. The document also records why the work should wait — the trigger worth acting on is a second person needing to watch a run they did not start, which is the point at which [the product boundary](PRODUCT_BOUNDARY.md) says the requirement stops being local. This milestone is not implemented and may never be built in this form.
 
-## 13. Open core and the paid boundary — decisions open
+## 13. Open core and the paid boundary — decisions open, the open CLI's half specified
 
 - Draw the line at what requires other people: everything needed to run Anvil correctly on one machine stays open, and anything requiring other machines, users, or runs' data is a paid service.
 - Settle the licensing questions before they stop being available, starting with a contributor agreement.
 - Specify the interface between the open CLI and any paid service before either exists, so an additive change in one cannot break the other.
+- Carry contribute and consume decisions per memory tier in a run configuration and a per-ticket exclusion in the ticket contract, recorded as a ledger event so a projection honors what a run declared rather than only what is configured now.
+- Withhold excluded content at `anvil serve`, serving a marker that names the scope which excluded it rather than dropping the row, and keep the decision a read-time filter so a withdrawal reaches rows already written.
 
-See [the product boundary](PRODUCT_BOUNDARY.md), which is a recommendation and not ratified, [the licensing decisions](LICENSING.md), [the cloud sync contract](CLOUD_SYNC.md), and [shared memory](SHARED_MEMORY.md). Nothing here is implemented and no commitment has been made. One item has a deadline rather than a priority: a contributor agreement stops being available the first time an outside contribution merges without one, which freezes the licence permanently.
+See [the product boundary](PRODUCT_BOUNDARY.md), which is a recommendation and not ratified, [the licensing decisions](LICENSING.md), [the cloud sync contract](CLOUD_SYNC.md), and [shared memory](SHARED_MEMORY.md). Nothing here is implemented and no commitment has been made. The consent work is the exception to that status rather than to the implementation: section 12 of the shared memory record carries four slices and the two decisions they rest on, bounded to this repository because the service that holds the corpus is outside it per section 6 of the product boundary. Until its fourth slice exists a declaration is intent that nothing enforces. One item has a deadline rather than a priority: a contributor agreement stops being available the first time an outside contribution merges without one, which freezes the licence permanently.
 
 ## Later integrations
 
