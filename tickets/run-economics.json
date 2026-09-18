@@ -73,7 +73,10 @@
       ],
       "risk": "medium",
       "execution": {
-        "status": "todo"
+        "status": "done",
+        "run_id": "9b065242ac3d49dda78e27db606b26c4",
+        "integrated_sha": "82b34efb635ab5dc76fd500a794f9c2fab7cc380",
+        "evidence": "/Users/christian/.local/state/anvil/9b065242ac3d49dda78e27db606b26c4"
       }
     },
     {

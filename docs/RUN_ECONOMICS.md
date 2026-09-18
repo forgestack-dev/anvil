@@ -71,6 +71,13 @@ contradicts the invariant. Split the recorded cost kind by basis and enforce a
 dollar ceiling only where the basis is billed. This is also the seam any later
 API-key support keys off, so it precedes that work rather than following it.
 
+Slices 1, 2 and 3 are implemented, in the order 2, 1, 3 rather than 1, 2, 3:
+the ledger had to admit the categories before an adapter could record one.
+Slice 3 landed between them for a reason worth keeping. Two attempts at slice 1
+died at a $2 ceiling enforced against a subscription list-price estimate, which
+is the harm slice 3 exists to remove; with it removed the same ticket ran to
+$2.52 and was accepted, and its run recorded basis list, enforced false.
+
 **Slice 4 — retaining an exhausted attempt.** `parallel.py`'s retry builds a
 fresh worktree from the base and clears the attempt's claims and candidate, and
 today even that does not run for this case: a `ProcessError` is caught in
