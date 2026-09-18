@@ -16,17 +16,44 @@
         "Tests cover the cursor resuming across appends, refusal of an invalid run, a symlinked run directory, an unknown attempt, and a malformed line, using recorded fixtures and never a live model."
       ],
       "sites": [
-        {"criterion": 2, "paths": ["src/anvil/serve.py"]},
-        {"criterion": 4, "paths": ["src/anvil/serve.py"]},
-        {"criterion": 6, "paths": ["src/anvil/assets/app.js", "src/anvil/assets/index.html"]},
-        {"criterion": 7, "paths": ["tests/test_serve.py"]}
+        {
+          "criterion": 2,
+          "paths": [
+            "src/anvil/serve.py"
+          ]
+        },
+        {
+          "criterion": 4,
+          "paths": [
+            "src/anvil/serve.py"
+          ]
+        },
+        {
+          "criterion": 6,
+          "paths": [
+            "src/anvil/assets/app.js",
+            "src/anvil/assets/index.html"
+          ]
+        },
+        {
+          "criterion": 7,
+          "paths": [
+            "tests/test_serve.py"
+          ]
+        }
       ],
       "source_refs": [
         "SERVE.md the isolation section, and artifacts remaining outside that milestone",
         "CLOUD_SYNC.md section 3, how the read contract version changes",
         "DELIVERY_DASHBOARD_PLAN.md section 11, artifact excerpts by opaque ID"
       ],
-      "risk": "medium"
+      "risk": "medium",
+      "execution": {
+        "status": "done",
+        "run_id": "98a17c6b88d94a7ba76b17c9d0da4056",
+        "integrated_sha": "d2802e23df991e6a9eb60e639dd6251c4ae24e11",
+        "evidence": "/Users/christian/.local/state/anvil/98a17c6b88d94a7ba76b17c9d0da4056"
+      }
     }
   ]
 }
