@@ -177,20 +177,29 @@ dollar ceiling only where the basis is billed. This is also the seam any later
 API-key support keys off, so it precedes that work rather than following it.
 
 **Slice 4 — retaining an exhausted attempt.** `parallel.py`'s retry builds a
-fresh worktree from the base and clears the attempt's claims and candidate, which
-is right for a review rejection and wasteful for turn exhaustion, where the work
-is on disk and the only thing missing is turns. Today neither path runs: a
-`ProcessError` is caught in `execution.py` and stops the whole run, so the eight
-exhausted invocations above ended sixteen runs between them. Decide what an
-exhausted attempt is worth before spending more on it — a raised ceiling on the
-same workspace, or the partial candidate offered to the configured checks, which
-now run before review and can reject it for free.
+fresh worktree from the base and clears the attempt's claims and candidate, and
+today even that does not run for this case: a `ProcessError` is caught in
+`execution.py` and stops the whole run, so the eight exhausted invocations above
+ended sixteen runs between them. Milestone 11 specifies restarting from a
+rejected candidate's tree, and the mechanism it prototypes — restoring a tree
+into a worktree left at the base — is the one this slice needs. The trigger is
+what differs: an amend addresses bound findings on a candidate a reviewer
+returned, while an exhausted attempt has no candidate and no findings, only a
+tree and a ceiling it did not finish under. Decide what such an attempt is worth
+before spending more on it — a raised ceiling on the same workspace, or the
+partial tree offered to the configured checks, which under milestone 9 now run
+before review and can reject it for free. Note that milestone 11 records the
+saving as unmeasured for the same reason it is uncertain here: orientation is
+roughly 80% of an invocation, and a resumed attempt may pay it again.
 
 **Slice 5 — surfacing usage.** `telemetry.py` already parses cache creation,
 cache read, output and thinking tokens per invocation and nothing aggregates
 them: every number in this section came from re-reading saved event streams.
-`serve.py` serves the ledger and `report.json` carries the run; neither carries
-the decomposition or the terminal reason.
+Milestone 10 ships the read-only server and its dashboard, so this slice extends
+a contract that exists rather than proposing one — see [the serve
+contract](SERVE.md), whose read version is the thing an added decomposition has
+to move. Neither that contract nor `report.json` carries the component split or
+the terminal reason today.
 
 ### What this does not establish
 
