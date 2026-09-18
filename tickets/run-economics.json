@@ -25,7 +25,13 @@
       "source_refs": [
         "RUN_ECONOMICS.md slice 2, failure categories"
       ],
-      "risk": "low"
+      "risk": "low",
+      "execution": {
+        "status": "done",
+        "run_id": "dfc4db66ab8246caa9057aa2bbca7340",
+        "integrated_sha": "e23087c20c3c692609791f77ec7edb8d2bbcf15c",
+        "evidence": "/Users/christian/.local/state/anvil/dfc4db66ab8246caa9057aa2bbca7340"
+      }
     },
     {
       "id": "terminal-classification",
@@ -65,7 +71,10 @@
       "source_refs": [
         "RUN_ECONOMICS.md slice 1, terminal classification"
       ],
-      "risk": "medium"
+      "risk": "medium",
+      "execution": {
+        "status": "todo"
+      }
     },
     {
       "id": "cost-basis",
@@ -105,7 +114,10 @@
         "RUN_ECONOMICS.md slice 3, cost basis",
         "AGENTS.md cost estimates are not invoices or hard budget caps"
       ],
-      "risk": "medium"
+      "risk": "medium",
+      "execution": {
+        "status": "todo"
+      }
     }
   ]
 }
