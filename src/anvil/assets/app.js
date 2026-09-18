@@ -13,6 +13,7 @@ const panels = {
   tasks: document.getElementById("panel-tasks"),
   spend: document.getElementById("panel-spend"),
   events: document.getElementById("panel-events"),
+  activity: document.getElementById("panel-activity"),
 };
 const tabs = [...document.querySelectorAll('[role="tab"]')];
 
@@ -537,11 +538,63 @@ async function loadEvents(runId) {
   panels.events.firstChild.append(table);
 }
 
+// -- attempt activity --------------------------------------------------------
+//
+// The ledger records decisions, not activity: heartbeats update an attempt
+// without appending an event, so between transitions this is the only view
+// of what the running attempt is doing. It polls a byte cursor rather than
+// the event stream, since the recorded agent stream is not a ledger event.
+
+let activityKey = null;
+let activityCursor = 0;
+
+function activityLine(item) {
+  const parts = [item.type || "event"];
+  if (item.tool) parts.push(item.tool);
+  if (item.target) parts.push(item.target);
+  if (item.summary) parts.push(item.summary);
+  return parts.join(" · ");
+}
+
+async function pollActivity(runId, attemptId, list) {
+  const key = `${runId}:${attemptId}`;
+  if (activityKey !== key) return;
+  try {
+    const page = await api(`/api/runs/${encodeURIComponent(runId)}/attempts/` +
+      `${encodeURIComponent(attemptId)}/activity?role=worker&after=${activityCursor}`);
+    if (activityKey !== key) return;
+    activityCursor = page.next_after;
+    if (page.items.length) {
+      for (const item of page.items) list.append(element("li", activityLine(item), { class: "mono" }));
+      list.scrollTop = list.scrollHeight;
+    }
+  } catch (ignored) {
+    // A transient read failure should not stop the poll loop.
+  }
+  if (activityKey === key) setTimeout(() => pollActivity(runId, attemptId, list), 2000);
+}
+
+async function loadActivity(runId) {
+  const page = await api(`/api/runs/${encodeURIComponent(runId)}/tasks?limit=500`);
+  const running = page.items.find((task) => task.status === "running" && task.attempt_id);
+  const key = running ? `${runId}:${running.attempt_id}` : null;
+  if (activityKey === key) return;
+  activityKey = key;
+  activityCursor = 0;
+  if (!running) {
+    return replace(panels.activity, [element("p", "No running attempt.", { class: "empty" })]);
+  }
+  const list = element("ul", null, { class: "activity-log" });
+  replace(panels.activity, [list]);
+  pollActivity(runId, running.attempt_id, list);
+}
+
 // -- selection, tabs, live updates ------------------------------------------
 
 function refresh(runId) {
-  return Promise.all([loadSummary(runId), loadTasks(runId), loadSpend(runId), loadEvents(runId)])
-    .catch((error) => setLive("error", error.message));
+  return Promise.all(
+    [loadSummary(runId), loadTasks(runId), loadSpend(runId), loadEvents(runId), loadActivity(runId)],
+  ).catch((error) => setLive("error", error.message));
 }
 
 function scheduleRefresh(runId) {

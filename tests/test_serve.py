@@ -227,6 +227,126 @@ class TelemetryRouteTests(ServeTestCase):
         self.assertEqual([item["task_id"] for item in second["items"]], ["b"])
 
 
+class ActivityRouteTests(ServeTestCase):
+    def prepare(self) -> tuple[Path, str]:
+        run_dir = self.make_run("run-one", ticket("a"))
+        with RunStore(run_dir / "state.sqlite") as store:
+            store.set_run("running")
+            attempt_id = store.start_attempt("a", "base", "/workspace/a")
+        return run_dir, attempt_id
+
+    def write_stream(self, run_dir: Path, attempt_id: str, role: str, text: str) -> Path:
+        directory = run_dir / "artifacts" / attempt_id / role
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / "events.jsonl"
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(text)
+        return path
+
+    def line(self, **fields) -> str:
+        return json.dumps(fields) + "\n"
+
+    def test_the_cursor_resumes_across_appends_without_replay_or_gaps(self):
+        run_dir, attempt_id = self.prepare()
+        tool_use = self.line(type="assistant", message={"content": [
+            {"type": "tool_use", "name": "Edit", "input": {"file_path": "src/a.py"}}]})
+        self.write_stream(run_dir, attempt_id, "worker", tool_use)
+        _, base = self.start()
+        first = self.get(base, f"/api/runs/run-one/attempts/{attempt_id}/activity?role=worker")
+        self.assertEqual(first["items"], [{"type": "assistant", "tool": "Edit", "target": "src/a.py"}])
+        self.assertEqual(first["next_after"], len(tool_use.encode()))
+        # Nothing new yet: the cursor does not move and nothing replays.
+        second = self.get(base, f"/api/runs/run-one/attempts/{attempt_id}/activity"
+                          f"?role=worker&after={first['next_after']}")
+        self.assertEqual(second["items"], [])
+        self.assertEqual(second["next_after"], first["next_after"])
+        # An append is picked up from exactly where the cursor stopped.
+        second_line = self.line(type="result", subtype="success")
+        self.write_stream(run_dir, attempt_id, "worker", second_line)
+        third = self.get(base, f"/api/runs/run-one/attempts/{attempt_id}/activity"
+                         f"?role=worker&after={first['next_after']}")
+        self.assertEqual(third["items"], [{"type": "result", "summary": "success"}])
+        self.assertEqual(third["next_after"], len(tool_use.encode()) + len(second_line.encode()))
+
+    def test_an_invalid_run_id_is_refused(self):
+        _, base = self.start()
+        self.assertEqual(
+            self.status_of(base, "/api/runs/../attempts/x/activity?role=worker"), 404)
+        self.assertEqual(
+            self.status_of(base, "/api/runs/run%20one/attempts/x/activity?role=worker"), 404)
+
+    def test_a_symlinked_run_directory_is_refused(self):
+        run_dir, attempt_id = self.prepare()
+        outside = Path(self.directory.name).parent / "anvil-outside-activity-run"
+        outside.mkdir(exist_ok=True)
+        self.addCleanup(lambda: outside.rmdir() if outside.is_dir() else None)
+        (self.state_dir / "linked").symlink_to(outside, target_is_directory=True)
+        _, base = self.start()
+        self.assertEqual(
+            self.status_of(base, f"/api/runs/linked/attempts/{attempt_id}/activity?role=worker"), 404)
+
+    def test_an_unknown_attempt_is_refused(self):
+        self.prepare()
+        _, base = self.start()
+        self.assertEqual(
+            self.status_of(base, "/api/runs/run-one/attempts/not-a-real-attempt/activity?role=worker"), 404)
+
+    def test_a_resolved_path_outside_the_attempts_own_directory_is_refused(self):
+        run_dir, attempt_id = self.prepare()
+        outside = run_dir.parent / "anvil-outside-activity-artifacts"
+        outside.mkdir(exist_ok=True)
+        self.addCleanup(lambda: outside.rmdir() if outside.is_dir() else None)
+        (run_dir / "artifacts").mkdir(parents=True, exist_ok=True)
+        (run_dir / "artifacts" / attempt_id).symlink_to(outside, target_is_directory=True)
+        _, base = self.start()
+        self.assertEqual(
+            self.status_of(base, f"/api/runs/run-one/attempts/{attempt_id}/activity?role=worker"), 404)
+
+    def test_a_malformed_line_is_skipped_not_an_error(self):
+        run_dir, attempt_id = self.prepare()
+        good = self.line(type="system", subtype="init")
+        text = good + "not json at all\n" + self.line(type="result", subtype="success")
+        self.write_stream(run_dir, attempt_id, "worker", text)
+        _, base = self.start()
+        page = self.get(base, f"/api/runs/run-one/attempts/{attempt_id}/activity?role=worker")
+        self.assertEqual(page["items"], [{"type": "system", "summary": "init"},
+                                         {"type": "result", "summary": "success"}])
+        self.assertEqual(page["next_after"], len(text.encode()))
+
+    def test_an_attempt_with_no_stream_yet_is_an_empty_tail(self):
+        _, attempt_id = self.prepare()
+        _, base = self.start()
+        page = self.get(base, f"/api/runs/run-one/attempts/{attempt_id}/activity?role=worker")
+        self.assertEqual(page, {"api_version": API_VERSION, "items": [], "next_after": 0})
+
+    def test_a_run_recorded_before_this_route_existed_still_serves_an_empty_tail(self):
+        # No artifacts directory at all: an older run never wrote one.
+        _, attempt_id = self.prepare()
+        _, base = self.start()
+        page = self.get(base, f"/api/runs/run-one/attempts/{attempt_id}/activity?role=review")
+        self.assertEqual(page["items"], [])
+
+    def test_role_is_required_and_bounded(self):
+        _, attempt_id = self.prepare()
+        _, base = self.start()
+        self.assertEqual(
+            self.status_of(base, f"/api/runs/run-one/attempts/{attempt_id}/activity"), 400)
+        self.assertEqual(
+            self.status_of(base, f"/api/runs/run-one/attempts/{attempt_id}/activity?role=admin"), 400)
+
+    def test_prompts_and_full_message_content_are_never_served(self):
+        run_dir, attempt_id = self.prepare()
+        text = self.line(type="assistant", message={
+            "content": [{"type": "text", "text": "the whole prompt and ticket text"},
+                       {"type": "tool_use", "name": "Read", "input": {"file_path": "/etc/passwd"}}]})
+        self.write_stream(run_dir, attempt_id, "worker", text)
+        _, base = self.start()
+        page = self.get(base, f"/api/runs/run-one/attempts/{attempt_id}/activity?role=worker")
+        self.assertEqual(page["items"], [{"type": "assistant", "tool": "Read", "target": "/etc/passwd"}])
+        self.assertNotIn("prompt", json.dumps(page))
+        self.assertNotIn("whole prompt", json.dumps(page))
+
+
 class StreamTests(ServeTestCase):
     def read_stream(self, base: str, path: str, **headers) -> list[dict]:
         return [event for event in self.read_frames(base, path, **headers)

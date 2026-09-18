@@ -52,6 +52,13 @@ section { padding: 16px 20px; }
 .runs li[aria-selected="true"] { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
 .runs .id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
 .runs .meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
+.activity-log {
+  list-style: none; margin: 0; padding: 0; display: grid; gap: 4px;
+  max-height: 100%; overflow-y: auto;
+}
+.activity-log li {
+  border-bottom: 1px solid var(--line); padding: 4px 0; overflow-wrap: anywhere;
+}
 .more { margin-top: 10px; width: 100%; padding: 7px; cursor: pointer;
         background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 7px; }
 .facts { display: flex; flex-wrap: wrap; gap: 4px 22px; margin: 0 0 16px; }

@@ -15,15 +15,17 @@ from http import HTTPStatus
 import http.server
 import ipaddress
 import json
+import os
 from pathlib import Path
 import re
+import stat
 import threading
 import time
 from urllib.parse import parse_qs, urlparse
 
 from .contracts import ContractError
-from .queries import (DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, list_runs, run_attempts,
-                      run_events, run_summary, run_tasks)
+from .queries import (DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, attempt_exists, list_runs,
+                      run_attempts, run_events, run_summary, run_tasks)
 from .store import TERMINAL_RUN_STATUSES, StoreError
 from .telemetry import run_telemetry
 
@@ -47,6 +49,64 @@ RUN_ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 POLL_SECONDS = 1.0
 KEEPALIVE_SECONDS = 15.0
 DEFAULT_MAX_STREAMS = 8
+ROLES = ("worker", "review")
+ACTIVITY_CHUNK_BYTES = 64 * 1024
+"""A fixed bound per request; a client pages through a growing stream with after."""
+_ACTIVITY_TARGET_KEYS = ("file_path", "path", "pattern", "command", "url", "notebook_path")
+
+
+def _activity_target(value: object) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    for key in _ACTIVITY_TARGET_KEYS:
+        target = value.get(key)
+        if isinstance(target, str) and target:
+            return target[:400]
+    return None
+
+
+def _reduce_activity_event(event: dict) -> dict:
+    """Reduce one recorded agent-stream line to what a reader needs.
+
+    Excludes prompts, full message content, and environment values: the
+    recorded stream carries the ticket text and the operator's repository
+    paths, so only a bounded, structural excerpt is served.
+    """
+    kind = event.get("type")
+    reduced: dict = {"type": kind if isinstance(kind, str) else None}
+    message = event.get("message")
+    if isinstance(message, dict):
+        content = message.get("content")
+        if isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "tool_use":
+                    name = item.get("name")
+                    if isinstance(name, str):
+                        reduced["tool"] = name[:200]
+                    target = _activity_target(item.get("input"))
+                    if target is not None:
+                        reduced["target"] = target
+                    break
+    subtype = event.get("subtype")
+    if isinstance(subtype, str):
+        reduced["summary"] = subtype[:200]
+    return reduced
+
+
+def _activity_window(path: Path, after: int) -> bytes:
+    """Read a bounded window of a possibly still-growing file, never the whole thing."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return b""
+    try:
+        with os.fdopen(descriptor, "rb") as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                return b""
+            stream.seek(after)
+            return stream.read(ACTIVITY_CHUNK_BYTES)
+    except OSError:
+        return b""
 
 
 def _loopback(host: str) -> bool:
@@ -183,6 +243,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
             raise StoreError("unknown run")
         return resolved
 
+    def _attempt_role_dir(self, run_dir: Path, attempt_id: str, role: str) -> Path:
+        """Resolve an attempt's own artifact directory, or refuse it.
+
+        The path never comes from the request beyond the attempt ID and role:
+        it is always run_dir/artifacts/<attempt_id>/<role>, and every step of
+        that resolution is checked the same way _run_dir checks a run ID.
+        """
+        if role not in ROLES:
+            raise ContractError(f"role must be one of {', '.join(ROLES)}")
+        if not RUN_ID.match(attempt_id):
+            raise StoreError("unknown attempt: invalid attempt ID")
+        if not attempt_exists(run_dir, attempt_id):
+            raise StoreError("unknown attempt")
+        artifacts_root = (run_dir / "artifacts").resolve()
+        attempt_root = run_dir / "artifacts" / attempt_id
+        if attempt_root.is_symlink():
+            raise StoreError("unknown attempt: artifact directory is a symlink")
+        role_dir = attempt_root / role
+        if role_dir.is_symlink():
+            raise StoreError("unknown attempt: artifact directory is a symlink")
+        resolved = role_dir.resolve()
+        if resolved.parent.parent != artifacts_root:
+            raise StoreError("unknown attempt")
+        return resolved
+
     # -- routes -----------------------------------------------------------
 
     def _asset(self, name: str) -> None:
@@ -214,13 +299,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.server.state_dir, after=self._after(parameters, numeric=False),
                 limit=self._limit(parameters)))
         parts = path.strip("/").split("/")
-        if len(parts) < 3 or parts[0] != "api" or parts[1] != "runs" or len(parts) > 4:
+        if len(parts) < 3 or parts[0] != "api" or parts[1] != "runs" or len(parts) > 6:
             return self._send(HTTPStatus.NOT_FOUND, {"error": "no such route"})
         run_dir = self._run_dir(parts[2])
         if len(parts) == 3:
             summary = run_summary(run_dir)
             summary["run_dir"] = str(run_dir)
             return self._send(HTTPStatus.OK, summary)
+        if len(parts) == 6 and parts[3] == "attempts" and parts[5] == "activity":
+            return self._activity(run_dir, parts[4], parameters)
+        if len(parts) != 4:
+            return self._send(HTTPStatus.NOT_FOUND, {"error": "no such route"})
         limit = self._limit(parameters)
         if parts[3] == "tasks":
             return self._send(HTTPStatus.OK, run_tasks(
@@ -237,6 +326,37 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if parts[3] == "stream":
             return self._stream(run_dir, parameters)
         return self._send(HTTPStatus.NOT_FOUND, {"error": "no such route"})
+
+    # -- attempt activity ---------------------------------------------------
+
+    def _activity(self, run_dir: Path, attempt_id: str, parameters: dict) -> None:
+        """A bounded tail of one attempt's recorded agent stream, by byte cursor.
+
+        Reads at most ACTIVITY_CHUNK_BYTES per request and never the whole
+        file. An attempt with no stream yet, or a line that is not valid
+        JSON, yields an empty or partial tail rather than an error.
+        """
+        role = self._one(parameters, "role")
+        if role is None:
+            raise ContractError("role is required")
+        role_dir = self._attempt_role_dir(run_dir, attempt_id, role)
+        after = self._one(parameters, "after")
+        after = 0 if after is None else self._cursor(after, "after")
+        raw = _activity_window(role_dir / "events.jsonl", after)
+        newline = raw.rfind(b"\n")
+        if newline == -1:
+            return self._send(HTTPStatus.OK, {"items": [], "next_after": after})
+        items = []
+        for line in raw[:newline].split(b"\n"):
+            if not line.strip():
+                continue
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(event, dict):
+                items.append(_reduce_activity_event(event))
+        self._send(HTTPStatus.OK, {"items": items, "next_after": after + newline + 1})
 
     # -- event stream -----------------------------------------------------
 

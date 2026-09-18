@@ -88,6 +88,7 @@ wire format is the server's concern, not theirs.
 | `/api/runs/{id}/events` | `queries.run_events` | event ID |
 | `/api/runs/{id}/telemetry` | `telemetry.run_telemetry` | attempt rowid |
 | `/api/runs/{id}/stream` | `queries.run_events` | event ID |
+| `/api/runs/{id}/attempts/{attempt_id}/activity` | the attempt's own `events.jsonl` | byte offset |
 
 `/telemetry` pages over attempts on the same rowid cursor as `/attempts`, so a
 consumer joins the two pages by `attempt_id` without a second ordering. Each item
@@ -139,6 +140,37 @@ past the cap are refused with `503`.
 
 Polling `/events` remains supported and equivalent. A consumer that cannot use
 SSE loses nothing but latency.
+
+## Attempt activity
+
+`/api/runs/{id}/attempts/{attempt_id}/activity?role=worker|review&after=N`
+serves a bounded tail of the recorded agent stream `MeasuredRunner` already
+writes to `<run_dir>/artifacts/<attempt_id>/<role>/events.jsonl`. The ledger
+records decisions, not activity: heartbeats update an attempt without
+appending an event, so a reader watching a run otherwise sees nothing between
+dispatch and the next transition while that file passes 950 KiB before an
+attempt finishes.
+
+`role` is required and must be `worker` or `review`. The served path is
+derived only from the run directory, the attempt ID, and the role, never from
+anything else in the request. An invalid attempt ID, an attempt the ledger
+does not record, a symlinked artifact directory, and a resolved path outside
+that attempt's own directory are each refused the same way `_run_dir` refuses
+an invalid run.
+
+Each request reads at most `ACTIVITY_CHUNK_BYTES` (64 KiB) starting at the
+`after` byte offset, and never loads the rest of the file. Only complete
+lines within that window are parsed; the response's `next_after` is the byte
+offset immediately following the last complete line returned, so a client
+resumes exactly where it stopped without replaying or skipping data as the
+file keeps growing. A stream with no bytes yet, a line that is not valid JSON,
+and a run recorded before this route existed each yield an empty or partial
+`items` list rather than an error.
+
+Each item is one recorded event reduced to `type`, and when present `tool`,
+`target`, and `summary`. Prompts, full message content, and environment
+values are never served: the recorded stream carries the ticket text and the
+operator's repository paths.
 
 ## The page
 
@@ -215,7 +247,9 @@ A run ID arrives in the path and is resolved against the state root, so it is
 validated structurally and then checked for containment: the ID must match
 `[A-Za-z0-9_-]{1,128}`, and the resolved directory's parent must be the resolved
 state root. Symlinked run directories are refused. Nothing below a run directory
-is served; artifacts remain outside this milestone.
+is served, except the one narrow exception above: a bounded tail of an
+attempt's own recorded stream, resolved and isolated the same way, never the
+general artifact tree.
 
 The bind address is loopback unless the operator passes `--host`, and a
 non-loopback host is refused outright: LAN exposure needs the session token
@@ -237,4 +271,6 @@ round-trips on every paginated route, `Last-Event-ID` resumption, stream
 termination on a terminal run, traversal and symlink refusal, `Host` header
 refusal, non-loopback bind refusal, an attempt whose `invocation.json` is missing
 reporting unknown rather than zero, and an unreadable ledger that still leaves
-its siblings listable.
+its siblings listable. It also covers the activity route: byte-cursor resumption
+across appends, refusal of an invalid run, a symlinked run directory, an unknown
+attempt, and a malformed line, using recorded fixtures and never a live model.
