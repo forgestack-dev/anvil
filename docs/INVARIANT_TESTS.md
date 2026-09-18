@@ -1,11 +1,11 @@
 # Hardening AGENTS.md invariants into tests
 
-Status: slice 1 implemented at `f5688d0`; slices 2 to 7 are proposed and not
-implemented. The analysis below is based on `main` at `17ebf0e`, and its line
+Status: slices 1 and 3 implemented, at `f5688d0` and this change; slices 2, 4,
+5, 6 and 7 are proposed and not implemented. The analysis below is based on `main` at `17ebf0e`, and its line
 counts and violation list are that revision's. Module paths, test names, and
 constants for the unimplemented slices remain design targets. The extractor in
-section 4.1 was prototyped against `17ebf0e` and its output is reproduced here;
-nothing in sections 4 or 6, and nothing in 5.1, 5.3 or 5.4, runs yet.
+section 4.1 was prototyped against `17ebf0e` and its output is reproduced here.
+Nothing in sections 4.2, 4.3, 5.1, 5.3, 5.4 or 6 runs yet.
 
 ## 1. Outcome and scope
 
@@ -78,7 +78,7 @@ Git or SQLite" rests entirely on discipline. And no test reads
 
 ## 4. Structural closure
 
-### 4.1 Launch-site registry
+### 4.1 Launch-site registry — implemented
 
 A static check over `src/anvil/` finds every call to `run_process` and to
 `subprocess.Popen`, `subprocess.run`, `subprocess.call`,
@@ -91,7 +91,9 @@ Keying on the enclosing function rather than the line number keeps ordinary
 edits from churning the registry. Two sites may share a key, so the registry
 maps each key to a count and an exclusion source rather than to a source alone.
 
-The extractor run against `17ebf0e` finds eleven sites:
+Implemented as `tests/test_invariants.py::LaunchSiteRegistry`. The extractor run
+against `17ebf0e` found eleven sites, and the same eleven were present when the
+test landed, so the table below is still the registry's content:
 
 | Module | Enclosing | Callee | `env` expression |
 | --- | --- | --- | --- |
@@ -114,7 +116,16 @@ its bare `env` forwarding is not mistaken for an unexamined default.
 
 The failure message must print the new site, the three legal sources, and the
 `AGENTS.md` sentence it violates. A structural test whose failure does not say
-what to do gets deleted within a month.
+what to do gets deleted within a month. It does all three, verified by adding an
+undeclared `subprocess.run` and reading what a developer would see.
+
+Three tests carry the section. One asserts no site leaves its environment to
+inheritance, one asserts the discovered set equals the registry, and one asserts
+every registered entry names a legal source, with `processes.run_process` the
+only entry allowed to name the sink. Mutation-tested three ways: an undeclared
+site that inherits the environment fails the first two, and a second launch
+inside an already-registered function fails on the count rather than passing
+because its key was already present.
 
 Note that the two `subprocess.run` probes in `adapters/codex.py` never pass
 through `run_process`. A check written only against `run_process` would miss
@@ -287,7 +298,7 @@ Each slice is independently mergeable and leaves the suite green.
 | --- | --- | --- |
 | 1 | Section 5.2, plus the four documentation fixes | Done at `f5688d0` |
 | 2 | Section 5.1, including the `RunConfig` frozenset refactor | Touches `config.py` |
-| 3 | Section 4.1 | The `51fec4cd` class |
+| 3 | Section 4.1 | Done; the `51fec4cd` class |
 | 4 | Section 4.3 | Needs the `adopt()` design first |
 | 5 | Section 4.2 | Cheap once 4.1 exists |
 | 6 | Sections 5.3 and 5.4 | Locks what already holds |
@@ -296,8 +307,9 @@ Each slice is independently mergeable and leaves the suite green.
 Slice 4 is the only one that changes execution behavior and should be reviewed
 on its own. Slice 7 is last by necessity.
 
-Slice 1 is done. `tests/test_invariants.py` now exists with one test in it, so
-slices 6, 5.3 and 5.4 extend a module rather than create one.
+Slices 1 and 3 are done. `tests/test_invariants.py` exists and holds both, so
+slices 6, 5.3 and 5.4 extend a module rather than create one. Slice 5 depends on
+4.1 and is now unblocked.
 
 ## 10. What remains prose, and completion
 
