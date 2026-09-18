@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "id": "attempt-activity-log",
+      "title": "Serve a bounded tail of an attempt's recorded agent stream",
+      "objective": "Let a reader watching a run see what an attempt is doing between ledger events, by serving a bounded tail of the stream the adapter already records, without opening the rest of the run directory.",
+      "depends_on": [],
+      "acceptance_criteria": [
+        "A read-only route serves a bounded tail of one attempt's recorded agent stream, identified by run and attempt and role, under the existing api_version and the change rule in docs/CLOUD_SYNC.md. It reads at most a fixed number of bytes per request and never loads the whole file, which exceeds 950 KiB before an attempt finishes.",
+        "The served path is derived from the run directory and the attempt identifier rather than from anything in the request, so no request can name a file. A run ID that is not structurally valid, a run directory that is a symlink, an attempt that the ledger does not record, and a resolved path outside that attempt's own artifact directory are each refused, matching how the server already resolves a run.",
+        "A byte cursor lets a reader resume where it stopped while the attempt is still being written, so repeated reads neither replay the whole tail nor skip what arrived between them.",
+        "Each returned line is a recorded agent event reduced to what a reader needs: its type, any tool name and target, and any summary. Prompts, full message content, and environment values are not served, because an agent stream carries the ticket text and the operator's repository paths.",
+        "An attempt with no stream yet, a stream that is not valid JSON on some line, and a run recorded before this route existed each return an empty or partial tail rather than an error.",
+        "The page shows that tail for the running attempt, updating as it grows, and reaches the document through textContent like every other view.",
+        "Tests cover the cursor resuming across appends, refusal of an invalid run, a symlinked run directory, an unknown attempt, and a malformed line, using recorded fixtures and never a live model."
+      ],
+      "sites": [
+        {"criterion": 2, "paths": ["src/anvil/serve.py"]},
+        {"criterion": 4, "paths": ["src/anvil/serve.py"]},
+        {"criterion": 6, "paths": ["src/anvil/assets/app.js", "src/anvil/assets/index.html"]},
+        {"criterion": 7, "paths": ["tests/test_serve.py"]}
+      ],
+      "source_refs": [
+        "SERVE.md the isolation section, and artifacts remaining outside that milestone",
+        "CLOUD_SYNC.md section 3, how the read contract version changes",
+        "DELIVERY_DASHBOARD_PLAN.md section 11, artifact excerpts by opaque ID"
+      ],
+      "risk": "medium"
+    }
+  ]
+}

@@ -34,6 +34,17 @@ Not in this milestone, and still owned by that plan: delivery, issue, and group
 views; artifact excerpts by opaque ID; and the session token exchange required
 before any non-loopback binding.
 
+One narrow part of that artifact work is pulled forward in
+`tickets/live-activity-log.json`, because it does not need delivery manifests,
+issue synchronization or group indexes, and it answers the question this
+milestone otherwise leaves open. The ledger records decisions, not activity:
+heartbeats update an attempt without appending an event, deliberately, so a
+reader watching a run sees nothing between dispatch and the next transition
+while the adapter's own recorded stream passes 950 KiB. That ticket serves a
+bounded tail of that stream, reduced to event type, tool name and target, with a
+byte cursor. It is not the general artifact route: the path is derived from the
+run directory and the attempt the ledger records, never from the request.
+
 ## Two sources, because telemetry is not in the ledger
 
 `queries.py` reads the ledger: runs, tasks, attempts, events. Spend is not there.
