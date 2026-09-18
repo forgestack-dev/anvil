@@ -112,6 +112,20 @@ def _explicit_profile(model, effort, model_flag, effort_flag):
     return {"model": model, "effort": effort}
 
 
+def _subcommands() -> tuple[str, ...]:
+    """Every registered subcommand, derived from the parser rather than listed.
+
+    A second hand-maintained list would drift exactly the way the README and the
+    entry skill did, which is the failure this exists to catch.
+    """
+    action = next(item for item in parser()._actions
+                  if isinstance(item, argparse._SubParsersAction))
+    return tuple(sorted(action.choices))
+
+
+SUBCOMMANDS = _subcommands()
+
+
 def _skill_command(arguments: argparse.Namespace) -> int:
     from . import skill_management
 

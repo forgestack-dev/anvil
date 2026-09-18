@@ -35,6 +35,8 @@ Choose dependencies for prerequisite changes, `resources` for known shared work,
 
 Report the saved run directory and managed integration branch. Distinguish implemented, blocked, failed, interrupted, and still-pending work using recorded state. A worker claim is not acceptance: completion requires criterion evidence, approval for the exact integration revision, and passing checks. Local completion does not imply publication, merging into the user's branch, or external ticket closure.
 
+For a local read-only view of saved and in-progress runs, use `anvil serve --state-dir <state-root>`; it binds loopback only, serves a dashboard page and a JSON read API, and cannot change a run. To republish what a completed run recorded without rerunning a ticket, use `anvil tickets sync <run-directory>`. To preview which profile each ticket would draw without invoking any agent, use `anvil route <run.json> --json`. To inspect, train, promote or roll back a repository routing policy, use `anvil routing <action>`; its `benchmark` action does invoke paid agents, so require explicit authorization before running it.
+
 For inspection, use `anvil status <run-directory> --json`. It reads state without resuming. A repeated `run` starts fresh; it does not recover earlier attempts. Preserve failed artifacts and candidate worktrees for inspection. For authorized continuation of an interrupted run, use `anvil resume <run-directory>` after reading the recovery guidance in [workflow.md](references/workflow.md). General failure retries, pause commands and live worker messaging remain unsupported.
 
 ## Ticket status and routing

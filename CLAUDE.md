@@ -15,7 +15,7 @@ PYTHONPATH=src python3 -m unittest discover -s tests # the same tests, serially
 `python3 -m unittest discover -s tests` fails with import errors rather than a
 useful result. CI installs the package first (`pip install -e .`) and omits the
 prefix; locally, prefer `PYTHONPATH=src`, which `tools/run-tests.py` sets for
-you. The suite is about 512 tests: roughly 65 seconds through the parallel
+you. The suite is about 513 tests: roughly 60 seconds through the parallel
 runner, roughly three minutes serially. Both dispatch the same modules and
 assertions. There are no third-party dependencies, and the runner is standard
 library like everything else.

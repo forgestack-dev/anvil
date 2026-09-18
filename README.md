@@ -307,6 +307,16 @@ Anvil is MIT licensed. Installed AI Hero skills retain their upstream MIT licens
 
 Opt into source JSON ticket status with `ticket_status: true`. Named model/effort profiles, shadow/rules/adaptive routing, usage reports, one bounded escalation, and local gated policy learning are available through `adaptive` configuration. Existing configurations retain their behavior. See [configuration and limitations](docs/ADAPTIVE_ROUTING.md) and [example](examples/adaptive-run.json). Currency reservations are estimates; live savings require workload evidence.
 
+Three read-only or offline subcommands cover the same area:
+
+```sh
+anvil route run.json --json                 # preview routing without invoking an agent
+anvil tickets sync /path/to/run-directory   # publish committed run events to the ticket source
+anvil routing report /path/to/run-directory # inspect, train, promote or roll back a repository policy
+```
+
+`anvil route` decides nothing and spends nothing; it shows the profile each ticket would draw. `anvil tickets sync` republishes what a completed run already recorded, without rerunning a ticket. `anvil routing` takes `report`, `import`, `train`, `promote`, `rollback`, and a `benchmark` that does invoke paid agents on low-risk fixtures.
+
 ## Watch a run
 
 ```sh
