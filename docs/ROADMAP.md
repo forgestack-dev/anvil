@@ -77,14 +77,14 @@ These are native skills for ordinary agent sessions. Ticket-selected text instru
 
 Measured limits from running this graph are in [observed execution limits](OBSERVED_LIMITS.md). See [the delivery and dashboard specification](DELIVERY_DASHBOARD_PLAN.md) for the proposed contracts, provider boundaries, six implementation slices, and acceptance matrix. This milestone is not implemented; its commands and configuration are design targets.
 
-## 6. Invariant enforcement — specified
+## 6. Invariant enforcement — implemented
 
 - Close the process launch-site set so a new site fails the suite until its credential exclusion source is declared.
 - Assert coordinator thread ownership of ledger and repository writes in the runtime, not only in review.
 - Check the JSON schemas against runtime validation, and the CLI subcommands against the README and entry skill.
 - Mark each enforceable claim in `AGENTS.md` with the test that enforces it, leaving unenforced claims visibly unmarked.
 
-See [the invariant test specification](INVARIANT_TESTS.md) for the claim classification, seven implementation slices, and the violations recorded at `17ebf0e`. This milestone is not implemented; its test names and constants are design targets.
+See [the invariant test specification](INVARIANT_TESTS.md) for the claim classification and the seven implementation slices, all complete, and for the violations recorded at `17ebf0e`, all closed. One slice was withdrawn rather than implemented: a scan for live models in ordinary tests rested on a bare executable name being the signal, which three prototypes disproved, so that section records the reason in place of a test. Nine claims carry a test marker, and claims with no mechanical predicate carry none, so a reader can tell a guarantee the suite enforces from one that rests on review.
 
 ## 7. Calibrated judgments — specified
 
