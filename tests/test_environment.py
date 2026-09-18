@@ -1,9 +1,11 @@
-"""Tests for the managed environment builder's exclusion set."""
+"""The managed environment builder, and the closure of its launch sites."""
 
 from __future__ import annotations
 
+import ast
 from dataclasses import replace
 import json
+import subprocess
 import os
 from pathlib import Path
 import sys
@@ -11,7 +13,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import test_execution
 from anvil.environment import managed_environment
+from anvil.execution import run_serial
 
 
 BASE = {"PATH": "/usr/bin", "HOME": "/home/user", "SECRET_TOKEN": "s3cret",
@@ -164,3 +168,192 @@ class CredentialExclusionReachesEverySubprocess(unittest.TestCase):
             recorded = json.dumps(self.config(root).to_dict())
             self.assertIn(self.SECRET, recorded)
             self.assertNotIn(self.VALUE, recorded)
+
+
+# AGENTS.md: "A configured `credential_exclusion` reaches every process a run
+# starts, not only its agent turns ... Enumerate the launch sites when adding
+# one; run `51fec4cd` records what an unlisted site costs."
+INVARIANT = ("AGENTS.md: a configured credential_exclusion reaches every process a run "
+             "starts, not only its agent turns. Enumerate the launch sites when adding one; "
+             "run 51fec4cd records what an unlisted site costs.")
+CONFIGURED = "the run configuration's credential_exclusion"
+ADAPTER = "an adapter's exclude attribute"
+ABSENT = "the documented absence of a run configuration"
+SINK = "the sink every other site forwards through, not a launch site"
+SOURCES = (CONFIGURED, ADAPTER, ABSENT)
+
+#: Every process launch in src/anvil/, keyed by module, enclosing qualified name
+#: and callee. Keying on the enclosing function rather than a line number keeps
+#: ordinary edits from churning this table; two launches may share a key, so the
+#: value carries a count alongside the exclusion source each one draws from.
+LAUNCH_SITES = {
+    ("adapters/claude.py", "ClaudeRunner.run", "run_process"): (1, ADAPTER),
+    ("adapters/claude.py", "doctor.run_probe", "run_process"): (1, CONFIGURED),
+    ("adapters/codex.py", "CodexRunner.run", "run_process"): (1, ADAPTER),
+    ("adapters/codex.py", "doctor", "subprocess.run"): (2, CONFIGURED),
+    ("execution.py", "verify", "run_process"): (1, CONFIGURED),
+    ("processes.py", "run_process", "subprocess.Popen"): (1, SINK),
+    ("routing.py", "preflight", "run_process"): (2, CONFIGURED),
+    ("skill_management.py", "scope_for", "run_process"): (1, ABSENT),
+    ("workspaces.py", "Repository.git", "run_process"): (1, CONFIGURED),
+}
+
+_SUBPROCESS_LAUNCHERS = {"Popen", "run", "call", "check_call", "check_output"}
+
+
+def _callee(node: ast.Call) -> str | None:
+    """The launcher this call names, or None if it launches no process."""
+    function = node.func
+    if isinstance(function, ast.Name) and function.id == "run_process":
+        return "run_process"
+    if (isinstance(function, ast.Attribute) and function.attr in _SUBPROCESS_LAUNCHERS
+            and isinstance(function.value, ast.Name) and function.value.id == "subprocess"):
+        return f"subprocess.{function.attr}"
+    return None
+
+
+def launch_sites(root: Path) -> dict[tuple[str, str, str], list[str | None]]:
+    """Every process launch under root, mapped to each site's env expression.
+
+    Covers subprocess directly as well as run_process: the two probes in the
+    Codex adapter never pass through run_process, so a check written only
+    against it would miss exactly the kind of site this exists to catch.
+    """
+    found: dict[tuple[str, str, str], list[str | None]] = {}
+    for path in sorted(root.rglob("*.py")):
+        enclosing: list[str] = []
+        module = str(path.relative_to(root))
+
+        class Visitor(ast.NodeVisitor):
+            def _scoped(self, node):
+                enclosing.append(node.name)
+                self.generic_visit(node)
+                enclosing.pop()
+
+            visit_FunctionDef = visit_AsyncFunctionDef = visit_ClassDef = _scoped
+
+            def visit_Call(self, node):
+                callee = _callee(node)
+                if callee is not None:
+                    environment = next((ast.unparse(keyword.value) for keyword in node.keywords
+                                        if keyword.arg == "env"), None)
+                    found.setdefault((module, ".".join(enclosing), callee), []).append(environment)
+                self.generic_visit(node)
+
+        Visitor().visit(ast.parse(path.read_text(encoding="utf-8")))
+    return found
+
+
+class LaunchSiteRegistry(unittest.TestCase):
+    """Close the set of process launches so a new one cannot pass unnoticed.
+
+    tests/test_environment.py already proves the configured exclusion reaches
+    each launch that exists. It cannot fail when a new one appears, which is the
+    shape of the failure run 51fec4cd recorded.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.found = launch_sites(Path(__file__).resolve().parents[1] / "src" / "anvil")
+
+    def test_no_launch_site_leaves_its_environment_to_inheritance(self):
+        bare = sorted(f"{module}:{enclosing} -> {callee}"
+                      for (module, enclosing, callee), envs in self.found.items()
+                      if any(env is None for env in envs))
+        self.assertEqual(bare, [], "\n".join([
+            "these launches name no env, so they inherit the host environment:",
+            *bare, INVARIANT]))
+
+    def test_the_launch_sites_are_exactly_the_registered_ones(self):
+        counted = {key: len(envs) for key, envs in self.found.items()}
+        registered = {key: count for key, (count, _) in LAUNCH_SITES.items()}
+        if counted == registered:
+            return
+        added = {key: counted[key] for key in counted.keys() - registered.keys()}
+        removed = sorted(registered.keys() - counted.keys())
+        changed = {key: (registered[key], counted[key]) for key in counted.keys() & registered.keys()
+                   if counted[key] != registered[key]}
+        self.fail("\n".join([
+            "the set of process launch sites no longer matches LAUNCH_SITES.",
+            *(f"  new: {key} ({count} call(s))" for key, count in sorted(added.items())),
+            *(f"  gone: {key}" for key in removed),
+            *(f"  count changed: {key} registered {was}, found {now}"
+              for key, (was, now) in sorted(changed.items())),
+            "",
+            "Register each new site with the exclusion source it draws from, one of:",
+            *(f"  - {source}" for source in SOURCES),
+            "",
+            INVARIANT]))
+
+    def test_every_registered_site_names_a_legal_exclusion_source(self):
+        for key, (_, source) in LAUNCH_SITES.items():
+            with self.subTest(site=key):
+                self.assertIn(source, (*SOURCES, SINK))
+        sinks = [key for key, (_, source) in LAUNCH_SITES.items() if source == SINK]
+        self.assertEqual(sinks, [("processes.py", "run_process", "subprocess.Popen")],
+                         "run_process is the one sink; every other site must name a source")
+
+
+class CanaryReachesNoLaunchedProcess(unittest.TestCase):
+    """What a run actually launches, however each site is spelled.
+
+    The registry above proves every written site was reviewed. It cannot prove
+    the reviewed expression is right: `env=os.environ` names an environment and
+    passes it. This drives one real run with `subprocess.Popen` wrapped and
+    inspects what every launch was actually given, which reaches the supervisor's
+    own Git commands for free. Neither test subsumes the other.
+    """
+
+    setUp = test_execution.SerialExecutionTests.setUp
+    SECRET = "ANVIL_TEST_CANARY"
+    VALUE = "canary-must-never-be-inherited"
+
+    #: Only launches whose call stack passes through src/anvil/ are the run's.
+    #: The fake agent stands in for a CLI that Anvil would launch with a
+    #: filtered environment, but it runs in this process, so the Git commands it
+    #: issues are children of the test rather than of a launch Anvil controls.
+    #: Counting them would measure the harness. A real agent's descendants
+    #: inherit the filtered environment of the launch that started it.
+    ANVIL = str(Path(__file__).resolve().parents[1] / "src" / "anvil")
+
+    @classmethod
+    def _started_by_anvil(cls) -> bool:
+        """Whether the code that reached for a process is Anvil's own.
+
+        The nearest caller decides, not the whole stack: Anvil drives the fake
+        agent, so its frames sit under every launch either way. Stdlib
+        subprocess frames are skipped because run and check_output reach Popen
+        through them.
+        """
+        frame = sys._getframe(2)
+        while frame is not None and frame.f_code.co_filename == subprocess.__file__:
+            frame = frame.f_back
+        return frame is not None and frame.f_code.co_filename.startswith(cls.ANVIL)
+
+    def test_no_process_a_run_launches_receives_the_canary(self):
+        given, foreign = [], []
+        launch = subprocess.Popen
+
+        def record(*args, **kwargs):
+            (given if self._started_by_anvil() else foreign).append(kwargs.get("env"))
+            return launch(*args, **kwargs)
+
+        config = replace(self.config, credential_exclusion=(self.SECRET,))
+        with patch.dict(os.environ, {self.SECRET: self.VALUE}, clear=False), \
+                patch.object(subprocess, "Popen", record):
+            result = run_serial(config, runner=test_execution.FakeRunner())
+
+        self.assertEqual(result["status"], "success", result.get("error"))
+        self.assertGreater(len(given), 5, "the run launched too little to prove anything")
+        self.assertTrue(foreign, "the stack filter matched everything; it would hide a leak")
+        inherited = sum(1 for environment in given if environment is None)
+        self.assertEqual(inherited, 0,
+                         f"{inherited} of {len(given)} launches passed env=None and inherited "
+                         f"the whole host environment, including {self.SECRET}")
+        # Count only. Reporting the environments themselves would print every
+        # value on the host into a failure log, which is the thing this test
+        # exists to prevent.
+        leaked = sum(1 for environment in given if self.SECRET in environment)
+        self.assertEqual(leaked, 0,
+                         f"{leaked} of {len(given)} launches received {self.SECRET}; "
+                         "an env expression can be reviewed and still be wrong")

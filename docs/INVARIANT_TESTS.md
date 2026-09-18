@@ -1,11 +1,11 @@
 # Hardening AGENTS.md invariants into tests
 
-Status: slices 1 and 3 implemented, at `f5688d0` and this change; slices 2, 4,
-5, 6 and 7 are proposed and not implemented. The analysis below is based on `main` at `17ebf0e`, and its line
+Status: slices 1, 3 and 5 implemented; slices 2, 4, 6 and 7 are proposed and
+not implemented. The analysis below is based on `main` at `17ebf0e`, and its line
 counts and violation list are that revision's. Module paths, test names, and
 constants for the unimplemented slices remain design targets. The extractor in
 section 4.1 was prototyped against `17ebf0e` and its output is reproduced here.
-Nothing in sections 4.2, 4.3, 5.1, 5.3, 5.4 or 6 runs yet.
+Nothing in sections 4.3, 5.1, 5.3, 5.4 or 6 runs yet.
 
 ## 1. Outcome and scope
 
@@ -91,7 +91,9 @@ Keying on the enclosing function rather than the line number keeps ordinary
 edits from churning the registry. Two sites may share a key, so the registry
 maps each key to a count and an exclusion source rather than to a source alone.
 
-Implemented as `tests/test_invariants.py::LaunchSiteRegistry`. The extractor run
+Implemented as `tests/test_environment.py::LaunchSiteRegistry`, the module
+section 7 designates, beside the behavioral tests for the same invariant and
+beside its complement in 4.2. The extractor run
 against `17ebf0e` found eleven sites, and the same eleven were present when the
 test landed, so the table below is still the registry's content:
 
@@ -131,7 +133,7 @@ Note that the two `subprocess.run` probes in `adapters/codex.py` never pass
 through `run_process`. A check written only against `run_process` would miss
 them, which is why the extractor covers both paths.
 
-### 4.2 Canary interception
+### 4.2 Canary interception — implemented
 
 The registry proves that every written site was reviewed. It does not prove that
 what runs is clean, because the expression passed as `env` can be reviewed and
@@ -147,6 +149,19 @@ run.
 Neither test subsumes the other. The registry catches an unexercised site that
 no test drives; the canary catches an exercised site whose expression is
 reviewed and wrong. Both are required.
+
+Implemented as `tests/test_environment.py::CanaryReachesNoLaunchedProcess`, and
+the claim above is now demonstrated rather than argued: replacing
+`Repository.git`'s environment with `dict(os.environ)` leaves the registry green
+and fails the canary. One run intercepts about 150 launches.
+
+Two things the implementation had to get right. A launch is attributed to its
+*nearest* caller, skipping stdlib subprocess frames, because Anvil drives the
+fake agent and so appears somewhere on every stack; without that, the fake's own
+Git calls counted as the run's and the test failed on the harness. And the
+failure reports counts only. The first version printed the offending
+environments, which put every value on the host into the failure log -- the
+thing the invariant exists to prevent.
 
 ### 4.3 Thread ownership
 
@@ -300,16 +315,17 @@ Each slice is independently mergeable and leaves the suite green.
 | 2 | Section 5.1, including the `RunConfig` frozenset refactor | Touches `config.py` |
 | 3 | Section 4.1 | Done; the `51fec4cd` class |
 | 4 | Section 4.3 | Needs the `adopt()` design first |
-| 5 | Section 4.2 | Cheap once 4.1 exists |
+| 5 | Section 4.2 | Done; pairs with slice 3 |
 | 6 | Sections 5.3 and 5.4 | Locks what already holds |
 | 7 | Section 6 | Last, because it names the tests the earlier slices create |
 
 Slice 4 is the only one that changes execution behavior and should be reviewed
 on its own. Slice 7 is last by necessity.
 
-Slices 1 and 3 are done. `tests/test_invariants.py` exists and holds both, so
-slices 6, 5.3 and 5.4 extend a module rather than create one. Slice 5 depends on
-4.1 and is now unblocked.
+Slices 1, 3 and 5 are done. The credential-exclusion invariant is closed from
+both sides: 4.1 against sites nothing exercises, 4.2 against expressions that
+are wrong. `tests/test_invariants.py` exists and holds slice 1, so slices 6, 5.3
+and 5.4 extend a module rather than create one.
 
 ## 10. What remains prose, and completion
 
