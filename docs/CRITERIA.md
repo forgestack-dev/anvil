@@ -147,6 +147,24 @@ place to record an answer is the specification itself. Answering a question mean
 editing and committing the spec, which changes the hash and makes the second
 preparation traceably a different input. No new store is needed.
 
+### The graphs it never sees
+
+A ticket document written by hand never passes through `prepare`, so the gate
+never reads it. That is most of this repository's own tickets, including the
+28-ticket delivery graph and `apply-credential-exclusion`, whose unbounded
+absence cost five attempts and about $18.76 before a human read the criterion
+that a gate is meant to read first. The gap is placement, not capability.
+
+Closing it is `tickets/criterion-intake.json`, and it needs one decision this
+section does not settle: the gate refuses to run on the adapter that authored
+the graph, and a hand-written graph has no authoring adapter, so the rule has to
+become an operator choice rather than a lookup. It does not need a model that
+this repository has not already measured, and it does not wait on
+[the judgment specification](JUDGMENT.md): section 11.4 records that a keyword
+rule for rule 3 scores 0.67 against 19 real violations at precision 0.19 to
+0.44, so a deterministic version of that rule would fire on roughly three
+criteria for every one worth reading, and should not be built.
+
 ### What it replaced
 
 `preparation.prepare` was all-or-nothing. One read-only planning turn returned a

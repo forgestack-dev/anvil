@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "id": "gate-any-ticket-document",
+      "title": "Run the readiness gate over a ticket document prepare did not author",
+      "objective": "Let an operator put an existing committed ticket document through the adversarial readiness gate, so a hand-written graph gets the same intake scrutiny as a generated one instead of none.",
+      "depends_on": [],
+      "acceptance_criteria": [
+        "The gate logic in `preparation.py` is reachable for a committed ticket document that no preparation turn produced, without `prepare` running a planning turn first, and `prepare` keeps its current behavior unchanged.",
+        "The command reads the ticket document and the repository only. It writes no ticket document, starts no run, and touches neither the ledger nor Git, so a graph cannot be silently rewritten by being inspected.",
+        "The adapter rule is restated for this case and enforced: `prepare` refuses a gate on the adapter that authored the graph, and a hand-written graph has no authoring adapter, so the rule becomes an explicit operator choice with a recorded default rather than an inherited `_GATE_DEFAULT` lookup.",
+        "Provenance records the gate adapter, model, and the SHA-256 of the exact ticket document bytes that were gated, so a later edit is traceably a different input, which is the role `provenance.source_sha256` plays for a prepared graph.",
+        "Questions are reported and the exit code distinguishes a clean gate from one with open questions; neither outcome edits the document, and reporting is the default with any blocking behavior explicitly requested.",
+        "Tests cover a clean document, a document with open questions, refusal of the authoring adapter, and a document whose bytes changed between two gate runs, using a fake adapter and never a live model."
+      ],
+      "source_refs": [
+        "CRITERIA.md the prepare readiness gate, and why prepare rather than run",
+        "JUDGMENT.md section 7.1 where the intake gate sits",
+        "OBSERVED_LIMITS.md tickets that must prove a negative"
+      ],
+      "risk": "medium"
+    }
+  ]
+}
