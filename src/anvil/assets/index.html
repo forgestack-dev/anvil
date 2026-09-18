@@ -12,9 +12,11 @@
   <h1>Anvil</h1>
   <p id="origin" class="muted">reading local run state</p>
   <p id="live" class="badge" role="status" aria-live="polite">idle</p>
+  <button id="toggle-runs" class="ghost" aria-expanded="true" aria-controls="runs-panel"
+          title="Show or hide the run list">Runs <kbd>&#8984;B</kbd></button>
 </header>
 <main>
-  <nav aria-labelledby="runs-heading">
+  <nav id="runs-panel" aria-labelledby="runs-heading">
     <h2 id="runs-heading">Runs</h2>
     <ul id="runs" class="runs" role="listbox" aria-label="Saved and active runs" tabindex="0"></ul>
     <button id="more" class="more" hidden>Load more runs</button>
@@ -32,6 +34,13 @@
     <div id="panel-spend" role="tabpanel" aria-labelledby="tab-spend" tabindex="0" hidden></div>
     <div id="panel-events" role="tabpanel" aria-labelledby="tab-events" tabindex="0" hidden></div>
   </section>
+  <aside id="ticket" aria-labelledby="ticket-heading" tabindex="-1" hidden>
+    <div class="ticket-bar">
+      <h2 id="ticket-heading">Ticket</h2>
+      <button id="ticket-close" class="ghost" aria-label="Close ticket">Close <kbd>&#8984;I</kbd></button>
+    </div>
+    <div id="ticket-body"></div>
+  </aside>
 </main>
 <script src="app.js"></script>
 </body>

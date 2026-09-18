@@ -146,6 +146,20 @@ ledger could not be read has no start time and sorts last. `run_summary` also
 reports `run_dir`, an added field, so a reader can reach the artifacts,
 worktrees and raw event streams the ledger only points at.
 
+One side panel serves two subjects. Selecting a ticket row shows that ticket's
+title, objective, numbered acceptance criteria with the sites each one declared,
+execution state, and source references. Selecting an event row shows that event's
+kind, timestamps, attempt, status transition, and its recorded details
+pretty-printed. Each row is a `button` with a keyboard handler rather than a bare
+click target, and the panel takes focus when it opens.
+
+Two shortcuts, each also reachable as a button so neither is the only way in:
+`Cmd`/`Ctrl` and `B` hides and shows the run list, `Cmd`/`Ctrl` and `I` closes
+the side panel and reopens whichever subject was last shown, and `Escape` closes
+it. The panel reaches the document through `textContent` like everything else: a
+criterion's text, its declared paths, and an event's recorded details are all
+ledger content and never become markup.
+
 Assets are served from a fixed allowlist of three filenames rather than by
 joining a request path, so there is no traversal surface. They carry a
 `Content-Security-Policy` of `default-src 'none'` with `'self'` for script,

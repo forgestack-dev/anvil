@@ -196,6 +196,106 @@ function waves(tasks) {
   return [...grouped.entries()].sort((a, b) => a[0] - b[0]);
 }
 
+// -- ticket panel -----------------------------------------------------------
+
+const ticketPanel = document.getElementById("ticket");
+const ticketHeading = document.getElementById("ticket-heading");
+const ticketBody = document.getElementById("ticket-body");
+const mainEl = document.querySelector("main");
+
+function ticketSection(title, nodes) {
+  const parts = [element("h3", title)];
+  parts.push(...nodes);
+  return parts;
+}
+
+// Every value reaches the document through textContent. Nothing here builds
+// markup from ledger content: see the isolation section of docs/SERVE.md.
+let reopen = null;
+
+function openPanel(heading, nodes, again) {
+  ticketHeading.textContent = heading;
+  replace(ticketBody, nodes);
+  reopen = again;
+  ticketPanel.hidden = false;
+  mainEl.classList.add("ticket-open");
+  ticketPanel.focus();
+}
+
+function showTicket(task) {
+  ticketHeading.textContent = task.id;
+  const nodes = [];
+  if (task.title) nodes.push(element("p", task.title));
+  if (task.objective) nodes.push(...ticketSection("Objective", [element("p", task.objective)]));
+
+  const sitesFor = new Map();
+  for (const entry of task.sites || []) sitesFor.set(entry.criterion, entry.paths || []);
+  const criteria = task.acceptance_criteria || [];
+  if (criteria.length) {
+    const list = element("ol");
+    criteria.forEach((text, index) => {
+      const li = element("li", text);
+      const paths = sitesFor.get(index + 1);
+      if (paths && paths.length) {
+        li.append(element("div", "sites: " + paths.join(", "), { class: "sites" }));
+      }
+      list.append(li);
+    });
+    nodes.push(...ticketSection(`Acceptance criteria (${criteria.length})`, [list]));
+  }
+
+  const facts = [["state", task.status], ["risk", task.risk],
+                 ["attempt", task.attempt_id], ["worker", (task.details || {}).worker],
+                 ["depends on", (task.depends_on || []).join(", ")],
+                 ["skills", (task.skills || []).join(", ")]];
+  const dl = element("dl", null, { class: "facts" });
+  for (const [label, value] of facts) {
+    if (value) dl.append(fact(label, String(value)));
+  }
+  if (dl.childNodes.length) nodes.push(...ticketSection("Execution", [dl]));
+
+  if ((task.source_refs || []).length) {
+    const list = element("ul");
+    for (const ref of task.source_refs) list.append(element("li", ref));
+    nodes.push(...ticketSection("Source references", [list]));
+  }
+
+  openPanel(task.id, nodes, () => showTicket(task));
+}
+
+// An event's details are arbitrary recorded JSON. Pretty-print it into one text
+// node: it is ledger content and must not become markup.
+function showEvent(event) {
+  const nodes = [];
+  const dl = element("dl", null, { class: "facts" });
+  const facts = [["kind", event.kind], ["recorded", event.created_at],
+                 ["ticket", event.task_id], ["attempt", event.attempt_id],
+                 ["from", event.from_status], ["to", event.to_status]];
+  for (const [label, value] of facts) {
+    if (value) dl.append(fact(label, String(value)));
+  }
+  nodes.push(dl);
+  const details = event.details || {};
+  if (Object.keys(details).length) {
+    nodes.push(element("h3", "Details"));
+    nodes.push(element("pre", JSON.stringify(details, null, 2), { class: "detail-json" }));
+  } else {
+    nodes.push(element("p", "No recorded details.", { class: "empty" }));
+  }
+  openPanel(`Event ${event.id}`, nodes, () => showEvent(event));
+}
+
+function closeTicket() {
+  ticketPanel.hidden = true;
+  mainEl.classList.remove("ticket-open");
+}
+
+// Cmd+I toggles, so it reopens whichever ticket or event was last shown. With
+// nothing shown yet it does nothing rather than guessing at one.
+function reopenTicket() {
+  if (reopen) reopen();
+}
+
 function taskTable(label, tasks) {
   const table = element("table");
   table.append(element("caption", label));
@@ -205,6 +305,14 @@ function taskTable(label, tasks) {
   const body = element("tbody");
   for (const task of tasks) {
     const row = document.createElement("tr");
+    row.classList.add("pick");
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    row.setAttribute("aria-label", `Open ticket ${task.id}`);
+    row.addEventListener("click", () => showTicket(task));
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); showTicket(task); }
+    });
     row.append(element("td", task.id, { class: "mono" }));
     row.append(stateCell(task.status));
     row.append(element("td", (task.depends_on || []).join(", ") || "—", { class: "mono" }));
@@ -285,6 +393,14 @@ async function loadEvents(runId) {
   const body = element("tbody");
   for (const event of page.items.slice().reverse()) {
     const row = document.createElement("tr");
+    row.classList.add("pick");
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    row.setAttribute("aria-label", `Open event ${event.id}`);
+    row.addEventListener("click", () => showEvent(event));
+    row.addEventListener("keydown", (key) => {
+      if (key.key === "Enter" || key.key === " ") { key.preventDefault(); showEvent(event); }
+    });
     row.append(element("td", event.id, { class: "num" }));
     row.append(element("td", (event.created_at || "").slice(11, 19), { class: "mono" }));
     const kind = event.details && event.details.message_kind
@@ -376,6 +492,31 @@ for (const tab of tabs) {
 }
 
 moreButton.addEventListener("click", () => loadRuns(true));
+
+// -- run list collapse ------------------------------------------------------
+
+const runsToggle = document.getElementById("toggle-runs");
+
+function setRunsHidden(hidden) {
+  mainEl.classList.toggle("runs-hidden", hidden);
+  runsToggle.setAttribute("aria-expanded", String(!hidden));
+}
+
+runsToggle.addEventListener("click", () => {
+  setRunsHidden(!mainEl.classList.contains("runs-hidden"));
+});
+document.getElementById("ticket-close").addEventListener("click", closeTicket);
+document.addEventListener("keydown", (event) => {
+  if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "b") {
+    event.preventDefault();
+    setRunsHidden(!mainEl.classList.contains("runs-hidden"));
+  } else if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "i") {
+    event.preventDefault();
+    if (ticketPanel.hidden) reopenTicket(); else closeTicket();
+  } else if (event.key === "Escape" && !ticketPanel.hidden) {
+    closeTicket();
+  }
+});
 
 api("/health")
   .then((health) => {
