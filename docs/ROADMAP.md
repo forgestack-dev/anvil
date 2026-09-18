@@ -86,27 +86,29 @@ Measured limits from running this graph are in [observed execution limits](OBSER
 
 See [the invariant test specification](INVARIANT_TESTS.md) for the claim classification and the seven implementation slices, all complete, and for the violations recorded at `17ebf0e`, all closed. One slice was withdrawn rather than implemented: a scan for live models in ordinary tests rested on a bare executable name being the signal, which three prototypes disproved, so that section records the reason in place of a test. Nine claims carry a test marker, and claims with no mechanical predicate carry none, so a reader can tell a guarantee the suite enforces from one that rests on review.
 
-## 7. Calibrated judgments — specified
+## 7. Calibrated judgments — studied, not shipped
 
+- Measure whether a calibrated model reads `docs/CRITERIA.md`'s criterion rules
+  better than the keyword rule that was rejected for firing on 36 of 128.
 - Detect a review that marked an acceptance criterion satisfied without the means
   to decide it, the defect recorded at run `51fec4cd`.
-- Give `docs/CRITERIA.md` rules 1, 3, 4, and 6 an enforcement point at `prepare`,
-  at a precision the rejected keyword approach could not reach.
-- Bound the capability to tightening only: a judgment may convert an acceptance
-  into a stop, never satisfy a criterion, approve a candidate, or widen a scope.
-- Record every judgment with its full probability distribution and pinned model
-  version; freeze thresholds for a run as routing policy is frozen.
+- Bound any such capability to tightening only: it may convert an acceptance into
+  a stop, never satisfy a criterion, approve a candidate, or widen a scope.
 
-See [the judgment specification](JUDGMENT.md) for the module contract, the two
-question sets, the implementation slices, and the acceptance matrix. No code is
-implemented. The intake study has run: section 11.4 records that a model reads
-two of the four criterion rules materially better than any keyword rule and the
-other two no better than a regex, so the intake gate annotates and no longer
-blocks, and one slice is withdrawn rather than pending. The concession check
-remains specified and unmeasured, because section 11.1 establishes that this
-repository's ledger cannot label it. The capability is open and brings its own
-key; calibrated threshold sets are the paid artifact, per
-`docs/PRODUCT_BOUNDARY.md`.
+The study ran. See [the judgment specification](JUDGMENT.md): section 11.4
+records that a model reads two of the four criterion rules materially better
+than any keyword rule and the other two no better than a regex, so the intake
+gate annotates rather than blocks and two slices are withdrawn. The concession
+check remains specified and unmeasured, because section 11.1 establishes that
+this repository's ledger cannot label it — every recorded outcome is downstream
+of the review being judged.
+
+**Nothing here ships yet.** Section 10 keeps the capability out of the open CLI
+and out of the paid service alike: it is internal, flag-gated, and unsupported.
+That exclusion is a deferral rather than a verdict — section 10.4 records the
+trigger for reopening it, which is Jev leaving early access, and which of the
+objections general availability does and does not settle. The milestone is a
+record of what was measured, not a release.
 
 ## Later integrations
 

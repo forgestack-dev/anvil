@@ -7,7 +7,10 @@ must precede either consumer enforcing anything.
 Study B has run; §11.4 records its result. It withdrew the intake gate's
 blocking tier and slice 9 with it, and left the gate an annotator. Study A, for
 the concession check in §6, is blocked on labels the ledger cannot supply.
-Recorded 2026-09-18.
+
+**Nothing here ships in either product.** §10 records the decision: this is
+internal, flag-gated, unsupported, and absent from the open CLI and the paid
+service alike. Recorded 2026-09-18.
 
 ## 1. Outcome and scope
 
@@ -40,6 +43,10 @@ choice in `adaptive_runtime.next_profile`, and orientation context filtering.
 Each is a plausible consumer of the same module; none has a measured defect
 behind it, and the first is a cost optimization whose enforcement posture
 differs enough to warrant its own record. See §15.
+
+**Not a product.** §10 keeps this out of both the open CLI and the paid service.
+What follows specifies a capability for this organization's own use, and the
+slices in §12 are scoped accordingly.
 
 **What this is not.** Not a replacement for `verify()`; checks are exit codes.
 Not a participant in acceptance; see the invariant in §4.2. Not a generative
@@ -396,6 +403,12 @@ One optional object in `run.json`, validated in `config.py` and
 }
 ```
 
+**The object is refused unless `ANVIL_INTERNAL_JUDGMENT` is set in the
+supervisor's environment** (§10.3). A run configuration carrying it without the
+flag fails validation with a message saying the capability is internal, rather
+than being silently ignored — a field that is quietly dropped teaches an
+operator that it worked.
+
 `mode` is one of `off`, `shadow`, `enforce`; omitted, the object is absent and
 no judgment runs, preserving existing behavior exactly. `policy` names a
 threshold set (§10); omitted, conservative built-in defaults apply and
@@ -418,7 +431,9 @@ evidence about an attempt that already happened; a retired attempt's judgment is
 retired with it, and a fresh attempt is judged fresh. This follows the existing
 rule that candidates require fresh review and checks.
 
-## 9. Credential isolation
+## 9. Credential isolation and outbound disclosure
+
+### 9.1 The key must not reach a launched process
 
 `TYPESAFE_API_KEY` lives in the supervisor's environment. Without action it is
 inherited by every agent turn, verification command, adaptive runner, preflight
@@ -434,36 +449,148 @@ every launch site, and a new site that does not exclude it fails the suite.
 A test asserts the key reaches no launched process, written against the existing
 canary harness.
 
-## 10. Product boundary
+### 9.2 Criterion text and review evidence leave the machine
 
-Resolved against [PRODUCT_BOUNDARY.md](PRODUCT_BOUNDARY.md) §1: a judgment call
-requires a key and a network, not other people, so the capability runs correctly
-on one machine and stays open.
+§9.1 is about a credential not escaping into a subprocess. This is the opposite
+direction and was missing from earlier drafts of this document.
 
-| Layer | Side | Reason |
-| --- | --- | --- |
-| `judgment.py`, both question sets, conservative defaults, shadow mode, ledger events | **Open**, bring-your-own-key | §1: runs correctly on one machine. The user pays the model vendor directly. |
-| Hosted inference — no key required, pooled rate limits, spend inside the subscription | **Paid** | Operated infrastructure and someone else's money. §3, "hosted execution." |
-| Calibrated threshold sets trained on a pooled acceptance corpus | **Paid** | §5 exactly: requires a corpus larger than one repository produces. |
-| Team-visible judgment history | **Paid** | §3, cross-machine run state. |
+Every call sends real repository content to a third party. The intake gate sends
+acceptance criteria, which on a private repository describe unreleased work. The
+concession check sends criterion text together with a reviewer's evidence, which
+quotes the diff. Anvil runs on private repositories by default and nothing else
+it does makes a network request with repository content in it: `run`, `resume`,
+`status` and `serve` are local, and the agent adapters send content to a
+provider the operator has already chosen and configured. A judgment call would
+be the first time Anvil originates an outbound disclosure of its own.
 
-Two consequences worth stating plainly.
+That is an operator's decision and it must be presented as one:
 
-**The model is a commodity; the calibration is the asset.** A System One call is
-inexpensive and available to anyone. What is not available to anyone is a
-threshold set calibrated against criterion → evidence → verdict → checks →
-branch-advanced tuples, which is the supervised-label asset
-[PRODUCT_BOUNDARY.md](PRODUCT_BOUNDARY.md) §10 identifies as unreproducible by
-observability vendors. A threshold set ships as an immutable, fingerprinted,
-catalog-bound artifact through the mechanism §7 of that record already
-specifies for pooled routing policy. No new product surface.
+- **Off unless asked.** Absent configuration means no call, which §8.1 already
+  specifies. This section makes it a disclosure requirement rather than only a
+  default.
+- **Say it where it is turned on.** The configuration field's documentation
+  states what is transmitted, to which endpoint, and under whose terms — not
+  that a judgment is "calibrated."
+- **`anvil doctor` reports it.** An operator inspecting a configured run learns
+  that this run will send criterion text off the machine, in the same place it
+  learns which agent binary will be launched.
+- **The ledger records what was sent.** §6.5 already records answers; it records
+  the state that produced them for the same reason, so an audit after the fact
+  can establish what left rather than infer it.
+- **No second endpoint by configuration alone.** §8.1 makes `endpoint`
+  configurable for a self-hosted deployment. That field must not become a way to
+  redirect repository content somewhere unreviewed without the operator seeing
+  it in `doctor`.
 
-**Paywalling the capability would starve the asset.** Every run in shadow mode
-produces the labeled tuples the threshold set is trained on. Gating the feature
-would forgo that corpus to protect a negligible per-call cost, and — because the
-concession check sits in the acceptance path — would ship the free tier the
-reviewer behavior §2 measures as producing false accepts, which
-[PRODUCT_BOUNDARY.md](PRODUCT_BOUNDARY.md) §9 names as an immediate test failure.
+The vendor's own commitments — no training on user data, retention terms, zero
+data retention for enterprise — are recorded in their Data Processing Agreement
+and are theirs, not Anvil's. Anvil's obligation is to make the transmission
+legible before it happens. A tool whose central claim is that acceptance rests
+on evidence cannot be casual about shipping that evidence to someone else.
+
+## 10. Internal use only
+
+**This capability ships in neither product, for now.** It is not a feature of
+the open CLI and it is not a feature of the paid service. It exists for this
+organization's own work on Anvil, behind a flag that is off, undocumented as a
+product capability, and unsupported.
+
+The exclusion is time-limited by intent: §10.4 records the trigger for reopening
+it, which is Jev leaving early access.
+
+### 10.1 Why not the open CLI
+
+[PRODUCT_BOUNDARY.md](PRODUCT_BOUNDARY.md) §1 would permit it: a judgment call
+needs a key and a network, not other people, so by the stated rule it belongs on
+the open side. Permitted is not the same as warranted, and three measured facts
+say it is not warranted here.
+
+The prize is smaller than the proposal assumed. §11.4 withdrew the blocking
+tier; what survives is an annotator for two of four rules. That is worth having
+and it is not worth a vendor dependency in the half of the product that must
+stand alone.
+
+The dependency is not substitutable. There is no second System One provider.
+Anvil's agent adapters treat provider plurality as load-bearing — Codex, Claude
+Code and Muse, with the default preserved across configurations — and this would
+be the only place in the open CLI with one supplier and no alternative.
+
+The service is in early access with no documented free tier. An open-source
+feature most people who clone the repository cannot run is not a capability; it
+is an advertisement, which is the §9 failure mode of that record read from the
+other direction.
+
+### 10.2 Why not the paid service
+
+The earlier draft of this section proposed pooled threshold sets as the paid
+artifact, on the argument that the model is a commodity and the calibration is
+the moat. §11.4 undercut it. The thresholds that survived calibration belong to
+rules 4 and 6, which annotate; a calibrated threshold for a gate that was
+withdrawn has nothing to gate. The pooled-threshold product needs the concession
+check in §6 to be real, and §11.1 established that this repository's ledger
+cannot produce the labels to establish that it is. Selling calibration is
+downstream of Study A, which has not run and may not be able to.
+
+### 10.3 What internal means
+
+The `judgment` configuration object is refused unless the supervisor's
+environment carries an explicit internal flag. Configuration alone cannot turn
+it on, so no published example, copied run file, or documentation snippet
+enables it by accident.
+
+- Not in `README.md`, not in `skills/anvil/SKILL.md`, not in `examples/`.
+- Absent from `anvil doctor`'s ordinary output; reported only when the flag is
+  set, and then per §9.2.
+- No support commitment, and no compatibility guarantee across versions.
+- `tools/study-b.py` is unaffected. It is a development script that reads the
+  backlog and writes a report, not a run-time path, and it is already internal
+  by being a tool rather than a module.
+
+Two consequences to design against rather than discover. The schema and its
+runtime validation must agree — `test_run_config.py::SchemaMatchesRuntimeValidation`
+enforces that — so a field the schema describes and the runtime refuses without
+an environment flag needs the refusal expressed where that test can see it.
+And `test_invariants.py::DocumentedSubcommandTests` checks the CLI against the
+README and entry skill, so an internal capability must add no subcommand.
+
+**This is a public repository.** Internal here means unsupported and
+unadvertised, not unpublished: the code, if written, is readable by anyone. The
+alternative worth weighing is keeping it out of `src/anvil/` altogether and
+leaving it as tooling, which is what it is today and costs nothing to continue.
+
+### 10.4 When to revisit
+
+**This is a deferral, not a permanent exclusion.** The intended end state is that
+the capability opens to everyone once Jev leaves early access. Recording the
+trigger matters more than recording the decision: without it, a temporary "no"
+becomes a permanent one because nobody remembers what would have changed it.
+
+General availability settles one of §10.1's three objections and leaves two
+standing, so it is the moment to reopen the question rather than the answer to
+it:
+
+| Objection | Settled by general availability? |
+| --- | --- |
+| Early access, no documented free tier | **Yes.** This is the objection GA exists to remove. |
+| The prize is an annotator, not a gate | No. Settled by Study A succeeding, or by the annotator proving useful in internal practice. |
+| One supplier, no second source | No. Softened, though, by the capability costing nothing when absent: a vendor that disappears removes a feature and breaks no run. |
+
+The second is the one to watch. If §11.4's annotation has not changed what
+anyone writes or catches by the time GA arrives, opening it makes a feature
+nobody uses available to more people, which is not an improvement. The evidence
+for that is internal use between now and then, which is the reason to run it
+internally rather than to shelve it.
+
+The third is close to answered already. §4.1 returns `None` on any failure and
+every caller has a deterministic path, so losing the vendor costs the annotation
+and nothing else. That is a weaker dependency than the agent adapters, where
+losing a provider costs the ability to run at all — and those are already open.
+
+So the expected path is: GA arrives, internal use has shown whether the
+annotator earns its place, and §10.1 is rewritten against
+[PRODUCT_BOUNDARY.md](PRODUCT_BOUNDARY.md) §1, which already permits it. Nothing
+in §9.2 relaxes on that path; an open capability that sends repository content
+to a third party needs the disclosure more than an internal one does, not less.
 
 ## 11. The calibration study
 
@@ -644,13 +771,13 @@ Nothing here bears on §6. Study B measured intake only.
 | 1 | Study B (intake): replay §7.2 over the 138 backlog criteria, hand labels, comparison against the 36-of-128 baseline | — | `tools/`, results in §11 |
 | 2 | `judgment.py`: `Judge`, question constructors, `ask`, injectable transport, modes | 1 | `src/anvil/judgment.py`, `tests/test_judgment.py` |
 | 3 | Credential exclusion default and canary test | 2 | `config.py`, `environment.py`, `tests/test_environment.py` |
-| 4 | Configuration: `judgment` object in `config.py` and `schemas/run.schema.json` together; freezing and resume validation | 2 | `config.py`, schema, `recovery.py` |
+| 4 | Configuration: `judgment` object in `config.py` and `schemas/run.schema.json` together, refused without the §10.3 environment flag; freezing and resume validation | 2, 3 | `config.py`, schema, `recovery.py` |
 | 5 | Concession check in shadow: questions, composition, `judgment` ledger events, serial path | 2–4 | `execution.py`, `evidence.py` |
 | 6 | Concession check in the worker pool: off-thread call, coordinator-owned recording | 5 | `parallel.py` |
 | 7 | Concession enforcement: re-review at rank+1, reservation, `conceded_criterion`, telemetry category | 5, 6, and a passing **Study A** (§11.2) | `execution.py`, `parallel.py`, `adaptive_runtime.py`, `telemetry.py` |
 | 8 | Intake gate, annotate-only: rules 4 and 6 recorded on each criterion | 2–4 | `preparation.py` |
 | 9 | ~~Intake gate blocking tier~~ — **withdrawn**, §11.4 | — | — |
-| 10 | Threshold policy artifact: load, fingerprint, freeze, validate | 4, 7, 9 | `judgment.py`, `config.py` |
+| 10 | ~~Threshold policy artifact~~ — **withdrawn**, §10.2: no pooled artifact without a paid tier to carry it | — | — |
 
 Slice 9 is withdrawn rather than pending. Study B ran, both blocking conditions
 failed, and §11.4 records why; the slice is kept in the table struck through so
@@ -730,9 +857,13 @@ requires are all undecided, exactly as in
 
 ## 15. Completion definition and later work
 
-This milestone is complete when slices 1 through 8 and 10 are implemented — 9 is
+This is no longer a product milestone. §10 keeps it out of both offerings, so
+there is nothing here to ship and no release it gates.
+
+The work is complete when slices 1 through 8 are implemented — 9 and 10 are
 withdrawn — and the acceptance matrix in §13 is covered by tests. Slice 1 is
-done and its result is §11.4.
+done and its result is §11.4. A reasonable outcome is that nothing past slice 1
+is ever built: the study is the part that produced knowledge, and it has.
 
 Completion means the intake gate annotates as specified and the concession check
 records in shadow. It does not mean the concession check enforces: slice 7 waits
@@ -746,7 +877,9 @@ rules a model reads better than a regex. Whether annotating those rules changes
 what an author writes, or what a run accepts, is unmeasured and needs live runs
 this repository has not done.
 
-Later consumers of `judgment.py`, in the order their evidence would justify:
+Later consumers of `judgment.py`, if it is ever written, in the order their
+evidence would justify. Each carries §10's posture: internal, flag-gated, and
+not a product capability unless that decision is revisited with new evidence.
 
 - **Routing rank** (`routing.assess`): not as a replacement classifier. §11.4's
   rule-3 result is a direct warning — `assess()`'s risk words are a lexicon, and
