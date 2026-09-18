@@ -255,9 +255,9 @@ way to decline.
   pass, for free. A test that passes vacuously is caught only by a reviewer
   reading it.
 - **A rejected candidate is still discarded.** Attempt 4 was two lines short of
-  the human fix, and no stage lets a run apply two lines to it. Amend-retries --
-  a fresh worktree at the rejected commit, addressing only the bound findings --
-  are the open question most worth answering next.
+  the human fix, and no stage lets a run apply two lines to it. Amend retries are
+  specified in [AMEND_RETRIES.md](AMEND_RETRIES.md), which consumes the bound and
+  located findings stage 2 produces, and are not implemented.
 
 ## Rejected
 
