@@ -180,6 +180,25 @@ def run_events(run_dir: Path, *, after: int = 0,
         return {"items": items, "next_after": next_after}
 
 
+def attempt_exists(run_dir: Path, attempt_id: str) -> bool:
+    """Whether the ledger records an attempt with this ID.
+
+    Used only to decide whether an artifact path derived from the run
+    directory and this ID may be resolved; it grants no read of the row.
+    """
+    if not isinstance(attempt_id, str) or not attempt_id:
+        return False
+    path = Path(run_dir) / "state.sqlite"
+    try:
+        with _read_only(path) as connection:
+            _require_run(connection, path)
+            row = connection.execute(
+                "SELECT 1 FROM attempts WHERE id = ?", (attempt_id,)).fetchone()
+            return row is not None
+    except StoreError:
+        return False
+
+
 def attempt_messages(run_dir: Path, message_kind: str,
                      attempt_ids: Sequence[str]) -> dict[str, dict]:
     """The latest coordinator message body of one kind per attempt, for a bounded set.
