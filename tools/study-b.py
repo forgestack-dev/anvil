@@ -30,17 +30,28 @@ beating one guess would not be.
 
 Run 2026-09-18 over 138 hand-labeled criteria, three passes of 138 calls, $0.012
 total. Rules 4 and 6 beat the best keyword rule that could be written (0.83 and
-0.88 against 0.66 and 0.18, rule 6 at precision 1.00). Rule 3 does not: its best
-formulation returns the same precision and recall as `no+never`. Rule 1 never
-fired. docs/JUDGMENT.md section 11.4 carries the full result and what it does
-not establish; section 7.3 records what was withdrawn because of it.
+0.88 against 0.66 and 0.18, rule 6 at precision 1.00). Rule 1 never fired.
 
-The finding worth repeating here, because it is about this file rather than
-about Anvil: rule 6 asked as one question scored F1 0.00, and the same model on
-the same criteria scored 0.88 once the question was split in two. Nothing
-errored in between. A question that is wrong returns confident, well-formed
-answers, so no application of this API is trustworthy before it has a labeled
-set to check against.
+Rule 3 is unresolved. It first measured as a loss, then as a win once a labeling
+pass corrected inconsistent labels -- and every point of that improvement came
+from corrections made after seeing the model's answers. docs/JUDGMENT.md section
+11.5 carries the sensitivity analysis that establishes this and what a blind
+pass would have to look like. Do not cite a rule 3 number from this script's
+output without reading it.
+
+Two findings worth repeating here, because they are about this file rather than
+about Anvil.
+
+Rule 6 asked as one question scored F1 0.00, and the same model on the same
+criteria scored 0.88 once the question was split in two. Nothing errored in
+between. A question that is wrong returns confident, well-formed answers, so no
+application of this API is trustworthy before it has a labeled set to check
+against.
+
+And a labeling pass run after seeing model output cannot settle a close
+question, however carefully it disagrees. Counting how often the reviewer
+disagreed back does not detect the bias; reverting the corrections in groups and
+watching where the margin moves does. Section 11.5 has the table.
 
 ## Order of operations
 

@@ -97,8 +97,10 @@ See [the invariant test specification](INVARIANT_TESTS.md) for the claim classif
 
 The study ran. See [the judgment specification](JUDGMENT.md): section 11.4
 records that a model reads two of the four criterion rules materially better
-than any keyword rule and the other two no better than a regex, so the intake
-gate annotates rather than blocks and two slices are withdrawn. The concession
+than any keyword rule, that a third never fires at all, and that the fourth is
+unresolved — section 11.5 records how a labeling pass destroyed this corpus's
+ability to decide it. The intake gate therefore annotates rather than blocks,
+and two slices are withdrawn. The concession
 check remains specified and unmeasured, because section 11.1 establishes that
 this repository's ledger cannot label it — every recorded outcome is downstream
 of the review being judged.

@@ -10,7 +10,10 @@ the concession check in §6, is blocked on labels the ledger cannot supply.
 
 **Nothing here ships in either product.** §10 records the decision: this is
 internal, flag-gated, unsupported, and absent from the open CLI and the paid
-service alike. Recorded 2026-09-18.
+service alike, with §10.4 recording the trigger to revisit that.
+
+§11.5 amends §11.4: rule 3's result did not survive review of its own labels and
+is now unresolved. Rules 4 and 6 are unaffected. Recorded 2026-09-18.
 
 ## 1. Outcome and scope
 
@@ -356,16 +359,25 @@ and neither survives.
 **Rule 1 never fires.** `procedure == "none"` was returned for 0 of the 138
 criteria in this repository's backlog. Nothing in the corpus is undecidable by
 all three procedures, so the condition has no observed instance to block on.
+This one is not in doubt: no label of `procedure` was revised at any point.
 
-**Rule 3 cannot beat a regex.** Asked well — decomposed, with structured
-criteria — it reaches F1 0.69 against 0.67 for a keyword rule tuned on the same
-labels, a margin inside the measured run-to-run variance. Its own best
-formulation, `asserts_absence` at 0.95, returns precision 0.57 and recall 0.81:
-the same two figures as `no+never`. "Asserts an absence over a set it does not
-name" is very nearly a synonym for two words, and the lexicon expresses it
-already.
+**Rule 3 is unresolved and cannot be resolved from this corpus.** It first
+measured as a loss — F1 0.69 against 0.67 for a keyword rule tuned on the same
+labels, inside the run-to-run variance. A later labeling pass found the labels
+inconsistent, and on corrected ones it measures as a win at 0.79 against 0.69.
+§11.5 shows that every point of that improvement comes from corrections made
+after seeing the model's answers, so neither number is usable and the question
+is open.
 
-That leaves no blocking condition, so `block_min` is removed rather than set
+A gate is not shipped on evidence that cannot be trusted, in either direction.
+Withdrawing the blocking tier on an unresolved rule is the conservative error:
+it costs an annotation that could have blocked, where the opposite costs a
+`prepare` that refuses correct tickets on a signal nobody has validated. If a
+blind labeling pass later settles rule 3 in the model's favour, this section is
+the thing to revisit, and §11.5 says what that pass has to look like.
+
+That leaves no blocking condition this document can defend, so `block_min` is
+removed rather than set
 unreachably. A threshold that exists but can never be crossed invites someone to
 lower it later without re-running the study.
 
@@ -724,19 +736,28 @@ same model on the same criteria scored 0.88 at precision 1.00. This is the most
 important operational finding in the study, and §4.1's shadow default exists for
 it.
 
-**The same treatment does not rescue rule 3, and that is the useful contrast.**
-Decomposed and given structured criteria, rule 3 moved 0.41 to 0.69 against a
-0.67 baseline. Sweeping both of its thresholds, the best cell is precision 0.61
-and recall 0.81; `asserts_absence` alone at 0.95 is precision 0.57 and recall
-0.81, which is exactly the keyword rule. Rule 6 was a broken question hiding a
-real capability. Rule 3 is a real capability with nothing to add.
+**Rule 3 is unresolved, and §11.5 records why it cannot be settled from these
+labels.** The same decomposition applied to rule 3 moved it 0.41 to 0.69 against
+a 0.67 baseline, a margin inside the run-to-run variance. That reading was
+recorded here first as a loss, on the strength of `asserts_absence` at 0.95
+returning precision 0.57 and recall 0.81 — the same two figures as `no+never`.
+A later labeling pass found the labels behind it inconsistent, and correcting
+them changed the result. It also destroyed the ability of this corpus to decide
+the question. Read §11.5 before citing any rule 3 number from this document.
 
-The rule that follows, and the one worth carrying to any other application: **if
-the keyword list can be written and roughly works, the lexicon is the ceiling;
-where the signal cannot be described lexically, the model earns its place.** It
-is a caution for routing rank in `routing.assess` and for skill selection in
-`skill_runtime`, both of which are keyword lists today and may already be at
-that ceiling. Neither has been measured.
+Rule 6 was a broken question hiding a real capability. Whether rule 3 is a real
+capability with nothing to add, or another badly-asked question, is not
+established.
+
+A rule was drafted from the rule 3 result and is worth stating with its support
+withdrawn, because the reasoning still looks sound and only the evidence is
+gone: **where a signal can be written as a keyword list that roughly works, the
+lexicon may already be the ceiling; where it cannot be described lexically, the
+model has room.** Rule 6 supports the second half — vocabulary carries almost
+nothing about whose tests a criterion rests on, and the model scored 0.88
+against 0.18. The first half rested on rule 3 and no longer has evidence. Treat
+it as a hypothesis worth testing against `routing.assess` and
+`skill_runtime._RULES`, not as a finding that predicts their outcome.
 
 **Calibration behaves as documented.** `procedure` accuracy rises 0.80, 0.84,
 0.85, 0.91, 1.00 as the confidence floor rises 0.50 to 0.90, at coverage falling
@@ -747,6 +768,66 @@ concession check in §6, which leans on the same question.
 **Run-to-run variance is about 0.02 F1**, measured from two runs of an unchanged
 rule 3 question scoring 0.36 and 0.34. `tools/study-b.py` refuses to call a
 margin under 0.05 a win.
+
+### 11.5 The rule 3 labeling pass, and what it cost
+
+Recorded 2026-09-18, after §11.4.
+
+Reviewing the criteria where the model and the labels disagreed on rule 3
+exposed an inconsistency in the labels themselves. CRITERIA.md rule 3 asks
+whether an absence names **the set it holds over** — "name the launch sites, the
+call sites, the modules." Several criteria of the form "performs no remote
+writes or model calls" had been labeled compliant because the forbidden *kinds*
+were listed. The kinds are not the places. Nine labels were corrected on that
+reading, raising rule 3 positives from 21 to 30.
+
+On the corrected labels the model scores 0.79 against a keyword baseline of
+0.69: a margin of 0.10, twice the noise band, and the opposite of what §11.4
+first recorded.
+
+**That result is not usable, and the reason is worth more than the result would
+have been.** The corrections were made after seeing which criteria the model
+flagged. Reverting them selectively shows where the improvement comes from:
+
+| Labels | Positives | Model | Keyword | Margin |
+| --- | --- | --- | --- | --- |
+| Original | 21 | 0.69 | 0.67 | +0.03 |
+| Only corrections the model did **not** flag | 24 | 0.65 | 0.66 | **−0.00** |
+| Only corrections the model **did** flag | 27 | 0.84 | 0.70 | +0.13 |
+| All nine | 30 | 0.79 | 0.69 | +0.11 |
+
+Every point of improvement comes from the corrections that moved a label toward
+the model's answer. The three corrections made independently — criteria the
+model never flagged, found by applying the rule evenly — move the margin to
+zero.
+
+The independence checks that felt sufficient at the time were not. Three of the
+nine corrections were to criteria the model missed, and five of its eleven
+disagreements were examined and rejected. Both are true, and the table shows
+neither carries signal. **A disagreement review cannot validate itself by
+counting how often it disagreed back.** The sensitivity analysis above is what
+detects the problem; nothing short of it does.
+
+So neither reading stands. The §11.4 claim that rule 3 loses rests on labels now
+known to be inconsistently applied. The claim that it wins rests on labels
+revised after seeing the answers. Rule 3 is unresolved and this corpus can no
+longer resolve it, because the labels have seen the model's output and cannot
+un-see it.
+
+**What would settle it:** a blind pass over all 138 criteria against the
+sharpened reading of rule 3, by someone with no access to the model's answers,
+scored once. That is the independent human labeling §11.2 asks for, and rule 3
+is now the place it is most needed.
+
+**What is unaffected:** rules 4 and 6. No label of either was revised, in this
+pass or after it, so 0.83 and 0.88 stand as §11.4 records them. The methodological
+finding does not reach them; it reaches exactly the rule whose labels moved.
+
+**What this cost in practice:** §7.3 withdrew the blocking tier partly on the
+rule 3 result. That withdrawal stands, for the reason given there — rule 1 never
+fires, and a gate is not shipped on evidence that cannot be trusted — but it is
+now a decision under uncertainty rather than a decision on a measurement, and
+§7.3 says so.
 
 #### What the result does not establish
 
