@@ -17,3 +17,7 @@ htmlcov/
 # AI Hero skill installed for local planning; not part of the repository
 .claude/skills/to-tickets/
 .agents/skills/to-tickets/
+
+# Study B working files (docs/JUDGMENT.md section 11): the labeling template is
+# regenerable with tools/study-b.py extract, and the response cache from it
+study-b/
