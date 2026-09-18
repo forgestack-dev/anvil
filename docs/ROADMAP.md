@@ -112,6 +112,151 @@ trigger for reopening it, which is Jev leaving early access, and which of the
 objections general availability does and does not settle. The milestone is a
 record of what was measured, not a release.
 
+## 8. Run economics and terminal classification — specified
+
+- Classify an invocation's terminal reason from its own result event rather than from its process exit code.
+- Record turn exhaustion and budget exhaustion as failure categories the escalation ladder and local history can read.
+- Distinguish a billed cost from a subscription list estimate, and gate `max_budget_usd` on the former.
+- Retain a turn-exhausted attempt's workspace rather than restarting it from the base revision.
+- Aggregate the per-invocation usage a run already records into its report and the read-only dashboard.
+
+Recorded 2026-09-17 from the saved ledgers of the sixteen runs under the state
+root dated 2026-09-16: 33 invocations, 76,556,941 input-side tokens and 964,097
+output tokens. [OBSERVED_LIMITS.md](OBSERVED_LIMITS.md) records the same runs
+from the turn-budget side and this milestone is the accounting one; the two
+measurements agree on the mechanism and neither is a fix.
+
+Two relationships hold to within 4% across every measured invocation: cache
+creation tracks the invocation's final context size, and cache reads track the
+sum of its per-turn context sizes. Context size therefore appears in both
+input-side terms and turn count multiplies the second, which is the same
+orientation cost `OBSERVED_LIMITS.md` measures in turns, priced.
+
+| Component | Tokens | Share of estimate |
+| --- | --- | --- |
+| Cache creation (1h) | 3,194,093 | 36.2% |
+| Cache reads | 73,361,100 | 35.4% |
+| Output, 54% of it thinking | 964,097 | 28.4% |
+| Uncached input | 1,748 | 0.0% |
+
+| Phase | Terminal reason | Invocations | Turns | Share of estimate |
+| --- | --- | --- | --- | --- |
+| worker | completed | 14 | 577 | 44.8% |
+| worker | `max_turns` | 6 | 198 | 29.1% |
+| review | completed | 11 | 289 | 17.7% |
+| worker | `budget_exhausted` | 2 | 188 | 8.4% |
+
+**Slice 1 — terminal classification.** `adapters/claude.py` raises on
+`outcome.returncode` before `_extract_result` runs, so a turn-exhausted
+invocation reaches the coordinator as `Claude Code execution exited with code 1`
+and its `subtype` and `terminal_reason` are discarded with the stream. Every
+failed attempt in the measured runs carries that one string and a null failure
+category; the terminal reasons tabulated in `OBSERVED_LIMITS.md` were read out of
+the raw event files by hand, because the ledger does not hold them. Parse the
+result first, classify, then raise with the classification attached. The Codex
+adapter's own terminal vocabulary needs the same treatment.
+
+**Slice 2 — failure categories.** `store.py` admits only `review_rejection` and
+`verification_failure`, so nothing from slice 1 can be recorded even once it
+exists. Turn and budget exhaustion are not rejections: they are an invocation
+that never produced a candidate to reject, and they say something about the
+ceiling rather than about the candidate. Add them as their own categories and
+keep them out of the disjoint evidence a policy gate reads.
+
+**Slice 3 — cost basis.** Every measured invocation ran with
+`apiKeySource: "none"` and `modelUsage[...].costBasis: "list"`: a Max
+subscription, and a list-price estimate of what the tokens would have cost.
+`telemetry.py` records that estimate as `provider_reported_estimate` without
+distinguishing it from a billed call, and `routing.py` lets `max_budget_usd`
+terminate an invocation against it. Two invocations ended that way — runs
+`55bca6a2` at 118 turns and `3658a8d9` at 70 turns — discarding 188 turns of work
+to enforce a ceiling on money that was never charged. `AGENTS.md` already states
+that cost estimates are not invoices or hard budget caps; the implementation
+contradicts the invariant. Split the recorded cost kind by basis and enforce a
+dollar ceiling only where the basis is billed. This is also the seam any later
+API-key support keys off, so it precedes that work rather than following it.
+
+**Slice 4 — retaining an exhausted attempt.** `parallel.py`'s retry builds a
+fresh worktree from the base and clears the attempt's claims and candidate, which
+is right for a review rejection and wasteful for turn exhaustion, where the work
+is on disk and the only thing missing is turns. Today neither path runs: a
+`ProcessError` is caught in `execution.py` and stops the whole run, so the eight
+exhausted invocations above ended sixteen runs between them. Decide what an
+exhausted attempt is worth before spending more on it — a raised ceiling on the
+same workspace, or the partial candidate offered to the configured checks, which
+now run before review and can reject it for free.
+
+**Slice 5 — surfacing usage.** `telemetry.py` already parses cache creation,
+cache read, output and thinking tokens per invocation and nothing aggregates
+them: every number in this section came from re-reading saved event streams.
+`serve.py` serves the ledger and `report.json` carries the run; neither carries
+the decomposition or the terminal reason.
+
+### What this does not establish
+
+That reducing any component completes a ticket. The shares order the components
+under one subscription's list prices; they are not spend, and a billed run would
+reprice them. Slice 4 does not establish that a raised ceiling converges — the
+turn-budget section of `OBSERVED_LIMITS.md` records that better navigation
+changed how the budget was spent rather than whether it sufficed, and 118 turns
+in run `55bca6a2` produced no candidate either. The decomposition is the Claude
+adapter's; Codex reports incremental per-turn usage and was not installed on the
+measured host. One day of one repository's own graph is the sample.
+
+### Considered and set aside
+
+Replacing the agent CLIs with a smaller harness or a direct provider loop, to cut
+the fixed instruction and tool-schema context each invocation carries. Measured
+here that floor is 443,239 tokens across 33 invocations, 13.9% of cache creation
+and roughly 4.5% of the estimate, because these invocations run long enough to
+amortize it. Under a subscription the exchange is worse than neutral: it converts
+covered consumption into billed spend, and the two published systems surveyed for
+this — a meta-harness over the same CLIs, and a single-shot review pipeline over
+provider APIs — set no cache breakpoints at all, against an uncached input share
+here of 0.0%. Revisit only alongside billed execution, and measure on this
+repository's own graph rather than on published benchmarks.
+
+## 9. The acceptance decision — implemented
+
+- Run the configured checks on the integration revision before independent review, so a reviewer that cannot execute anything never judges a candidate the commands already reject.
+- Require a review to assess every acceptance criterion whichever verdict it returns, and every finding to name the criterion it fails and a location the supervisor resolves against the reviewed revision.
+- Stop a ticket for its author, without escalating a worker, when a rejection concedes every criterion or points outside the sites its criterion declared.
+- Let a criterion declare the paths its claim holds over, checked against the base revision before a run directory exists.
+
+See [the acceptance decision](ACCEPTANCE.md) for the four stages, all implemented, and for the designs that were refuted on the way — including two that would have merged a candidate which fails its own tests. The stage order was revised mid-implementation: bounding a rejection has to precede the conceded-rejection stop, because that stop's trigger is vacuous until the acceptance map is mandatory. The measurements are in [observed execution limits](OBSERVED_LIMITS.md), whose account of run `51fec4cd` this work corrected; the authoring side is [the criterion contract](CRITERIA.md).
+
+## 10. Run observation and retained revisions — implemented
+
+- Serve saved and in-progress runs read-only over local HTTP, with a packaged dashboard page and an event stream that resumes exactly from a ledger cursor.
+- Version the read contract so an additive change in the CLI cannot break a separate consumer.
+- Name every candidate and integration revision a run creates, so a rejected attempt survives the run that discarded it.
+- Give the operator an explicit way to list and remove those refs, refusing to strand a revision a ledger still records.
+
+See [the serve contract](SERVE.md) for the routes, the loopback-only binding, and the page. Retention is `tickets/candidate-retention.json`, both tickets implemented: before it, a rejected candidate was reachable from no ref and an ordinary `git gc` destroyed the evidence a ledger pointed at. A ref's lifetime is tied to its ledger's, so the pair is reclaimed together rather than becoming a second thing to remember.
+
+## 11. Amend retries — specified
+
+- Start a replacement attempt from the rejected candidate's tree rather than from an empty worktree, addressing the bound findings instead of implementing the ticket again.
+- Keep the profile that produced the candidate, leaving the escalation allowance for the attempt after it.
+- Permit an amend only while the accepted base is unchanged, because restoring a stale tree onto an advanced base would silently revert a peer's integrated work.
+
+See [amend retries](AMEND_RETRIES.md). The mechanism is prototyped rather than proposed: `commit_candidate` refuses a worktree whose `HEAD` is not the base, so an amend restores the candidate's tree into a worktree left at the base and squashes it into one commit as usual. The saving is unmeasured — orientation is roughly 80% of an invocation by the same measurements, and an amend pays it too — and that document names the live exercise that would settle it. This milestone is not implemented.
+
+## 12. Reaching a run from another device — specified
+
+- State what binding the read-only server beyond loopback would have to satisfy, so the decision is made once rather than argued per request.
+- Keep the SSH tunnel documented as the supported path, not as a workaround.
+
+See [remote access](REMOTE_ACCESS.md). A mobile client is not a UI problem: it is this milestone plus packaging, and pointless before it. The document also records why the work should wait — the trigger worth acting on is a second person needing to watch a run they did not start, which is the point at which [the product boundary](PRODUCT_BOUNDARY.md) says the requirement stops being local. This milestone is not implemented and may never be built in this form.
+
+## 13. Open core and the paid boundary — decisions open
+
+- Draw the line at what requires other people: everything needed to run Anvil correctly on one machine stays open, and anything requiring other machines, users, or runs' data is a paid service.
+- Settle the licensing questions before they stop being available, starting with a contributor agreement.
+- Specify the interface between the open CLI and any paid service before either exists, so an additive change in one cannot break the other.
+
+See [the product boundary](PRODUCT_BOUNDARY.md), which is a recommendation and not ratified, [the licensing decisions](LICENSING.md), [the cloud sync contract](CLOUD_SYNC.md), and [shared memory](SHARED_MEMORY.md). Nothing here is implemented and no commitment has been made. One item has a deadline rather than a priority: a contributor agreement stops being available the first time an outside contribution merges without one, which freezes the licence permanently.
+
 ## Later integrations
 
 - Add further coding-agent adapters based on usage.
