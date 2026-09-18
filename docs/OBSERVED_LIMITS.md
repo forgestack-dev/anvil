@@ -158,7 +158,7 @@ So neither rejection named an unlisted launch site. One rejected a red
 candidate on the wrong grounds and conceded three criteria it could not check;
 the other was right. The acceptance rule held, and nothing wrong merged.
 
-The cost splits differently, too. Attempts 1, 2 and 5 spent $6.72 between them
+The cost splits differently, too. Attempts 1, 2 and 5 consumed $6.72 between them
 and produced no candidate at all: those are profile budget and ticket size, not
 acceptance. Of the $12.04 in run `51fec4cd`, the only spend the acceptance path
 could have avoided is attempt 3's $1.03 review of a candidate the configured
