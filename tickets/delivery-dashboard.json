@@ -560,13 +560,14 @@
       ],
       "acceptance_criteria": [
         "The existing `anvil serve` routes, loopback binding, packaged page and resumable event stream are reused; no second HTTP server, port, or asset pipeline is introduced.",
-        "The read contract version is raised additively, so a consumer written against the previous version keeps working.",
+        "The read contract version is raised additively under the rule in docs/CLOUD_SYNC.md, so a consumer written against the previous version keeps working. No session token exchange is added: the server refuses a non-loopback bind outright, which is the condition that exchange existed to meet.",
         "Run list and ticket detail carry each run's delivery phase and synchronization health alongside its execution status, and a run with no integrations configured renders exactly as it does today.",
         "Runs recorded before delivery existed render without error and show delivery as absent rather than as failed."
       ],
       "source_refs": [
         "SERVE.md the read contract and its version",
-        "DELIVERY_DASHBOARD_PLAN.md section 11 Dashboard specification"
+        "DELIVERY_DASHBOARD_PLAN.md section 11 Dashboard specification",
+        "CLOUD_SYNC.md how the read contract version changes"
       ],
       "risk": "medium",
       "execution": {
@@ -584,8 +585,8 @@
       "acceptance_criteria": [
         "Delivery and evidence views are served by the existing `anvil serve` process under its versioned read contract.",
         "The delivery view shows host, source and base refs and SHAs, PR URL, draft, review, check and merge state, and the issue synchronization backlog and conflicts, keeping execution progress and delivered progress visually separate.",
-        "The evidence view resolves artifacts through allowlisted opaque IDs, rejects traversal and symlinks, and streams excerpts up to 256 KiB.",
-        "Issue text, comments and logs render as escaped text or sanitized Markdown with raw HTML disabled; stored markup injection tests pass.",
+        "Artifact excerpts are the one new exposure this milestone adds: nothing below a run directory is served today. They resolve through allowlisted opaque IDs, reject traversal and symlinks, stay within the run directory they belong to, and stream at most 256 KiB.",
+        "Issue text, review findings, comments and log excerpts reach the document through textContent only. No delivery view builds markup from ledger, tracker or provider content, and the existing default-src 'none' policy is unchanged; a Markdown renderer would break both and is out of scope.",
         "Responses carry no credentials, authorization headers or environment contents, and serving never triggers a provider request."
       ],
       "source_refs": [

@@ -8,7 +8,17 @@ contract and a resumable event stream; see [the serve contract](SERVE.md).
 Slice D5 below proposes building that server, and must not be built twice: its
 three dashboard tickets are additive views on the serve contract, and the
 `serve` version is the thing an added decomposition has to move. The delivery
-and issue-synchronization slices are unaffected. This document describes a new
+and issue-synchronization slices are unaffected.
+
+Three of section 11's requirements are already met more strictly than written
+here, and the added views must not loosen them. The server refuses a
+non-loopback bind outright rather than guarding one, so the session token
+exchange this document requires has no condition left to meet on loopback and is
+not to be added. Its page reaches the document through `textContent` only and
+builds no markup from ledger content, so the sanitized-Markdown option below is
+withdrawn: escaped text is the rule. Artifact excerpts by opaque ID remain this
+document's to specify, and are the one new exposure the added views introduce,
+because nothing below a run directory is served today. This document describes a new
 milestone after PR #12, based on `main` at `4f23a5d`. Commands, configuration
 fields, and modules below are design targets. They are not available in the
 current CLI. Provider documentation was checked on 2026-09-15.
