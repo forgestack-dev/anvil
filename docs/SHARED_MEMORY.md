@@ -204,7 +204,37 @@ Five consequences keep the rule from doing damage it was not intended to do:
   rows are the repair. Completed runs are not retroactively disentitled, because
   a finished run cannot be un-informed.
 
-## 11. What the open CLI gains
+## 11. Calibration is the small-tenant read
+
+The corpus supports two reads with very different appetites for the consuming
+tenant's own data.
+
+| Read | What it produces | The tenant's own data required |
+| --- | --- | --- |
+| Policy | A routing policy fitted for this tenant | Enough to clear the disjoint-evidence gates |
+| Calibration | This tenant's position against a distribution | Enough to place a point |
+
+Only the first is data-starved at small scale. Section 5 of
+`docs/PRODUCT_BOUNDARY.md` records that a single repository may never accumulate
+enough disjoint cohorts to promote a policy at all, and a tenant holding a handful
+of repositories may not either. Calibration has no such floor: which ticket shapes
+cost a multiple of the tenant's median, which repositories reject most often,
+where effort was spent without reaching acceptance.
+
+**Calibration is a report, not a run input.** It reaches a person through the paid
+interface and never enters the inbound direction of section 1 of
+`docs/CLOUD_SYNC.md`. Nothing in it is frozen for a run and it cannot influence an
+acceptance decision, so it needs none of the guarantees that direction carries.
+It is consumed under section 10 at the tier it reads, so a tenant withholding
+outcome contribution does not receive outcome calibration.
+
+**The comparison is intra-tenant.** Section 9 permits no memory of any tier to
+cross a tenant boundary, and a statistic drawn across tenants discloses their data
+however it is aggregated. Comparing a tenant against a cohort of other tenants
+would be an exception to section 9 rather than an application of it, and
+section 14 records it as undecided.
+
+## 12. What the open CLI gains
 
 A consent block in the run configuration and a ticket-level field in
 `schemas/tickets.schema.json`, plus the withholding rule in section 8. Schema and
@@ -217,7 +247,64 @@ an assumption about third-party code. Consumption remains a file fetched before 
 run and frozen for it; the only change is that the file may carry more than a
 routing policy.
 
-## 12. Storage consequences
+### 12.1 Two decisions the slices rest on
+
+**Contribution consent is a read-time filter, not a frozen run input.** Reading
+out is a pull by an external consumer, so the supervisor transmits nothing: the
+ledger records the run in full, as the machine's own source of truth, and
+`anvil serve` decides what may leave. Evaluating at read time is what lets a
+withdrawal reach rows already written, which section 7 requires and which
+freezing would defeat. The consume axis is unchanged and keeps the existing
+mechanism, a file fetched before the run and frozen for it exactly as a routing
+policy is.
+
+The two evaluations combine the way section 3 combines scopes. A row leaves only
+if the declaration its run recorded and the configuration in force at read time
+both permit it, so a later withdrawal reaches rows already written and a later
+broadening cannot expose what a run declined.
+
+**Withholding adds a field and does not move `api_version`.** A withheld row is
+served with its content omitted and a marker naming the scope that excluded it,
+rather than dropped from the stream. Section 3 of `docs/CLOUD_SYNC.md` permits
+adding a field within a version and forbids removing one, so this is additive. It
+is also the better design: a gap in a monotonic identifier sequence is
+indistinguishable from data loss, and a consumer cannot otherwise tell "nothing
+happened" from "you may not see this". It follows the precedent in section 5 of
+`docs/CLOUD_SYNC.md`, where excluded credential names are recorded and their
+values never are.
+
+### 12.2 Slices
+
+**Slice 1 -- the consent block.** A run configuration carries a contribute and a
+consume decision per tier. Absent, a run contributes nothing: section 1 makes
+tier 2 opt-in, and a configuration that has never heard of shared memory must not
+begin contributing because it was upgraded.
+
+**Slice 2 -- per-ticket exclusion.** A ticket field withholds that ticket's rows.
+It narrows and never widens, so a ticket cannot contribute what its run declined.
+
+**Slice 3 -- the recorded declaration.** A new event kind records the effective
+consent at run start, added as a kind rather than by mutating past rows. Recovery
+retains it, as it already retains the ledger and immutable inputs. Without it the
+read API knows only the current configuration and cannot honor what a run
+declared at the time it ran.
+
+**Slice 4 -- withholding at the read API.** `anvil serve` omits content for any
+row either evaluation excludes and serves the marker in its place. Loopback-only
+and GET-only are unchanged.
+
+| Slice | Changed together | Tests |
+| --- | --- | --- |
+| 1 Consent block | `schemas/run.schema.json`, `config.py` | `tests/test_run_config.py` |
+| 2 Ticket exclusion | `schemas/tickets.schema.json`, `contracts.py` | `tests/test_planning.py` |
+| 3 Recorded declaration | `store.py` | `tests/test_store.py` |
+| 4 Withholding | `serve.py`, `queries.py` | `tests/test_serve.py`, `tests/test_queries.py` |
+
+Slices 1 and 2 change a schema and its runtime validation together, as AGENTS.md
+requires. Slice 4 is the one that carries the guarantee: until it exists, a
+declaration is a statement of intent that nothing enforces.
+
+## 13. Storage consequences
 
 The inbound direction is a pre-run frozen file, so the retrieval budget is the
 time a run takes to start. Sub-100ms retrieval, streaming synchronization, and
@@ -232,11 +319,15 @@ is a tree that recursive queries traverse. A graph engine is not indicated by
 anything in this record, and a bi-temporal store that invalidates rather than
 deletes is disqualified by section 7.
 
-## 13. What this does not decide
+## 14. What this does not decide
 
 The storage engine. Retention periods and their interaction with erasure. The
 extraction pipeline: what is worth remembering from a ledger, and which of it is
 tier 1 rather than tier 2. Cross-repository tier-2 mobility, deferred by
-section 4. Hosted execution, which moves the credential subject from an
-operator's machine to an API caller and is a different trust boundary, as
-section 6 of `docs/CLOUD_SYNC.md` already notes.
+section 4. Whether cross-tenant cohort calibration is worth an exception to
+section 9, and if so under what minimum cohort size, cell suppression, and
+restriction on who may define a cohort; without those a comparison against other
+tenants is a deanonymization channel rather than a statistic. Hosted execution,
+which moves the credential subject from an operator's machine to an API caller
+and is a different trust boundary, as section 6 of `docs/CLOUD_SYNC.md` already
+notes.
