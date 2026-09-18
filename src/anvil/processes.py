@@ -32,6 +32,21 @@ class ProcessCancelled(ProcessError):
     """The owning run cancelled a queued or executing command."""
 
 
+class InvocationExhausted(ProcessError):
+    """An agent invocation hit a configured ceiling before finishing.
+
+    category is "turn_exhaustion" or "budget_exhaustion", the store.py
+    failure categories this classification exists to reach. Raised only
+    when an adapter's own result envelope names the ceiling; an ordinary
+    nonzero exit, a timeout, or a stream the adapter cannot parse stays a
+    plain ProcessError.
+    """
+
+    def __init__(self, message: str, category: str):
+        super().__init__(message)
+        self.category = category
+
+
 _active_scope: ContextVar[ProcessScope | None] = ContextVar("anvil_process_scope", default=None)
 
 

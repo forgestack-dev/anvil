@@ -27,7 +27,7 @@ from .execution import (VerificationFailure, assert_located, assert_sites,
                         _review_prompt, _worker_prompt,
                         orientation_text, verify)
 from .planning import TaskGraph
-from .processes import ProcessCancelled, ProcessScope, _defer_sigint
+from .processes import InvocationExhausted, ProcessCancelled, ProcessScope, _defer_sigint
 from .store import RunStore, StoreError
 from .workspaces import Repository, RepositoryLock
 
@@ -573,6 +573,8 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                                 details["verification"] = failure.records
                             if isinstance(failure, _Blocked):
                                 details.update(failure.details)
+                            if isinstance(failure, InvocationExhausted):
+                                details["failure_category"] = failure.category
                             if not _stop(store, status, error, current, details):
                                 raise failure
                         result = store.snapshot()

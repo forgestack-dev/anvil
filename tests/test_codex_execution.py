@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from anvil.adapters.codex import CodexRunner, build_invocation
-from anvil.processes import ProcessError
+from anvil.processes import InvocationExhausted, ProcessError
 
 
 @unittest.skipUnless(os.name == "posix", "POSIX process execution")
@@ -151,6 +151,18 @@ class CodexExecutionTests(unittest.TestCase):
                 self.fake("output.write_text('{\"status\":\"success\"}')\n" + tail)
                 with self.assertRaisesRegex(ProcessError, expected):
                     self.run_fake(artifact_dir=self.root / name, timeout=0.1 if name == "timeout" else 3)
+
+    def test_a_nonzero_exit_is_never_reclassified_as_exhaustion(self):
+        """Codex exec has no documented terminal-reason vocabulary for a turn
+        or budget ceiling, so even a stream that mentions one stays a plain
+        ProcessError rather than being misread as InvocationExhausted."""
+        self.fake(
+            "print(json.dumps({'type':'error_max_turns'}))\n"
+            "print(json.dumps({'type':'result','subtype':'budget_exhausted'}))\n"
+            "sys.exit(1)")
+        with self.assertRaisesRegex(ProcessError, "code 1") as raised:
+            self.run_fake(artifact_dir=self.root / "codex-nonzero-exit")
+        self.assertNotIsInstance(raised.exception, InvocationExhausted)
 
     def test_missing_malformed_and_nonobject_results_are_rejected(self):
         cases = ("pass", "output.write_text('broken')", "output.write_text('[]')",

@@ -128,6 +128,16 @@ class AdaptiveTests(unittest.TestCase):
         self.assertEqual(result['status'],'failed');self.assertEqual(result['tasks'][0]['status'],'done')
         self.assertEqual(len(result['attempts']),1)
 
+    def test_parallel_pool_records_a_classified_exhaustion_category_on_stop(self):
+        for mode, category in (('turn-exhaustion', 'turn_exhaustion'),
+                               ('budget-exhaustion', 'budget_exhaustion')):
+            with self.subTest(mode=mode):
+                cfg = replace(self.config, workers=(WorkerConfig('one'),))
+                result = run_parallel(cfg, runners={'one': FakeRunner(mode)}, review_runner=FakeRunner())
+                self.assertEqual(result['status'], 'failed')
+                failed_task = next(task for task in result['tasks'] if task['status'] == 'failed')
+                self.assertEqual(failed_task['details']['failure_category'], category)
+
     def test_parallel_status_and_affinity(self):
         cfg=replace(self.config,ticket_status=True,adaptive=config_options(),workers=(WorkerConfig('one'),WorkerConfig('two')),max_processes=2)
         result=run_parallel(cfg,runners={'one':FakeRunner(),'two':FakeRunner()},review_runner=FakeRunner())
