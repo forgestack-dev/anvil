@@ -765,11 +765,15 @@ class SerialExecutionTests(unittest.TestCase):
         rejected = result["attempts"][0]["details"]["candidate_sha"]
         # The managed branch never moved, so only the retained ref holds it.
         self.assertEqual(git(self.repo, "rev-parse", result["branch"]), self.base)
-        self.assertEqual(
-            git(self.repo, "for-each-ref", "--contains", rejected,
-                "--format=%(refname)").splitlines(),
-            [f"refs/anvil/candidate/{result['run_id']}/{attempt}",
-             f"refs/anvil/integration/{result['run_id']}/{attempt}"])
+        self.assertEqual(git(self.repo, "rev-parse",
+                             f"refs/anvil/candidate/{result['run_id']}/{attempt}"), rejected)
+        # Every ref that reaches it is one Anvil retained. Which ones depends on
+        # whether prepare_integration's cherry-pick reproduced the candidate's
+        # sha, which it does only when both commits land in the same second.
+        holders = git(self.repo, "for-each-ref", "--contains", rejected,
+                      "--format=%(refname)").splitlines()
+        self.assertTrue(holders)
+        self.assertTrue(all(ref.startswith("refs/anvil/") for ref in holders), holders)
 
     def test_a_candidate_that_failed_its_checks_is_kept_too(self):
         result = run_serial(self.config, runner=FakeRunner("bad-check"))
@@ -786,6 +790,83 @@ class SerialExecutionTests(unittest.TestCase):
         self.assertEqual(git(self.repo, "for-each-ref", "refs/anvil/"), "")
         second = run_serial(self.config, runner=FakeRunner())
         self.assertEqual(second["status"], "success", second.get("error"))
+
+    # -- reaping retained refs (tickets/candidate-retention.json) -----------
+
+    def retained(self, state_dir=None):
+        from anvil.retention import listing
+        return listing(self.repo, state_dir or self.config.state_dir)
+
+    def test_listing_names_each_retained_ref_and_changes_nothing(self):
+        accepted = run_serial(self.config, runner=FakeRunner())
+        before = git(self.repo, "for-each-ref", "refs/anvil/")
+        result = self.retained()
+        self.assertEqual(git(self.repo, "for-each-ref", "refs/anvil/"), before)
+        kinds = {(item["kind"], item["task_id"], item["accepted"]) for item in result["items"]}
+        self.assertIn(("candidate", "t1", True), kinds)
+        self.assertIn(("integration", "t2", True), kinds)
+        self.assertEqual(result["runs"], [accepted["run_id"]])
+
+    def test_a_rejected_attempt_is_listed_as_unaccepted(self):
+        run_serial(self.config, runner=FakeRunner("review-rejects"))
+        statuses = {item["accepted"] for item in self.retained()["items"]}
+        self.assertEqual(statuses, {False})
+
+    def test_deleting_one_run_leaves_another_runs_refs_alone(self):
+        from anvil.retention import delete
+        import shutil
+        first = run_serial(self.config, runner=FakeRunner())
+        second = run_serial(self.config, runner=FakeRunner())
+        # A ref outlives its ledger only as evidence nothing else records, so
+        # the run directory goes first; that is the reaping flow. It also keeps
+        # this test off a timing-dependent detail: prepare_integration produces
+        # a sha identical to the candidate's only when both commits land in the
+        # same second, which decides whether the branch already holds it.
+        shutil.rmtree(first["run_dir"])
+        outcome = delete(self.repo, self.config.state_dir, first["run_id"])
+        self.assertGreater(outcome["removed_count"], 0)
+        self.assertEqual(outcome["refused"], [])
+        surviving = {item["run_id"] for item in self.retained()["items"]}
+        self.assertEqual(surviving, {second["run_id"]})
+        # Deleting refs never moves the branch or touches the ledger.
+        self.assertEqual(git(self.repo, "rev-parse", second["branch"]),
+                         second["tasks"][-1]["details"]["integrated_sha"])
+        self.assertEqual(RunStore.read(Path(second["run_dir"]) / "state.sqlite")["status"],
+                         "success")
+
+    def test_accepted_revisions_stay_reachable_after_their_refs_go(self):
+        """The managed branch holds accepted work, so removing its ref is safe."""
+        from anvil.retention import delete
+        import shutil
+        result = run_serial(self.config, runner=FakeRunner())
+        integrated = result["tasks"][-1]["details"]["integrated_sha"]
+        shutil.rmtree(result["run_dir"])
+        delete(self.repo, self.config.state_dir, result["run_id"])
+        self.assertNotIn(integrated, git(self.repo, "prune", "--dry-run", "--expire=now"))
+
+    def test_delete_refuses_to_strand_a_revision_the_ledger_records(self):
+        """A rejected candidate reaches nothing else, and the ledger names it."""
+        from anvil.retention import delete
+        result = run_serial(self.config, runner=FakeRunner("review-rejects"))
+        rejected = result["attempts"][0]["details"]["candidate_sha"]
+        outcome = delete(self.repo, self.config.state_dir, result["run_id"])
+        self.assertEqual(outcome["removed_count"], 0)
+        self.assertEqual({item["revision"] for item in outcome["refused"]},
+                         {rejected, result["attempts"][0]["details"]["integration_sha"]})
+        self.assertEqual(git(self.repo, "rev-parse",
+                             f"refs/anvil/candidate/{result['run_id']}/"
+                             f"{result['attempts'][0]['id']}"), rejected)
+
+    def test_a_run_whose_ledger_is_gone_can_be_reaped(self):
+        """Without a ledger nothing records the revision, so nothing is stranded."""
+        from anvil.retention import delete
+        import shutil
+        result = run_serial(self.config, runner=FakeRunner("review-rejects"))
+        shutil.rmtree(result["run_dir"])
+        outcome = delete(self.repo, self.config.state_dir, result["run_id"])
+        self.assertGreater(outcome["removed_count"], 0)
+        self.assertEqual(outcome["refused"], [])
+        self.assertEqual(self.retained()["items"], [])
 
     def test_case_distinct_ticket_ids_use_distinct_workspaces_and_evidence(self):
         document = json.loads(self.tickets.read_text())

@@ -65,6 +65,18 @@ def parser() -> argparse.ArgumentParser:
     prepare.add_argument("--timeout", type=float, default=900)
     prepare.add_argument("--artifact-root", type=Path)
     prepare.add_argument("--json", action="store_true", help="Print JSON output.")
+    retained = subcommands.add_parser("retained", help="Inspect or remove the refs runs retain for their candidate revisions.")
+    retained_actions = retained.add_subparsers(dest="retained_action", required=True)
+    for action, help_text in (("list", "Show every retained ref without changing any of them."),
+                              ("delete", "Remove one run's retained refs.")):
+        parser_for = retained_actions.add_parser(action, help=help_text)
+        parser_for.add_argument("repo", type=Path)
+        parser_for.add_argument("--state-dir", type=Path,
+                                default=Path.home() / ".local/state/anvil",
+                                help="Run state root used to name tickets and acceptance.")
+        if action == "delete":
+            parser_for.add_argument("run_id")
+        parser_for.add_argument("--json", action="store_true", help="Print JSON output.")
     serve = subcommands.add_parser("serve", help="Read saved and in-progress runs over local HTTP.")
     serve.add_argument("--state-dir", type=Path, default=Path.home() / ".local/state/anvil",
                        help="Run state root to read; defaults to ~/.local/state/anvil.")
@@ -284,6 +296,38 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{label} detail: {agent.error}")
             print("Execution requires macOS or Linux. Native resume and ticket-selected text skill contexts are available for new runs.")
         return 0 if git and agent.compatible and os.name == "posix" else 1
+
+    if arguments.command == "retained":
+        from .retention import delete, listing
+        from .store import StoreError
+        from .workspaces import WorkspaceError
+        try:
+            if arguments.retained_action == "list":
+                result = listing(arguments.repo, arguments.state_dir)
+                if arguments.json:
+                    print(json.dumps(result, indent=2))
+                else:
+                    for item in result["items"]:
+                        state = item["attempt_status"] or "unknown"
+                        print(f"{item['revision'][:12]}  {item['kind']:11} {item['run_id']}  "
+                              f"{item['task_id'] or '?'} ({state})")
+                    print(f"{len(result['items'])} retained ref(s) across "
+                          f"{len(result['runs'])} run(s)")
+                return 0
+            result = delete(arguments.repo, arguments.state_dir, arguments.run_id)
+            if arguments.json:
+                print(json.dumps(result, indent=2))
+            else:
+                print(f"Removed {result['removed_count']} retained ref(s) for {result['run_id']}")
+                for item in result["refused"]:
+                    print(f"  kept {item['ref']}: {item['reason']}")
+            return 3 if result["refused"] else 0
+        except (ContractError, WorkspaceError, StoreError, OSError) as exc:
+            if arguments.json:
+                print(json.dumps({"error": str(exc)}))
+            else:
+                print(f"error: {exc}", file=sys.stderr)
+            return 2
 
     if arguments.command == "serve":
         from .serve import serve as serve_runs

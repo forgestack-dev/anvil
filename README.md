@@ -336,6 +336,26 @@ contract](docs/SERVE.md), and [the delivery dashboard
 plan](docs/DELIVERY_DASHBOARD_PLAN.md) for the delivery, issue, and group views
 that remain future work.
 
+## Retained candidate revisions
+
+A run names every candidate and integration revision it creates under
+`refs/anvil/<kind>/<run id>/<attempt id>`. The managed branch already holds
+accepted work; these refs are what keep a *rejected* attempt's commits
+reachable, so a rejection stays auditable after the run that discarded it. See
+[the auditing method](docs/OBSERVED_LIMITS.md).
+
+```sh
+anvil retained list /path/to/repo --state-dir ~/.local/state/anvil
+anvil retained delete /path/to/repo RUN_ID
+```
+
+Nothing reads these refs: no acceptance, rejection, retry, or recovery decision
+depends on one existing, and deleting them changes what no run decides. Removal
+is explicit — `run`, `resume`, and `status` never remove one — and `delete`
+refuses a ref whose revision nothing else reaches while that run's ledger still
+records it, because the ledger would then name a hash nothing can resolve. It
+exits 3 when it kept anything for that reason.
+
 ## Resume interrupted work
 
 ```sh
