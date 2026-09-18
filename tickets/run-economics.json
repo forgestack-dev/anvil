@@ -8,21 +8,32 @@
       "depends_on": [],
       "acceptance_criteria": [
         "`store.py` accepts `turn_exhaustion` and `budget_exhaustion` wherever it accepts `review_rejection` and `verification_failure`, in both `record_rejection` and `retry_attempt`, and still rejects an unknown category.",
-        "The two new categories are excluded from the disjoint evidence a routing policy gate reads, so an invocation that produced no candidate cannot be promoted or demoted as if it had.",
+        "A new category survives the whole path from the ledger event to the evidence a routing policy gate reads, and is then excluded there, so an invocation that produced no candidate cannot be promoted or demoted as if it had. A safelist that silently drops an unknown category before the gate sees it does not satisfy this.",
         "Ledgers recorded before this change remain readable and their existing categories keep their meaning.",
         "Tests cover each new category through both entry points, an unknown category still refused, and a policy gate ignoring the new categories."
       ],
       "sites": [
-        {"criterion": 2, "paths": ["src/anvil/learning.py", "src/anvil/routing.py"]}
+        {
+          "criterion": 2,
+          "paths": [
+            "src/anvil/telemetry.py",
+            "src/anvil/learning.py",
+            "src/anvil/routing.py"
+          ]
+        }
       ],
-      "source_refs": ["RUN_ECONOMICS.md slice 2, failure categories"],
+      "source_refs": [
+        "RUN_ECONOMICS.md slice 2, failure categories"
+      ],
       "risk": "low"
     },
     {
       "id": "terminal-classification",
       "title": "Classify an invocation's terminal reason from its result, not its exit code",
       "objective": "Parse an agent invocation's own result before raising on the exit code, so a turn that exhausted its turns or its budget reaches the coordinator as that, rather than as a generic nonzero exit.",
-      "depends_on": ["exhaustion-failure-categories"],
+      "depends_on": [
+        "exhaustion-failure-categories"
+      ],
       "acceptance_criteria": [
         "The Claude adapter parses the result stream before raising on `outcome.returncode`, and a stream whose result carries `max_turns` or `budget_exhausted` raises an error carrying that classification rather than only `Claude Code execution exited with code 1`.",
         "The Codex adapter's own terminal vocabulary is classified the same way, or its absence is recorded explicitly in the adapter rather than left implicit.",
@@ -31,11 +42,29 @@
         "Tests drive each terminal reason through a fake agent executable and assert both the raised classification and the recorded category, never invoking a live model."
       ],
       "sites": [
-        {"criterion": 1, "paths": ["src/anvil/adapters/claude.py"]},
-        {"criterion": 2, "paths": ["src/anvil/adapters/codex.py"]},
-        {"criterion": 4, "paths": ["src/anvil/adapters/claude.py", "src/anvil/adapters/codex.py"]}
+        {
+          "criterion": 1,
+          "paths": [
+            "src/anvil/adapters/claude.py"
+          ]
+        },
+        {
+          "criterion": 2,
+          "paths": [
+            "src/anvil/adapters/codex.py"
+          ]
+        },
+        {
+          "criterion": 4,
+          "paths": [
+            "src/anvil/adapters/claude.py",
+            "src/anvil/adapters/codex.py"
+          ]
+        }
       ],
-      "source_refs": ["RUN_ECONOMICS.md slice 1, terminal classification"],
+      "source_refs": [
+        "RUN_ECONOMICS.md slice 1, terminal classification"
+      ],
       "risk": "medium"
     },
     {
@@ -51,11 +80,31 @@
         "Tests cover a billed basis enforcing the ceiling, a list basis not enforcing it, an absent basis not enforcing it, and the recorded basis surviving a round trip."
       ],
       "sites": [
-        {"criterion": 1, "paths": ["src/anvil/telemetry.py"]},
-        {"criterion": 2, "paths": ["src/anvil/routing.py", "src/anvil/adapters/claude.py"]},
-        {"criterion": 3, "paths": ["src/anvil/telemetry.py", "src/anvil/routing.py"]}
+        {
+          "criterion": 1,
+          "paths": [
+            "src/anvil/telemetry.py"
+          ]
+        },
+        {
+          "criterion": 2,
+          "paths": [
+            "src/anvil/routing.py",
+            "src/anvil/adapters/claude.py"
+          ]
+        },
+        {
+          "criterion": 3,
+          "paths": [
+            "src/anvil/telemetry.py",
+            "src/anvil/routing.py"
+          ]
+        }
       ],
-      "source_refs": ["RUN_ECONOMICS.md slice 3, cost basis", "AGENTS.md cost estimates are not invoices or hard budget caps"],
+      "source_refs": [
+        "RUN_ECONOMICS.md slice 3, cost basis",
+        "AGENTS.md cost estimates are not invoices or hard budget caps"
+      ],
       "risk": "medium"
     }
   ]
