@@ -126,6 +126,42 @@ class StoreTests(unittest.TestCase):
                     retired = next(a for a in store.snapshot()["attempts"] if a["id"] == attempt)
                     self.assertEqual(retired["details"]["failure_category"], category)
 
+    def test_exhaustion_categories_retry_directly_from_running(self):
+        """A turn- or budget-exhausted invocation stops before commit_candidate
+        runs, so its task is still "running" -- never "candidate" -- when the
+        coordinator offers it the same retry a rejection gets. A review or
+        check rejection is refused from "running", and an unknown or
+        non-exhaustion category is refused from "running" too."""
+        with RunStore(self.path) as store:
+            store.initialize(run_id="run-one", repo="/repo", branch="anvil/run-one",
+                             base_sha="base", tasks=(ticket("a"), ticket("b"), ticket("c")),
+                             config={"verification_commands": [["python", "-m", "unittest"]],
+                                     "adaptive": {"max_attempts": 2}})
+            store.set_run("running")
+            for task_id, category in (("a", "turn_exhaustion"), ("b", "budget_exhaustion")):
+                with self.subTest(category=category):
+                    attempt = store.start_attempt(task_id, "base", f"/workspace/{task_id}")
+                    store.record_rejection(task_id, attempt_id=attempt, reason="ceiling reached",
+                                           failure_category=category)
+                    recorded = next(a for a in store.snapshot()["attempts"] if a["id"] == attempt)
+                    self.assertEqual(recorded["status"], "failed")
+                    self.assertEqual(recorded["details"]["failure_category"], category)
+                    new_id = store.retry_attempt(task_id, attempt_id=attempt, reason="ceiling reached",
+                                                 failure_category=category, new_attempt_id=f"{task_id}-retry",
+                                                 base_sha="base", workspace=f"/workspace/{task_id}-2")
+                    self.assertEqual(new_id, f"{task_id}-retry")
+                    snapshot = store.snapshot()
+                    task = next(t for t in snapshot["tasks"] if t["id"] == task_id)
+                    self.assertEqual(task["status"], "running")
+                    self.assertEqual(task["attempt_id"], new_id)
+            attempt = store.start_attempt("c", "base", "/workspace/c")
+            for category in ("review_rejection", "verification_failure"):
+                with self.subTest(category=category), self.assertRaisesRegex(StoreError, "can record a rejection"):
+                    store.record_rejection("c", attempt_id=attempt, reason="r", failure_category=category)
+            with self.assertRaisesRegex(StoreError, "can retry"):
+                store.retry_attempt("c", attempt_id=attempt, reason="r", failure_category="review_rejection",
+                                    new_attempt_id="c-retry", base_sha="base", workspace="/workspace/c-2")
+
     def test_stale_attempt_cannot_change_a_task_or_append_an_event(self):
         with RunStore(self.path) as store:
             self.initialize(store)

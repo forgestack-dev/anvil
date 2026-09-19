@@ -12,6 +12,7 @@ from anvil.execution import run_serial
 from anvil.config import WorkerConfig
 from anvil.parallel import run_parallel
 from anvil.contracts import ContractError
+from anvil.processes import InvocationExhausted
 from anvil.store import RunStore
 from anvil.ticket_status import sync, Publisher
 from anvil.routing import Policy
@@ -125,6 +126,54 @@ class RejectingReviewer:
             self.rejected += 1
             return rejection(f"{task['id']}.txt", 'record the change the ticket asks for')
         return approval(f"{task['id']} inspected")
+
+
+class ExhaustingWorker:
+    """A worker whose first `exhaustions` attempts run out of turns after
+    writing a partial file; its own reviewer approves whatever finally lands.
+    """
+
+    def __init__(self, exhaustions=1, category='turn_exhaustion'):
+        self.exhaustions, self.category = exhaustions, category
+        self.workers, self.reviews, self.seen, self.heads = [], [], [], []
+
+    def run(self, **kwargs):
+        workspace = kwargs['repo']
+        kwargs['artifact_dir'].mkdir(parents=True)
+        if kwargs.get('read_only'):
+            self.reviews.append(kwargs['prompt'])
+            return approval('first.txt and second.txt inspected')
+        self.workers.append(kwargs['prompt'])
+        self.heads.append(git(workspace, 'rev-parse', 'HEAD'))
+        self.seen.append(contents(workspace))
+        if len(self.workers) <= self.exhaustions:
+            (workspace / 'first.txt').write_text('partial work')
+            raise InvocationExhausted(
+                'stopped after exhausting its configured turns/budget', self.category)
+        (workspace / 'second.txt').write_text('the resumption')
+        return worker_result('the files are written')
+
+
+class ExhaustingRacingWorker:
+    """Exhausts after writing a partial file and waiting for a peer to integrate."""
+
+    def __init__(self, task_id, wait_for=None):
+        self.task_id, self.wait_for = task_id, wait_for
+        self.seen = []
+
+    def run(self, **kwargs):
+        workspace = kwargs['repo']
+        kwargs['artifact_dir'].mkdir(parents=True)
+        if kwargs.get('read_only'):
+            return approval(f'{self.task_id} inspected')
+        self.seen.append(contents(workspace))
+        if len(self.seen) == 1:
+            (workspace / f'{self.task_id}-partial.txt').write_text('partial')
+            if self.wait_for is not None and not self.wait_for.wait(60):
+                raise AssertionError('the peer never integrated, so no base ever advanced')
+            raise InvocationExhausted('stopped after exhausting its configured turns', 'turn_exhaustion')
+        (workspace / f'{self.task_id}.txt').write_text(self.task_id)
+        return worker_result(f'{self.task_id}.txt is written')
 
 
 class AdaptiveTests(unittest.TestCase):
@@ -914,6 +963,133 @@ prompt = sys.stdin.read()''')
         # Bound and located, as the review produced them, not a paragraph.
         self.assertIn('criterion 1 (first.txt:1): also record the amendment in second.txt', amend)
         self.assertNotIn('already holds the candidate', fresh)
+
+    # -- Resumed exhausted attempts (docs/RUN_ECONOMICS.md slice 4) ---------
+
+    def resume_ticket(self):
+        """One ticket with one criterion; mirrors amend_ticket for the exhaustion path."""
+        self.tickets.write_text(json.dumps({'version': 1, 'tasks': [
+            {'id': 't1', 'title': 'Write the work', 'objective': 'Write the work',
+             'depends_on': [], 'acceptance_criteria': ['The work is in the tree']}]}))
+
+    def resume_run(self, runner=None, exhaustions=1, category='turn_exhaustion'):
+        self.resume_ticket()
+        runner = ExhaustingWorker(exhaustions, category) if runner is None else runner
+        cfg = replace(self.config, adaptive=config_options(attempts=2), workers=(WorkerConfig('one'),))
+        return run_parallel(cfg, runners={'one': runner}, review_runner=runner), runner
+
+    def test_a_resumed_attempt_sees_the_exhausted_trees_files_and_is_accepted(self):
+        """Criterion 1: exhaustion gets the same retry a rejection gets.
+        Criterion 3/4: the restored tree is exactly what commit_exhausted
+        recorded for this attempt, and the second worker sees it uncommitted
+        at the accepted base."""
+        for category in ('turn_exhaustion', 'budget_exhaustion'):
+            with self.subTest(category=category):
+                result, runner = self.resume_run(category=category)
+                self.assertEqual(result['status'], 'success', result.get('error'))
+                self.assertEqual(len(runner.workers), 2)
+                self.assertEqual(runner.seen, [['README.md'], ['README.md', 'first.txt']])
+                self.assertEqual(runner.heads, [self.base, self.base])
+                integrated = result['tasks'][0]['details']['integrated_sha']
+                self.assertEqual(
+                    sorted(git(self.repo, 'ls-tree', '-r', '--name-only', integrated).split()),
+                    ['README.md', 'first.txt', 'second.txt'])
+                self.assertEqual(git(self.repo, 'show', f'{integrated}:first.txt'), 'partial work')
+                self.assertEqual(git(self.repo, 'show', f'{integrated}:second.txt'), 'the resumption')
+                failed = next(a for a in result['attempts'] if a['status'] == 'failed')
+                self.assertEqual(failed['details']['failure_category'], category)
+
+    def test_a_resumption_escalates_and_names_a_revision_that_resolves(self):
+        """Criterion 5: a resumed attempt escalates like a fresh retry, unlike
+        an amend. Criterion 6: its routing_decision names the exhausted
+        revision it restored, and that revision resolves through the retained
+        ref rather than depending on one existing (criterion 3)."""
+        result, _ = self.resume_run()
+        decisions = self.decisions_for(result)
+        self.assertEqual([d['profile'] for d in decisions], ['standard', 'strong'])
+        self.assertIn('resumption of exhausted attempt', decisions[1]['reason'])
+        exhausted = next(a for a in result['attempts'] if a['status'] == 'failed')
+        resumed = next(a for a in result['attempts'] if a['status'] == 'done')
+        decision = next(event['details']['body'] for event in result['events']
+                        if event['details'].get('message_kind') == 'routing_decision'
+                        and event['attempt_id'] == resumed['id'])
+        revision = decision['resumed_exhausted_attempt']
+        reference = f"refs/anvil/exhausted/{result['run_id']}/{exhausted['id']}"
+        self.assertEqual(git(self.repo, 'rev-parse', reference), revision)
+        self.assertEqual(git(self.repo, 'cat-file', '-t', revision), 'commit')
+        # The attempt cap is unchanged: one resumption is the only retry.
+        self.assertEqual(sum(e['kind'] == 'retry' for e in result['events']), 1)
+        self.assertEqual(len(result['attempts']), 2)
+
+    def test_an_exhaustion_with_no_retry_available_still_stops_the_run_unchanged(self):
+        """Criterion 1: with no retry available -- no adaptive configuration,
+        or an attempt cap already spent -- the run stops exactly as it did
+        before this ticket: same status, same error, same failure category,
+        and no branch advance. A budget or process failure that is not an
+        exhaustion is unaffected by any of this."""
+        for adaptive in (None, config_options(attempts=1)):
+            with self.subTest(adaptive=bool(adaptive)):
+                self.resume_ticket()
+                cfg = replace(self.config, adaptive=adaptive, workers=(WorkerConfig('one'),))
+                runner = ExhaustingWorker()
+                result = run_parallel(cfg, runners={'one': runner}, review_runner=runner)
+                self.assertEqual(result['status'], 'failed')
+                failed_task = next(t for t in result['tasks'] if t['status'] == 'failed')
+                self.assertEqual(failed_task['details']['failure_category'], 'turn_exhaustion')
+                self.assertIn('exhausted_sha', failed_task['details'])
+                self.assertEqual(len(runner.workers), 1)
+                self.assertEqual(git(self.repo, 'rev-parse', result['branch']), self.base)
+        # An ordinary process failure, never an exhaustion, is unaffected.
+        cfg = replace(self.config, adaptive=config_options(attempts=2), workers=(WorkerConfig('one'),))
+        result = run_parallel(cfg, runners={'one': FakeRunner('interrupt')}, review_runner=FakeRunner())
+        self.assertEqual(result['status'], 'interrupted')
+        self.assertEqual(len(result['attempts']), 1)
+
+    def test_a_resumption_is_refused_once_a_peer_has_advanced_the_base(self):
+        """Criterion 2, and the failure the guard exists to prevent, mirroring
+        the amend guard test. The second case replaces _resume_source with one
+        that ignores the base: that is a version which always resumes, and it
+        runs here. Under it the peer's integrated file is deleted from the
+        accepted tree by a commit whose single parent is the new base, which
+        is what the case asserts. An implementation that always resumes fails
+        the first case: it would lose peer.txt there too.
+        """
+        always = lambda item, base, revision: revision
+        for resumes_always in (False, True):
+            with self.subTest(resumes_always=resumes_always):
+                self.tickets.write_text(json.dumps({'version': 1, 'tasks': [
+                    {'id': 'peer', 'title': 'Peer work', 'objective': 'Integrate first',
+                     'depends_on': [], 'acceptance_criteria': ['peer.txt exists'],
+                     'worker': 'quick'},
+                    {'id': 'alpha', 'title': 'Slower work', 'objective': 'Finish after the peer',
+                     'depends_on': [], 'acceptance_criteria': ['alpha.txt exists'],
+                     'worker': 'slow'}]}))
+                integrated = threading.Event()
+                workers = {'quick': RacingWorker('peer'),
+                           'slow': ExhaustingRacingWorker('alpha', wait_for=integrated)}
+                cfg = replace(self.config, adaptive=config_options(attempts=2),
+                              workers=(WorkerConfig('quick'), WorkerConfig('slow')),
+                              max_processes=3)
+                with (patch('anvil.parallel._resume_source', always) if resumes_always
+                      else nullcontext()):
+                    result = run_parallel(
+                        cfg, runners=workers, review_runner=FakeRunner(),
+                        progress=lambda m: integrated.set() if m == 'peer: done' else None)
+                self.assertEqual(result['status'], 'success', result.get('error'))
+                tree = git(self.repo, 'ls-tree', '-r', '--name-only', result['branch']).split()
+                self.assertIn('alpha.txt', tree)
+                if resumes_always:
+                    self.assertNotIn('peer.txt', tree)
+                    continue
+                # The peer's integrated work survives the replacement attempt.
+                self.assertIn('peer.txt', tree)
+                self.assertEqual(git(self.repo, 'show', f"{result['branch']}:peer.txt"), 'peer')
+                # The fallback is today's fresh worktree on the advanced base,
+                # and a fresh-worktree retry escalates exactly as it did before.
+                self.assertIn('peer.txt', workers['slow'].seen[1])
+                decisions = self.decisions_for(result, 'alpha')
+                self.assertEqual([d['profile'] for d in decisions], ['standard', 'strong'])
+                self.assertNotIn('resumed_exhausted_attempt', decisions[1])
 
 
 class AdaptiveRunLevelSettings(unittest.TestCase):
