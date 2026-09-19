@@ -269,7 +269,8 @@
           "criterion": 1,
           "paths": [
             "src/anvil/telemetry.py",
-            "src/anvil/store.py"
+            "src/anvil/store.py",
+            "src/anvil/parallel.py"
           ]
         },
         {
@@ -299,7 +300,9 @@
           "paths": [
             "src/anvil/store.py",
             "src/anvil/queries.py",
-            "src/anvil/serve.py"
+            "src/anvil/serve.py",
+            "tests/test_store.py",
+            "tests/test_serve.py"
           ]
         }
       ],
