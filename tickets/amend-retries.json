@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "id": "amend-retry",
+      "title": "Start a replacement attempt from the rejected candidate's tree when the base is unchanged",
+      "objective": "Stop discarding a rejected candidate whole when review or verification asks for a bounded change. Restore that candidate's tree into the replacement attempt's worktree and ask the worker to address the findings, but only while the accepted base has not advanced, because restoring a stale tree onto an advanced base would silently revert a peer's integrated work.",
+      "depends_on": [],
+      "acceptance_criteria": [
+        "A replacement attempt after a review rejection or a verification failure begins from the rejected candidate's tree rather than an empty worktree: the worktree's HEAD stays at the accepted base while its working tree matches the candidate, including files the candidate deleted. The supervisor still owns Git; the worker never checks out, commits, or branches. commit_candidate, prepare_integration, and the phase machine are unchanged, and the accepted commit is still a single commit whose only parent is the base.",
+        "An amend is permitted only when the accepted base is unchanged since the rejected attempt began. When a peer integrated in the meantime, the retry falls back to today's fresh worktree. A test asserts the peer's change survives in the accepted tree, and that test must be written so that it fails against a version which always amends; state in the ticket record how you confirmed it fails.",
+        "An amend keeps the profile that produced the candidate rather than escalating to the next rank, and the escalation allowance remains available to the attempt after it. A fresh-worktree retry escalates exactly as it does today. The attempt cap is unchanged: an amend consumes the one retry a run has and does not add an attempt.",
+        "The amend prompt states that the working tree already holds a candidate for this ticket, that the findings are what an independent review or the check output asked to change, and that the ticket's criteria are unchanged and all still apply. Findings reach it in the bound and located form the review produces. Prompt text is passed through stdin and never built into a shell string.",
+        "The replacement attempt's routing_decision message records that it is an amendment and names the candidate it amended, and that revision resolves through the ref the run already retains for it. No new failure category is introduced: an amend that is itself rejected is an ordinary review_rejection.",
+        "Tests in tests/test_adaptive.py cover, with fake agents and real temporary repositories and never a live model: an amend after a review rejection where the second worker sees the first's files and the accepted commit contains both the original work and the amendment; the amended commit having the base as its single parent with the branch advancing to it; the base-advanced fallback from criterion 2; the profile being kept and the escalation allowance still available; and the routing_decision naming a candidate that resolves. Existing retry and escalation tests pass unchanged.",
+        "docs/AMEND_RETRIES.md drops its 'not implemented' status and records what was built, keeping section 10's statement that the saving is unmeasured, and docs/ROADMAP.md section 11 is updated from specified to implemented."
+      ],
+      "sites": [
+        {
+          "criterion": 1,
+          "paths": [
+            "src/anvil/workspaces.py",
+            "src/anvil/parallel.py"
+          ]
+        },
+        {
+          "criterion": 2,
+          "paths": [
+            "src/anvil/parallel.py",
+            "tests/test_adaptive.py"
+          ]
+        },
+        {
+          "criterion": 3,
+          "paths": [
+            "src/anvil/parallel.py",
+            "src/anvil/adaptive_runtime.py"
+          ]
+        },
+        {
+          "criterion": 4,
+          "paths": [
+            "src/anvil/parallel.py"
+          ]
+        },
+        {
+          "criterion": 5,
+          "paths": [
+            "src/anvil/parallel.py"
+          ]
+        },
+        {
+          "criterion": 6,
+          "paths": [
+            "tests/test_adaptive.py"
+          ]
+        },
+        {
+          "criterion": 7,
+          "paths": [
+            "docs/AMEND_RETRIES.md",
+            "docs/ROADMAP.md"
+          ]
+        }
+      ],
+      "source_refs": [
+        "AMEND_RETRIES.md sections 3 to 9, the prototyped mechanism, the base-unchanged constraint, escalation, evidence, the prompt, and the tests",
+        "ROADMAP.md section 11",
+        "AGENTS.md, the supervisor owns Git and candidates require fresh review and checks",
+        "ACCEPTANCE.md, the phase machine the amend must not change"
+      ],
+      "risk": "high"
+    }
+  ]
+}
