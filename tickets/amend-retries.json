@@ -69,7 +69,18 @@
         "AGENTS.md, the supervisor owns Git and candidates require fresh review and checks",
         "ACCEPTANCE.md, the phase machine the amend must not change"
       ],
-      "risk": "high"
+      "risk": "high",
+      "execution": {
+        "status": "done",
+        "run_id": "2a6e3f7215d34b189b91638a986108cd",
+        "event_id": 26,
+        "updated_at": "2026-09-19T01:36:30.116941+00:00",
+        "evidence": "/Users/christian/.local/state/anvil/2a6e3f7215d34b189b91638a986108cd",
+        "attempt_id": "5ef95a19-0ee2-444c-aabb-9ef90a004da1",
+        "candidate_sha": "40c7a19e0717a715fb3d06ce5139f8e9c7fa1114",
+        "integrated_sha": "521f90ade3e811370ab77e9e86cdef3b4525d880",
+        "worker": "serial"
+      }
     }
   ]
 }
