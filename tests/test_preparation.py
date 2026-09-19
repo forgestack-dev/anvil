@@ -13,7 +13,7 @@ from unittest.mock import patch
 from anvil.cli import main
 from anvil.contracts import ContractError
 from anvil.planning import TaskGraph
-from anvil.preparation import _skills, gate_schema, prepare, result_schema
+from anvil.preparation import _skills, gate_document, gate_schema, prepare, result_schema
 from anvil.workspaces import WorkspaceError
 from test_execution import git
 
@@ -508,6 +508,148 @@ class CredentialExclusionTests(PreparationCase):
         self.assertEqual(invoked.call_args.kwargs["exclude"],
                          ("OPENAI_API_KEY", "ANTHROPIC_API_KEY"))
         self.assertEqual(invoked.call_args.kwargs["agent"], "codex")
+
+
+def ticket_document(*, agent=None, tasks=None):
+    body = {"version": 1, "tasks": list(tasks) if tasks is not None else [task()]}
+    if agent is not None:
+        body["provenance"] = {
+            "generator": "anvil", "generator_version": "0.0.0",
+            "source": "SPEC.md", "source_sha256": "0" * 64,
+            "repo_head": "0" * 40, "prepared_at": "2026-01-01T00:00:00+00:00",
+            "agent": agent,
+        }
+    return body
+
+
+class DocumentGateCase(unittest.TestCase):
+    """A committed ticket document `prepare` did not write, gated directly."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        self.repo = self.root / "repo"
+        self.repo.mkdir()
+        git(self.repo, "init", "-q")
+        self.artifacts = self.root / "artifacts"
+
+    def write_document(self, document, name="tickets.json"):
+        path = self.repo / name
+        path.write_text(json.dumps(document, indent=2))
+        git(self.repo, "add", name)
+        git(self.repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "commit", "-qm", f"Add {name}")
+        return path
+
+
+class DocumentGateTests(DocumentGateCase):
+    def test_a_clean_document_is_reported_and_left_untouched(self):
+        path = self.write_document(ticket_document())
+        before = path.read_bytes()
+        gate = FakeGate()
+        result = gate_document(path, repo=self.repo, gate_agent="codex",
+                               artifact_root=self.artifacts, gate_runner=gate)
+        self.assertEqual(result["status"], "clean")
+        self.assertEqual(result["task_count"], 1)
+        self.assertEqual(result["gate_agent"], "codex")
+        self.assertEqual(result["provenance"]["gate"], {"agent": "codex", "questions": 0})
+        self.assertEqual(result["provenance"]["document_sha256"], hashlib.sha256(before).hexdigest())
+        self.assertEqual(path.read_bytes(), before)
+        self.assertTrue(gate.calls[0]["read_only"])
+        self.assertEqual(gate.calls[0]["schema"], gate_schema())
+
+    def test_a_document_with_open_questions_is_reported_and_left_untouched(self):
+        path = self.write_document(ticket_document())
+        before = path.read_bytes()
+        # A gate question's source_refs must cite an exact stripped line of the ticket
+        # document itself, since there is no specification to cite lines from instead.
+        citation = question(refs=('"id": "T-1",',))
+        result = gate_document(path, repo=self.repo, gate_agent="codex",
+                               artifact_root=self.artifacts, gate_runner=FakeGate([citation]))
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(result["raised_by"], "gate")
+        self.assertEqual([item["id"] for item in result["questions"]], ["Q-1"])
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_a_gate_matching_the_documents_recorded_authoring_adapter_is_refused(self):
+        path = self.write_document(ticket_document(agent="codex"))
+        gate = FakeGate()
+        with self.assertRaises(ContractError) as raised:
+            gate_document(path, repo=self.repo, gate_agent="codex",
+                          artifact_root=self.artifacts, gate_runner=gate)
+        self.assertIn("must differ from the adapter that authored", str(raised.exception))
+        self.assertEqual(gate.calls, [])
+
+    def test_a_hand_written_document_has_no_authoring_adapter_to_refuse(self):
+        path = self.write_document(ticket_document())
+        result = gate_document(path, repo=self.repo, gate_agent="codex",
+                               artifact_root=self.artifacts, gate_runner=FakeGate())
+        self.assertEqual(result["status"], "clean")
+
+    def test_omitting_gate_agent_uses_a_recorded_default_not_a_gate_default_lookup(self):
+        path = self.write_document(ticket_document())
+        gate = FakeGate()
+        result = gate_document(path, repo=self.repo, artifact_root=self.artifacts, gate_runner=gate)
+        self.assertEqual(result["gate_agent"], "codex")
+        self.assertEqual(result["provenance"]["gate"]["agent"], "codex")
+
+    def test_a_document_whose_bytes_changed_between_two_gate_runs_is_traceable(self):
+        path = self.write_document(ticket_document())
+        first = gate_document(path, repo=self.repo, gate_agent="codex",
+                              artifact_root=self.artifacts, gate_runner=FakeGate())
+        path.write_text(json.dumps(ticket_document(tasks=[task("T-2")]), indent=2))
+        git(self.repo, "add", path.name)
+        git(self.repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "commit", "-qm", "Edit ticket")
+        second = gate_document(path, repo=self.repo, gate_agent="codex",
+                               artifact_root=self.artifacts, gate_runner=FakeGate())
+        self.assertNotEqual(first["provenance"]["document_sha256"],
+                            second["provenance"]["document_sha256"])
+
+    def test_the_gate_never_touches_git_and_ignores_an_uncommitted_repository(self):
+        path = self.write_document(ticket_document())
+        before_head = git(self.repo, "rev-parse", "HEAD")
+        (self.repo / "scratch.txt").write_text("uncommitted")
+        result = gate_document(path, repo=self.repo, gate_agent="codex",
+                               artifact_root=self.artifacts, gate_runner=FakeGate())
+        self.assertEqual(result["status"], "clean")
+        self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before_head)
+
+    def test_cli_dispatches_gate_and_reports_json(self):
+        report = {"status": "clean", "document": str(self.repo / "tickets.json"),
+                  "gate_agent": "codex", "artifact_dir": str(self.artifacts),
+                  "task_count": 1, "provenance": {"gate": {"agent": "codex", "questions": 0}}}
+        stdout, stderr = StringIO(), StringIO()
+        with patch("anvil.preparation.gate_document", return_value=report) as invoked, \
+                redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main(["gate", str(self.repo / "tickets.json"), "--repo", str(self.repo),
+                        "--gate-agent", "codex", "--json"])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(stdout.getvalue()), report)
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(invoked.call_args.kwargs["gate_agent"], "codex")
+
+    def test_cli_reports_open_gate_questions_as_a_distinct_exit_code(self):
+        report = {"status": "needs_clarification", "raised_by": "gate", "gate_agent": "codex",
+                  "questions": [question()], "artifact_dir": str(self.artifacts)}
+        stdout, stderr = StringIO(), StringIO()
+        with patch("anvil.preparation.gate_document", return_value=report), \
+                redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main(["gate", str(self.repo / "tickets.json"), "--repo", str(self.repo)])
+        self.assertEqual(code, 3)
+        self.assertIn("rule 3 (unbounded)", stderr.getvalue())
+        self.assertIn("### Capability", stderr.getvalue())
+        self.assertEqual(stdout.getvalue(), "")
+
+    def test_cli_reports_gate_failure_without_traceback(self):
+        stdout, stderr = StringIO(), StringIO()
+        with patch("anvil.preparation.gate_document", side_effect=ContractError("bad document")), \
+                redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main(["gate", str(self.repo / "tickets.json"), "--repo", str(self.repo), "--json"])
+        self.assertEqual(code, 2)
+        self.assertEqual(json.loads(stdout.getvalue()), {"error": "bad document"})
+        self.assertEqual(stderr.getvalue(), "")
 
 
 if __name__ == "__main__":

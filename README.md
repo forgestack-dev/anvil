@@ -54,6 +54,14 @@ Both models are then recorded in the ticket document, so the claim that one turn
 
 Preparation records the source hash, repository commit, and gate, requires a source reference on every ticket, initializes ticket status to `todo`, and writes the result atomically. It does not start implementation. See [spec preparation](docs/SPEC_PREPARATION.md) and the [criterion contract](docs/CRITERIA.md).
 
+A committed ticket document `prepare` did not write -- hand-authored, or edited after preparation -- never passed through this gate. Put it through the same scrutiny directly:
+
+```sh
+anvil gate tickets.json --repo . --gate-agent claude-code
+```
+
+`anvil gate` reads the ticket document and the repository only: it writes no ticket document, starts no run, and touches neither the ledger nor Git, so a graph cannot be silently rewritten by being inspected. `--gate-agent` selects the adapter; a hand-written graph has no authoring adapter for the usual lookup to key on, so omitting the flag uses a fixed, recorded default instead, and `anvil gate` still refuses to gate on the adapter recorded in `provenance.agent` when the document already carries one. The result's provenance records the gate adapter, its model when pinned, and the SHA-256 of the exact document bytes gated, so a later edit is traceably a different input. A clean gate exits `0`; open questions are reported with each question's rule and citations and exit `3`, exactly like `prepare`'s gate, and neither outcome edits the document.
+
 ## Install and plan
 
 Requires Python 3.11 or later. Serial execution requires macOS or Linux, Git, and an installed Codex CLI or Claude Code CLI with working account access for CLI-agent turns. Muse turns need no CLI: the operator running Anvil fulfills them through a staged handoff. Claude Code support targets version 2.1.260 or later with the required flags advertised by `doctor`. The runtime has no third-party Python dependencies; installation uses the build tools declared in `pyproject.toml`.

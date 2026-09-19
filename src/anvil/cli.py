@@ -65,6 +65,23 @@ def parser() -> argparse.ArgumentParser:
     prepare.add_argument("--timeout", type=float, default=900)
     prepare.add_argument("--artifact-root", type=Path)
     prepare.add_argument("--json", action="store_true", help="Print JSON output.")
+    gate = subcommands.add_parser("gate", help="Run the readiness gate over a committed ticket document prepare did not write.")
+    gate.add_argument("document", type=Path)
+    gate.add_argument("--repo", type=Path, default=Path.cwd())
+    gate.add_argument("--gate-agent", choices=EXECUTION_AGENTS,
+                      help="Adapter to gate on. A hand-written document has no authoring "
+                           "adapter, so omitting this uses a fixed default (codex) that is "
+                           "recorded in the result; a gate matching provenance.agent, when the "
+                           "document already carries one, is still refused.")
+    gate.add_argument("--gate-binary", help="Trusted gate executable name or path.")
+    gate.add_argument("--gate-model", help="Explicit model for the gate turn; requires --gate-effort.")
+    gate.add_argument("--gate-effort", help="Explicit effort for the gate turn; requires --gate-model.")
+    gate.add_argument("--config", type=Path,
+                      help="Read credential_exclusion from a run configuration and withhold "
+                           "those variables from the gate turn.")
+    gate.add_argument("--timeout", type=float, default=900)
+    gate.add_argument("--artifact-root", type=Path)
+    gate.add_argument("--json", action="store_true", help="Print JSON output.")
     retained = subcommands.add_parser("retained", help="Inspect or remove the refs runs retain for their candidate revisions.")
     retained_actions = retained.add_subparsers(dest="retained_action", required=True)
     for action, help_text in (("list", "Show every retained ref without changing any of them."),
@@ -238,6 +255,49 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Gate: {gate['agent']}" if gate else "Gate: disabled")
             if result["unclassified_skills"]:
                 print("Unclassified installed skills omitted: " + ", ".join(result["unclassified_skills"]))
+        return 0
+    if arguments.command == "gate":
+        try:
+            from .preparation import gate_document
+            exclusion = ()
+            if arguments.config:
+                from .config import RunConfig
+                exclusion = RunConfig.load(arguments.config).credential_exclusion
+            gate_selection = _explicit_profile(arguments.gate_model, arguments.gate_effort,
+                                               "--gate-model", "--gate-effort")
+            result = gate_document(arguments.document, repo=arguments.repo,
+                                   gate_agent=arguments.gate_agent,
+                                   gate_executable=arguments.gate_binary,
+                                   timeout=arguments.timeout,
+                                   artifact_root=arguments.artifact_root,
+                                   gate_profile=gate_selection, exclude=exclusion)
+        except (ContractError, ProcessError, OSError) as exc:
+            if arguments.json:
+                print(json.dumps({"error": str(exc)}))
+            else:
+                print(f"anvil: {exc}", file=sys.stderr)
+            return 2
+        if result["status"] == "needs_clarification":
+            if arguments.json:
+                print(json.dumps(result, indent=2))
+            else:
+                print(f"Gate needs the ticket document to answer "
+                      f"{len(result['questions'])} question(s).", file=sys.stderr)
+                for question in result["questions"]:
+                    print(f"  [{question['id']}] rule {question['rule']} "
+                          f"({question['kind']}): {question['question']}", file=sys.stderr)
+                    for reference in question["source_refs"]:
+                        print(f"      cites: {reference}", file=sys.stderr)
+                    for option in question.get("options", []):
+                        print(f"      option: {option}", file=sys.stderr)
+                print("Edit and commit the ticket document, then gate it again.", file=sys.stderr)
+            return 3
+        if arguments.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"Gate clean: {result['task_count']} task(s), no open questions.")
+            print(f"Gate agent: {result['gate_agent']}")
+            print(f"Evidence: {result['artifact_dir']}")
         return 0
     if arguments.command == "doctor":
         try:

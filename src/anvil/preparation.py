@@ -15,7 +15,7 @@ from . import __version__
 from .adapters import EXECUTION_AGENTS, create_runner, probe_agent
 from .contracts import ContractError, _object_fields, _text
 from .routing import preflight, validate_selection
-from .planning import TaskGraph
+from .planning import TaskGraph, _reject_constant, _unique_object
 from .processes import ProcessError
 from .skill_management import SkillError, SkillScope, managed_snapshot, status
 from .ticket_status import atomic, encoded
@@ -34,31 +34,31 @@ _QUESTION_KINDS = ("missing", "ambiguous", "undecidable", "unbounded")
 _GATE_DEFAULT = {"codex": "claude-code", "claude-code": "codex", "muse": "codex"}
 
 
-def _read_spec(path: Path, repo: Path) -> bytes:
+def _read_spec(path: Path, repo: Path, *, label: str = "specification") -> bytes:
     path = Path(path).expanduser().absolute()
     resolved = path.resolve()
     if not path.is_relative_to(repo) or not resolved.is_relative_to(repo):
-        raise ContractError("specification must be inside the target repository")
+        raise ContractError(f"{label} must be inside the target repository")
     try:
         relative = path.relative_to(repo)
         current = repo
         for part in relative.parts:
             current /= part
             if current.is_symlink():
-                raise ContractError(f"specification path must not contain symlinks: {current}")
+                raise ContractError(f"{label} path must not contain symlinks: {current}")
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         with os.fdopen(descriptor, "rb") as stream:
             if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
-                raise ContractError("specification must be a regular file")
+                raise ContractError(f"{label} must be a regular file")
             data = stream.read(MAX_SPEC_BYTES + 1)
         if len(data) > MAX_SPEC_BYTES:
-            raise ContractError("specification exceeds 2 MiB")
+            raise ContractError(f"{label} exceeds 2 MiB")
         data.decode("utf-8")
         return data
     except ContractError:
         raise
     except (OSError, UnicodeError) as exc:
-        raise ContractError(f"cannot read UTF-8 specification {path}: {exc}") from exc
+        raise ContractError(f"cannot read UTF-8 {label} {path}: {exc}") from exc
 
 
 def _output_path(path: Path, repo: Path) -> Path:
@@ -194,6 +194,19 @@ def _prompt(source: str, content: str, skills: list[dict]) -> str:
     )
 
 
+_CRITERION_RULES = (
+    "1. Every criterion names its decision procedure: the run's configured verification "
+    "commands, a named region of the candidate diff, or a named path at the integration "
+    "revision.\n"
+    "2. One criterion, one role. Independent review can read but cannot execute, so a "
+    "criterion decided by running something must not be left to it.\n"
+    "3. An absence names the complete set it holds over. 'No X anywhere' is not decidable.\n"
+    "4. One criterion, one claim. The acceptance map is per-criterion and boolean.\n"
+    "5. Criteria are frozen for the run; a requirement discovered later is a new ticket.\n"
+    "6. Prefer a criterion the implementing turn cannot grade with its own new tests.\n"
+)
+
+
 def _gate_prompt(source: str, content: str, tasks: list[dict]) -> str:
     """Judge a graph against the criterion contract without seeing its author."""
     graph = json.dumps({"tasks": tasks}, indent=2)
@@ -207,21 +220,42 @@ def _gate_prompt(source: str, content: str, tasks: list[dict]) -> str:
         "Every question must name the criterion contract rule it invokes and cite source_refs that "
         "are exact stripped lines of the specification, so an unfounded question is visible as "
         "one. The rules:\n"
-        "1. Every criterion names its decision procedure: the run's configured verification "
-        "commands, a named region of the candidate diff, or a named path at the integration "
-        "revision.\n"
-        "2. One criterion, one role. Independent review can read but cannot execute, so a "
-        "criterion decided by running something must not be left to it.\n"
-        "3. An absence names the complete set it holds over. 'No X anywhere' is not decidable.\n"
-        "4. One criterion, one claim. The acceptance map is per-criterion and boolean.\n"
-        "5. Criteria are frozen for the run; a requirement discovered later is a new ticket.\n"
-        "6. Prefer a criterion the implementing turn cannot grade with its own new tests.\n\n"
+        f"{_CRITERION_RULES}\n"
         "Use kind undecidable for rule 1 or 2, unbounded for rule 3, and missing or ambiguous when "
         "the specification simply does not settle something. Ask only what the specification can "
         "answer; a question about the repository's code is not one.\n\n"
         f"Source path: {source}\n"
         f"--- BEGIN PROPOSED TICKET GRAPH ---\n{graph}\n--- END PROPOSED TICKET GRAPH ---\n"
         f"--- BEGIN UNTRUSTED SPECIFICATION ---\n{content}\n--- END UNTRUSTED SPECIFICATION ---"
+    )
+
+
+def _document_gate_prompt(source: str, document_text: str, tasks: list[dict]) -> str:
+    """Judge a committed ticket document `prepare` did not write.
+
+    There is no specification to compare the graph to, so a question's
+    citation binds to the ticket document's own text instead: the same
+    bound-and-located contract `_gate_prompt` applies to a specification.
+    """
+    graph = json.dumps({"tasks": tasks}, indent=2)
+    return (
+        "Adversarially review the committed Anvil ticket graph below against the criterion "
+        "contract. This is a read-only judging turn: do not edit files, run commands, commit, "
+        "or implement anything, and do not propose a replacement graph. No preparation turn "
+        "produced this graph, so there is no author's account to weigh; judge it exactly as "
+        "written.\n\n"
+        "You cannot approve. Return only questions the ticket document must answer before this "
+        "graph is executable. Return an empty questions array when you have none; that records "
+        "the absence of an objection and is not an endorsement.\n\n"
+        "Every question must name the criterion contract rule it invokes and cite source_refs "
+        "that are exact stripped lines of the ticket document below, so an unfounded question is "
+        "visible as one. The rules:\n"
+        f"{_CRITERION_RULES}\n"
+        "Use kind undecidable for rule 1 or 2, unbounded for rule 3, and missing or ambiguous "
+        "when the ticket document simply does not settle something.\n\n"
+        f"Source path: {source}\n"
+        f"--- BEGIN TICKET GRAPH ---\n{graph}\n--- END TICKET GRAPH ---\n"
+        f"--- BEGIN COMMITTED TICKET DOCUMENT ---\n{document_text}\n--- END COMMITTED TICKET DOCUMENT ---"
     )
 
 
@@ -297,6 +331,35 @@ def _gate_selection(agent: str, gate_agent: str | None) -> str | None:
     if selected == agent:
         raise ContractError(
             "gate agent must differ from the preparation agent; pass none to disable the gate")
+    return selected
+
+
+# A hand-written ticket document has no authoring adapter for `_GATE_DEFAULT` to key
+# on, so `gate_document` falls back to this fixed, recorded choice instead of a lookup.
+_DOCUMENT_GATE_DEFAULT = "codex"
+
+
+def _document_gate_agent(document: dict, gate_agent: str | None) -> str:
+    """Resolve the gate adapter for a ticket document `prepare` may not have written.
+
+    `prepare`'s rule -- refuse a gate on the adapter that authored the graph -- still
+    applies when the document carries one in `provenance.agent`, which happens when an
+    already-prepared document is gated again. A hand-written graph carries none, so
+    there is nothing to derive a default from; the fallback is `_DOCUMENT_GATE_DEFAULT`
+    rather than a `_GATE_DEFAULT` lookup keyed on an authoring adapter that does not
+    exist, and the selection -- explicit or defaulted -- is always recorded.
+    """
+    authoring = None
+    provenance = document.get("provenance")
+    if isinstance(provenance, dict):
+        authoring = provenance.get("agent")
+    selected = gate_agent if gate_agent is not None else _DOCUMENT_GATE_DEFAULT
+    if selected not in EXECUTION_AGENTS:
+        raise ContractError("gate agent must be codex, claude-code, or muse")
+    if authoring is not None and selected == authoring:
+        raise ContractError(
+            "gate agent must differ from the adapter that authored this ticket document "
+            f"({authoring}); choose another with --gate-agent")
     return selected
 
 
@@ -473,3 +536,82 @@ def prepare(source: Path, output: Path, *, repo: Path, agent: str = "codex",
             "task_count": len(graph.tasks),
             "wave_count": len(graph.waves), "available_skills": sorted(allowed),
             "unclassified_skills": unclassified, "provenance": final["provenance"]}
+
+
+def gate_document(path: Path, *, repo: Path, gate_agent: str | None = None,
+                   gate_executable: str | None = None, timeout: float = 900,
+                   artifact_root: Path | None = None, gate_profile=None,
+                   gate_runner=None, exclude: tuple[str, ...] = ()) -> dict:
+    """Run the readiness gate over a committed ticket document `prepare` did not write.
+
+    Reads the document and the target repository only, so a hand-written graph gets
+    the same intake scrutiny as a generated one: no planning turn runs first, nothing
+    is written back, no run starts, and this never touches Git or the ledger -- a
+    graph cannot be silently rewritten by being inspected. `prepare`'s own behavior,
+    including its `_GATE_DEFAULT` lookup and write path, is untouched by this function.
+    """
+    exclude = _exclusion(exclude)
+    if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout) or not 0 < timeout <= 3600):
+        raise ContractError("gate timeout must be between 0 and 3600 seconds")
+    repo = Path(repo).expanduser().resolve()
+    if not repo.is_dir():
+        raise ContractError(f"repository does not exist: {repo}")
+    path = Path(path).expanduser().absolute()
+    data = _read_spec(path, repo, label="ticket document")
+    path = path.resolve()
+    relative_document = str(path.relative_to(repo))
+    try:
+        document = json.loads(data.decode("utf-8"), object_pairs_hook=_unique_object,
+                              parse_constant=_reject_constant)
+    except ContractError:
+        raise
+    except json.JSONDecodeError as exc:
+        raise ContractError(
+            f"invalid JSON at line {exc.lineno}, column {exc.colno}: {exc.msg}") from exc
+    except (ValueError, RecursionError) as exc:
+        raise ContractError(f"invalid JSON: {exc}") from exc
+    graph = TaskGraph.from_document(document)
+    selected = _document_gate_agent(document, gate_agent)
+    gate_profile = _profile(selected, gate_profile, "gate")
+    binary = _binary(selected, gate_executable)
+    artifact_root = Path(artifact_root or Path.home() / ".local/state/anvil/preparations").expanduser()
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    gate_artifact_dir = artifact_root.resolve() / uuid.uuid4().hex
+    if gate_runner is None:
+        _probe(selected, binary, gate_profile, exclude, "readiness gate agent")
+    judge = (gate_runner if gate_runner is not None
+             else create_runner(selected, binary, profile=gate_profile, exclude=exclude))
+    tasks = [task.to_dict() for task in graph.tasks]
+    source_lines = {line.strip() for line in data.decode("utf-8").splitlines() if line.strip()}
+    request = dict(
+        repo=repo,
+        prompt=_document_gate_prompt(relative_document, data.decode("utf-8"), tasks),
+        schema=gate_schema(),
+        artifact_dir=gate_artifact_dir,
+        timeout=timeout,
+        read_only=True,
+    )
+    if selected == "muse" and gate_runner is None:
+        request["purpose"] = "plan"
+    verdict = judge.run(**request)
+    if (not isinstance(verdict, dict) or set(verdict) != {"version", "questions"}
+            or verdict["version"] != 1):
+        raise ContractError("gate result must contain only version and questions")
+    raised = _questions(verdict["questions"], source_lines, "gate questions")
+    provenance = {"generator": "anvil", "generator_version": __version__,
+                  "document": relative_document,
+                  "document_sha256": hashlib.sha256(data).hexdigest(),
+                  "gated_at": datetime.now(timezone.utc).isoformat(),
+                  "gate": {"agent": selected, "questions": len(raised)}}
+    if gate_profile is not None:
+        provenance["gate"]["model"] = gate_profile["model"]
+    result = {"status": "needs_clarification" if raised else "clean",
+              "document": str(path), "gate_agent": selected,
+              "artifact_dir": str(gate_artifact_dir), "provenance": provenance}
+    if raised:
+        result["raised_by"] = "gate"
+        result["questions"] = raised
+    else:
+        result["task_count"] = len(graph.tasks)
+    return result
