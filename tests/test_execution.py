@@ -53,6 +53,9 @@ class FakeRunner:
             raise InvocationExhausted("stopped after exhausting its configured turns", "turn_exhaustion")
         if self.mode == "budget-exhaustion":
             raise InvocationExhausted("stopped after exhausting its configured budget", "budget_exhaustion")
+        if self.mode == "turn-exhaustion-partial":
+            (workspace / "partial.txt").write_text("interrupted mid-turn")
+            raise InvocationExhausted("stopped after exhausting its configured turns", "turn_exhaustion")
         if self.mode == "blocked":
             return {"status": "blocked", "summary": "Need a decision", "acceptance": [],
                     "blockers": ["Clarify the output format"]}
@@ -132,9 +135,60 @@ class SerialExecutionTests(unittest.TestCase):
                 self.assertEqual(result["status"], "failed")
                 failed_task = next(task for task in result["tasks"] if task["status"] == "failed")
                 self.assertEqual(failed_task["details"]["failure_category"], category)
+                # This fake worker exhausts before writing anything: nothing
+                # changed, so no revision is recorded for it.
+                self.assertNotIn("exhausted_sha", failed_task["details"])
                 saved = RunStore.read(Path(result["run_dir"]) / "state.sqlite")
                 failed_attempt = next(a for a in saved["attempts"] if a["status"] == "failed")
                 self.assertEqual(failed_attempt["details"]["failure_category"], category)
+                self.assertNotIn("exhausted_sha", failed_attempt["details"])
+
+    def test_an_exhausted_worker_with_a_partial_tree_retains_its_own_revision(self):
+        """RUN_ECONOMICS.md slice 4: an exhausted tree is not a candidate.
+
+        The run stops exactly as it does today -- same status, same error,
+        same failure_category -- and the only new thing is the revision the
+        supervisor commits for the partial tree, on the attempt's base, under
+        its own retained kind.
+        """
+        result, runner = self.run_mode("turn-exhaustion-partial")
+        self.assertEqual(result["status"], "failed")
+        failed_task = next(task for task in result["tasks"] if task["status"] == "failed")
+        self.assertEqual(failed_task["details"]["failure_category"], "turn_exhaustion")
+        revision = failed_task["details"]["exhausted_sha"]
+        self.assertEqual(git(self.repo, "show", "-s", "--format=%P", revision), self.base)
+        self.assertEqual(git(self.repo, "show", f"{revision}:partial.txt"), "interrupted mid-turn")
+        # Never a candidate: no candidate_sha, no acceptance claims, no
+        # review, and the task never reached the candidate phase.
+        self.assertNotIn("candidate_sha", failed_task["details"])
+        self.assertNotIn("review", failed_task["details"])
+        attempt = self.assert_retained(result, kinds=("exhausted",))
+        ref = f"refs/anvil/exhausted/{result['run_id']}/{attempt}"
+        self.assertEqual(git(self.repo, "rev-parse", ref), revision)
+        saved = RunStore.read(Path(result["run_dir"]) / "state.sqlite")
+        failed_attempt = next(a for a in saved["attempts"] if a["status"] == "failed")
+        self.assertEqual(failed_attempt["details"]["exhausted_sha"], revision)
+
+    def test_retained_exhausted_revision_is_listed_and_can_be_reaped(self):
+        from anvil.retention import delete
+        import shutil
+        result = self.run_mode("turn-exhaustion-partial")[0]
+        revision = result["tasks"][0]["details"]["exhausted_sha"]
+        listed = self.retained()["items"]
+        entry = next(item for item in listed if item["kind"] == "exhausted")
+        self.assertEqual(entry["revision"], revision)
+        self.assertFalse(entry["accepted"])
+        # The ledger still names it: reaping the run's refs while it survives
+        # must refuse to strand this one.
+        outcome = delete(self.repo, self.config.state_dir, result["run_id"])
+        self.assertEqual(outcome["removed_count"], 0)
+        self.assertIn(revision, {item["revision"] for item in outcome["refused"]})
+        # Once the ledger is gone nothing records the revision, so it can be
+        # reaped.
+        shutil.rmtree(result["run_dir"])
+        outcome = delete(self.repo, self.config.state_dir, result["run_id"])
+        self.assertGreater(outcome["removed_count"], 0)
+        self.assertEqual(outcome["refused"], [])
 
     def test_failures_never_advance_branch_or_unlock_dependents(self):
         for mode in ("bad-check", "missing-evidence", "review-mutates", "worker-commits"):

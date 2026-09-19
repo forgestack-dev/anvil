@@ -1,16 +1,17 @@
-"""Inspect and remove the refs a run retains for its candidate revisions.
+"""Inspect and remove the refs a run retains for its candidate and other revisions.
 
-`Repository.retain` names every candidate and integration revision a run
-creates, so a rejected attempt stays auditable after the run that discarded it.
-Those refs accumulate one pair per attempt and would otherwise grow without
-bound in the operator's repository, which AGENTS.md forbids.
+`Repository.retain` names every candidate, integration and exhausted revision
+a run creates, so a rejected attempt or an exhausted one stays auditable after
+the run that discarded it. Those refs accumulate one ref per commit and would
+otherwise grow without bound in the operator's repository, which AGENTS.md
+forbids.
 
 Removal is explicit and never automatic. Nothing in a run reads these refs, so
 deleting them changes no decision; what it can destroy is evidence a ledger
 still points at, and `delete` refuses exactly that case.
 
 That ties a ref's lifetime to its ledger's: while a run directory survives so do
-its refs, and removing the directory releases them. The pair is reclaimed
+its refs, and removing the directory releases them. They are reclaimed
 together under whatever retention the operator already applies to the state
 root, rather than becoming a second thing to remember.
 """
@@ -26,10 +27,10 @@ from .store import StoreError
 from .workspaces import Repository, WorkspaceError
 
 NAMESPACE = "refs/anvil/"
-RETAINED = re.compile(r"refs/anvil/(candidate|integration)/([^/]+)/([^/]+)\Z")
+RETAINED = re.compile(r"refs/anvil/(candidate|integration|exhausted)/([^/]+)/([^/]+)\Z")
 #: Ledger fields that name a revision; a dangling one of these is the failure
 #: docs/OBSERVED_LIMITS.md records.
-RECORDED = ("candidate_sha", "integration_sha", "integrated_sha", "reviewed_sha")
+RECORDED = ("candidate_sha", "integration_sha", "integrated_sha", "reviewed_sha", "exhausted_sha")
 
 
 def _refs(repo: Repository) -> list[tuple[str, str, str, str, str]]:

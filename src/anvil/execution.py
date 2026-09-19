@@ -264,6 +264,11 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
         track_commands(scope, run_dir)
         integration = run_dir / "integration"
         current_task, attempt_id = None, None
+        # True from a worker's own worktree being claimed until its candidate
+        # commits: the only window in which an exhausted invocation has a
+        # partial tree of its own worth retaining, rather than the shared
+        # integration worktree a review invocation never writes to.
+        awaiting_candidate = False
         publisher = None
         with RunStore(run_dir / "state.sqlite") as store:
             def record_stop(status: str, error: str, details: dict) -> bool:
@@ -309,6 +314,7 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
                         attempt_id = store.start_attempt(task.id, base, str(workspace),
                                                          attempt_id=reserved_id)
                         repo.create_worktree(workspace, base)
+                        awaiting_candidate = True
                         evidence = skill_context.evidence(task, config.agent)
                         if evidence is not None:
                             store.record_message(task.id, attempt_id=attempt_id,
@@ -327,6 +333,7 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
                             store.set_run("blocked", error="; ".join(claims["blockers"]))
                             break
                         candidate = repo.commit_candidate(workspace, base, f"Anvil: {task.id} — {task.title}")
+                        awaiting_candidate = False
                         repo.retain("candidate", run_id, attempt_id, candidate)
                         store.transition(task.id, "candidate", attempt_id=attempt_id,
                                          details={"candidate_sha": candidate, "worker": claims})
@@ -398,6 +405,16 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
                     details["verification"] = exc.records
                 if isinstance(exc, InvocationExhausted):
                     details["failure_category"] = exc.category
+                    # Commit the partial tree while Git is still usable: this
+                    # runs synchronously, ahead of any worktree cleanup, and
+                    # only for the worker's own worktree -- never the shared
+                    # integration worktree a review invocation reads.
+                    if awaiting_candidate and current_task is not None:
+                        revision = repo.commit_exhausted(
+                            workspace, base, f"Anvil: {current_task.id} — exhausted attempt")
+                        if revision is not None:
+                            repo.retain("exhausted", run_id, attempt_id, revision)
+                            details["exhausted_sha"] = revision
                 if not record_stop("failed", str(exc), details):
                     raise
             result = store.snapshot()
