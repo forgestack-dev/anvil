@@ -98,6 +98,45 @@ def _interrupt_cancels(scope: ProcessScope):
 
 AMENDABLE = ("review_rejection", "verification_failure")
 
+#: Bytes of each recorded check stream inlined into a retry prompt.
+CHECK_TAIL_BYTES = 8 * 1024
+
+
+def _check_evidence(reason: str, records: list[dict]) -> str:
+    """The check output itself, for a worker that cannot open the log files.
+
+    VerificationFailure names the recorded logs by path, which is right for the
+    ledger and for an operator. A worker turn has bounded file tools rooted at
+    its worktree, so handing it those paths tells it to read a file it will be
+    refused; Claude Code then reports a denied permission, the adapter discards
+    the whole result because a turn with incomplete evidence cannot be trusted,
+    and the attempt is lost after doing the work. The supervisor already holds
+    this output, so it inlines a bounded tail rather than a path.
+
+    Only the tail is inlined: a failing suite's interesting part is its end, and
+    the whole of this run's own log is megabytes. A stream that cannot be read
+    is reported as such rather than silently omitted.
+    """
+    lines = [reason]
+    for record in records:
+        lines.append("\ncommand: " + " ".join(record["argv"]))
+        lines.append(f"exit status: {record['returncode']}, timed out: {record['timed_out']}")
+        for stream in ("stdout", "stderr"):
+            path = record.get(stream)
+            if not path:
+                continue
+            try:
+                data = Path(path).read_bytes()
+            except OSError as exc:
+                lines.append(f"--- {stream} unreadable: {exc}")
+                continue
+            tail = data[-CHECK_TAIL_BYTES:]
+            elided = "" if len(tail) == len(data) else f" (last {len(tail)} of {len(data)} bytes)"
+            lines.append(f"--- {stream}{elided} ---")
+            lines.append(tail.decode("utf-8", "replace").strip() or "(empty)")
+    return "\n".join(lines)
+
+
 
 def _amend_source(item: Assignment, base: str, failure_category: str) -> str | None:
     """The candidate a replacement attempt may restore, or None for a fresh worktree.
@@ -439,7 +478,7 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                         try:
                             outcome = integration.future.result()
                         except VerificationFailure as exc:
-                            if retry(item, str(exc) + "\n" + json.dumps(exc.records), "verification_failure"):
+                            if retry(item, _check_evidence(str(exc), exc.records), "verification_failure"):
                                 integration = None
                                 continue
                             raise

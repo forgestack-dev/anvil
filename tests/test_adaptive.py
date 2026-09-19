@@ -863,6 +863,25 @@ prompt = sys.stdin.read()''')
                          ['review_rejection', 'review_rejection'])
         self.assertEqual(git(self.repo, 'rev-parse', result['branch']), self.base)
 
+    def test_a_check_failure_reaches_the_prompt_as_output_not_as_a_log_path(self):
+        """A worker's file tools are rooted at its worktree, so a prompt that
+        names a recorded log file tells it to read something it will be refused.
+
+        Claude Code reports the refusal as a denied permission and the adapter
+        discards the whole result, so an attempt that did the work is lost. Run
+        3586bd13 lost one that way. The supervisor holds the output already.
+        """
+        _, runner = self.amend_run(runner=CheckFailingWorker())
+        amend = runner.workers[1]
+        self.assertIn('required verification failed', amend)
+        # The failing command and its own output, not a path to them.
+        self.assertIn('exit status: 1', amend)
+        self.assertIn('AssertionError', amend)
+        self.assertNotIn('.stderr.log', amend)
+        self.assertNotIn('.stdout.log', amend)
+        # Nothing outside the worktree is named at all.
+        self.assertNotIn(str(self.root / 'state'), amend)
+
     def test_the_amend_prompt_states_the_tree_the_findings_and_the_criteria(self):
         """Criterion 4: the three things the fresh prompt does not say."""
         _, runner = self.amend_run()
