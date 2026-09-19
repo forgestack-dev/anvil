@@ -1,13 +1,15 @@
 # Run economics and terminal classification
 
-Specified, not implemented. Five slices, measured from this repository's own
-runs. Recorded 2026-09-17 from the saved ledgers of the sixteen runs under the
-state root dated 2026-09-16.
+Three of five slices implemented. Measured from this repository's own runs,
+recorded 2026-09-17 from the saved ledgers of the sixteen runs under the state
+root dated 2026-09-16.
 
-This milestone is numbered 8 but is not eighth in dependency order. Slices 4 and
-5 extend milestones 9 and 10, which are implemented, and slice 4 needs the tree
-restoration mechanism milestone 11 prototypes, which is not. Slices 1, 2 and 3
-are unblocked and are the place to start.
+This milestone is numbered 8 but is not eighth in dependency order. Slices 1, 2
+and 3 are implemented. Slices 4 and 5 extend milestones 9 and 10, both
+implemented, and slice 4 needs the tree restoration mechanism milestone 11
+specified, which shipped on 2026-09-18 as `Repository.create_amended_worktree`.
+Nothing in this milestone is blocked any longer; slices 4 and 5 are filed as
+`tickets/run-economics.json`.
 
 - Classify an invocation's terminal reason from its own result event rather than from its process exit code.
 - Record turn exhaustion and budget exhaustion as failure categories the escalation ladder and local history can read.
@@ -78,21 +80,46 @@ died at a $2 ceiling enforced against a subscription list-price estimate, which
 is the harm slice 3 exists to remove; with it removed the same ticket ran to
 $2.52 and was accepted, and its run recorded basis list, enforced false.
 
-**Slice 4 — retaining an exhausted attempt.** `parallel.py`'s retry builds a
-fresh worktree from the base and clears the attempt's claims and candidate, and
-today even that does not run for this case: a `ProcessError` is caught in
-`execution.py` and stops the whole run, so the eight exhausted invocations above
-ended sixteen runs between them. Milestone 11 specifies restarting from a
-rejected candidate's tree, and the mechanism it prototypes — restoring a tree
-into a worktree left at the base — is the one this slice needs. The trigger is
-what differs: an amend addresses bound findings on a candidate a reviewer
-returned, while an exhausted attempt has no candidate and no findings, only a
-tree and a ceiling it did not finish under. Decide what such an attempt is worth
-before spending more on it — a raised ceiling on the same workspace, or the
-partial tree offered to the configured checks, which under milestone 9 now run
-before review and can reject it for free. Note that milestone 11 records the
-saving as unmeasured for the same reason it is uncertain here: orientation is
-roughly 80% of an invocation, and a resumed attempt may pay it again.
+**Slice 4 — retaining an exhausted attempt.** Slices 1 and 2 gave exhaustion a
+name the ledger admits, but not a path: an `InvocationExhausted` is still caught
+beside every other `ProcessError`, in `execution.py` and in `parallel.py`, and
+still stops the whole run. It never reaches `retry`, so the eight exhausted
+invocations above ended sixteen runs between them. When it does reach `retry`,
+that path builds a fresh worktree from the base and clears the attempt's claims
+and candidate, discarding the tree the ceiling interrupted.
+
+Milestone 11 shipped the mechanism this slice needs:
+`Repository.create_amended_worktree` restores a commit's tree into a worktree
+left at the base, and `parallel._amend_source` decides when that is safe. The
+trigger is what differs. An amend addresses bound findings on a candidate a
+reviewer returned; an exhausted attempt has no candidate and no findings, only a
+tree and a ceiling it did not finish under.
+
+Two things follow, and both are decisions this slice makes rather than inherits.
+
+*An exhausted tree is not a candidate.* It was never claimed, verified, or
+reviewed, and the invocation produced no `WORKER_SCHEMA` result, so there are no
+acceptance claims to anchor a review against. The supervisor commits it to its
+own immutable revision under its own retained kind, and nothing in the
+acceptance path may mistake one for a candidate. This also rules out the
+alternative considered here — offering the partial tree to the configured checks
+and, if green, to review. Under milestone 9 those checks are cheap and run
+before review, but a green tree with no acceptance map cannot be reviewed under
+the stage 2 contract, and weakening that contract to admit one would cost more
+than the case is worth.
+
+*The restored tree is input, and a retained ref is not.* `Repository.retain`
+states that nothing reads the refs it writes: they are evidence, and no
+acceptance, rejection, retry or recovery decision may depend on one existing.
+The replacement attempt therefore reads the revision the coordinator holds for
+the attempt in hand, exactly as `_amend_source` reads `item.candidate`, and the
+retained ref remains evidence for an auditor. The base-unchanged guard applies
+unchanged, and for the same reason.
+
+The raised ceiling comes from the escalation ladder a retry already climbs, not
+from a new setting. Note that milestone 11 records its saving as unmeasured for
+the same reason it is uncertain here: orientation is roughly 80% of an
+invocation, and a resumed attempt may pay it again.
 
 **Slice 5 — surfacing usage.** `telemetry.py` already parses cache creation,
 cache read, output and thinking tokens per invocation and nothing aggregates
@@ -101,7 +128,9 @@ Milestone 10 ships the read-only server and its dashboard, so this slice extends
 a contract that exists rather than proposing one — see [the serve
 contract](SERVE.md), whose read version is the thing an added decomposition has
 to move. Neither that contract nor `report.json` carries the component split or
-the terminal reason today.
+the terminal reason today. Slice 1 has since made the terminal reason something
+the ledger holds rather than something a reader recovers from a raw stream, so
+this slice aggregates recorded values and infers none.
 
 ### What this does not establish
 

@@ -124,6 +124,168 @@
         "integrated_sha": "505436df8f471bcc23bfb1e8a44fe7f28959090a",
         "evidence": "/Users/christian/.local/state/anvil/7b88085dcd7745728ff70088777d3f42"
       }
+    },
+    {
+      "id": "retain-exhausted-tree",
+      "title": "Commit an exhausted attempt's partial tree to its own retained revision",
+      "objective": "An invocation that hits a turn or budget ceiling leaves a partial tree in its worktree and nothing names it, so the work is destroyed when the worktree goes. Give that tree an immutable revision of its own, under a retained kind that is not 'candidate', so a later slice can restore it and an auditor can replay it. This ticket changes what a run records, not what it does: an exhausted run still stops exactly as it does today.",
+      "depends_on": [],
+      "acceptance_criteria": [
+        "When an invocation raises InvocationExhausted with a turn or budget category, the supervisor commits that attempt's worktree as a single commit on the attempt's base before the worktree is removed, and records its revision on the attempt. An exhausted worktree with nothing changed records no revision rather than an empty commit.",
+        "That revision is not a candidate and nothing in the acceptance path may treat it as one. It carries no acceptance claims, is never verified, never reviewed, and never reaches prepare_integration. The phases a task may occupy are unchanged, and no attempt reaches the candidate phase because of it.",
+        "The revision is named by a supervisor-owned ref under a retained kind distinct from candidate and integration, and anvil retained lists and removes it on the same terms as the existing kinds, still refusing to strand a revision a ledger records.",
+        "The run's outcome is unchanged. An exhausted invocation still stops the run, with the same status, the same error, and the same failure_category slices 1 and 2 record. Only the recorded revision is new.",
+        "Ledgers and reports written before this change remain readable, and anvil retained over a run that has no exhausted revision behaves exactly as it does today.",
+        "Tests cover an exhausted worker recording the revision with the base as its single parent, an exhausted worker that changed nothing recording none, the revision surviving a prune that an ordinary gc would take, retained listing and removing it, and the run's status and failure category being unchanged by its presence. Fake agents and real temporary repositories only, never a live model."
+      ],
+      "sites": [
+        {
+          "criterion": 1,
+          "paths": [
+            "src/anvil/parallel.py",
+            "src/anvil/execution.py",
+            "src/anvil/workspaces.py"
+          ]
+        },
+        {
+          "criterion": 3,
+          "paths": [
+            "src/anvil/workspaces.py",
+            "src/anvil/retention.py"
+          ]
+        },
+        {
+          "criterion": 6,
+          "paths": [
+            "tests/test_workspaces.py",
+            "tests/test_execution.py",
+            "tests/test_adaptive.py"
+          ]
+        }
+      ],
+      "source_refs": [
+        "RUN_ECONOMICS.md slice 4, an exhausted tree is not a candidate",
+        "ROADMAP.md milestone 8, retain a turn-exhausted attempt's workspace",
+        "AGENTS.md, the supervisor owns Git and old worktrees are never adopted",
+        "workspaces.Repository.retain, retained revisions are evidence and never input"
+      ],
+      "risk": "medium"
+    },
+    {
+      "id": "resume-exhausted-attempt",
+      "title": "Retry an exhausted attempt from its own partial tree instead of stopping the run",
+      "objective": "An InvocationExhausted is still caught beside every other ProcessError and stops the whole run, so it never reaches retry: the eight exhausted invocations RUN_ECONOMICS.md measures ended sixteen runs between them. Route exhaustion into the existing retry instead, and start the replacement attempt from the revision the previous ticket recorded rather than from an empty worktree.",
+      "depends_on": [
+        "retain-exhausted-tree"
+      ],
+      "acceptance_criteria": [
+        "A turn-exhausted or budget-exhausted invocation is a failure of that task's attempt rather than of the run: it is recorded with the failure category slice 2 defines, and the coordinator offers it the same retry a review rejection or a verification failure gets. When no retry is available the run stops exactly as it does today, with the same status and error. A budget or process failure that is not an exhaustion is unaffected.",
+        "The replacement attempt restores the exhausted attempt's recorded revision into a worktree left at the accepted base, using the mechanism milestone 11 shipped, and is permitted to do so only while the accepted base is unchanged since the exhausted attempt began. When a peer integrated in the meantime the retry falls back to a fresh worktree. A test asserts the peer's work survives, and must be written so that it fails against a version which restores unconditionally; state in the ticket record how you confirmed it fails.",
+        "The restored revision is read from the attempt the coordinator holds, never from the refs/anvil/ ref that names it, because a retained ref is evidence and no retry decision may depend on one existing.",
+        "The prompt for a resumed attempt says what is true of it and nothing more: the worktree holds a partial tree a previous attempt left when it ran out of turns or budget, that tree was never reviewed and may be incomplete or internally inconsistent, and every acceptance criterion still applies and will be judged from scratch. It states no findings, because an exhausted attempt produced none.",
+        "A resumed attempt escalates to the next-ranked profile as a fresh retry does, rather than keeping its profile as an amend does. The ceiling a resumed attempt gets is the one that profile already carries; no new setting is introduced. The attempt cap is unchanged, so a resumption consumes the one retry a run has and adds none.",
+        "The replacement attempt's routing_decision records that it resumed an exhausted attempt and names the revision it restored. No new failure category is introduced.",
+        "Tests in tests/test_adaptive.py cover a resumed attempt seeing the exhausted attempt's files and going on to be accepted, the base-advanced fallback from criterion 2, an exhaustion with no retry available still stopping the run unchanged, escalation happening, and the routing_decision naming a revision that resolves. Fake agents and real temporary repositories only, never a live model."
+      ],
+      "sites": [
+        {
+          "criterion": 1,
+          "paths": [
+            "src/anvil/parallel.py",
+            "src/anvil/execution.py"
+          ]
+        },
+        {
+          "criterion": 2,
+          "paths": [
+            "src/anvil/parallel.py",
+            "tests/test_adaptive.py"
+          ]
+        },
+        {
+          "criterion": 3,
+          "paths": [
+            "src/anvil/parallel.py"
+          ]
+        },
+        {
+          "criterion": 4,
+          "paths": [
+            "src/anvil/parallel.py"
+          ]
+        },
+        {
+          "criterion": 5,
+          "paths": [
+            "src/anvil/parallel.py",
+            "src/anvil/adaptive_runtime.py"
+          ]
+        },
+        {
+          "criterion": 7,
+          "paths": [
+            "tests/test_adaptive.py"
+          ]
+        }
+      ],
+      "source_refs": [
+        "RUN_ECONOMICS.md slice 4, the restored tree is input and a retained ref is not",
+        "AMEND_RETRIES.md sections 3 and 4, the mechanism and the base-unchanged guard",
+        "OBSERVED_LIMITS.md, what a raised ceiling does not establish"
+      ],
+      "risk": "high"
+    },
+    {
+      "id": "surface-invocation-usage",
+      "title": "Aggregate recorded per-invocation usage into the report and the dashboard",
+      "objective": "telemetry.py already parses cache creation, cache read, output and thinking tokens for every invocation, and nothing aggregates them: every number in RUN_ECONOMICS.md came from re-reading saved event streams by hand. Roll up what is already recorded so a run's cost decomposition and terminal reasons are readable without that.",
+      "depends_on": [],
+      "acceptance_criteria": [
+        "A run's report carries a usage aggregate over its invocations: the token components telemetry already parses, the cost with its basis kept distinct as slice 3 records it, and a breakdown by phase and terminal reason. Every value is summed from what the ledger holds; nothing is inferred, estimated, or re-derived from a raw stream.",
+        "The same aggregate is served under the existing api_version, following the change rule in docs/CLOUD_SYNC.md: adding a field or a route is permitted, and cursor ordering is not changed.",
+        "A list-price estimate is never presented as spend. Wherever a cost appears its basis appears with it, because AGENTS.md says a cost estimate is not an invoice.",
+        "A run recorded before this change, and an invocation whose usage the adapter did not report, each aggregate to what is present rather than to an error or a zero presented as a measurement.",
+        "The page shows the decomposition for a selected run and reaches the document through textContent like every other view, with numbers aligned as the existing spend table aligns them.",
+        "Tests cover the aggregate over a recorded fixture, a mixed-basis run keeping the two bases distinct, a pre-change ledger, and a missing-usage invocation, using recorded fixtures and never a live model."
+      ],
+      "sites": [
+        {
+          "criterion": 1,
+          "paths": [
+            "src/anvil/telemetry.py",
+            "src/anvil/store.py"
+          ]
+        },
+        {
+          "criterion": 2,
+          "paths": [
+            "src/anvil/serve.py",
+            "src/anvil/queries.py"
+          ]
+        },
+        {
+          "criterion": 5,
+          "paths": [
+            "src/anvil/assets/app.js",
+            "src/anvil/assets/index.html",
+            "src/anvil/assets/app.css"
+          ]
+        },
+        {
+          "criterion": 6,
+          "paths": [
+            "tests/test_routing_components.py",
+            "tests/test_serve.py"
+          ]
+        }
+      ],
+      "source_refs": [
+        "RUN_ECONOMICS.md slice 5, surfacing usage, and its measured decomposition",
+        "CLOUD_SYNC.md section 3, how the read contract version changes",
+        "SERVE.md, the routes and the page",
+        "AGENTS.md, cost estimates are not invoices"
+      ],
+      "risk": "medium"
     }
   ]
 }

@@ -17,13 +17,20 @@
         "OBSERVED_LIMITS.md section The auditing method",
         "ACCEPTANCE.md section Stage 1: checks before review"
       ],
-      "risk": "medium"
+      "risk": "medium",
+      "execution": {
+        "status": "done",
+        "integrated_sha": "505d9ad7931326ce2f09028a6d9e7df46568486d",
+        "reason": "implemented directly, not through an Anvil run"
+      }
     },
     {
       "id": "reap-candidate-refs",
       "title": "List and delete retained candidate refs",
       "objective": "Retained refs accumulate one pair per attempt and would otherwise grow without bound in the operator's repository, which AGENTS.md forbids. Give the operator an explicit way to see what is retained and to remove it, without ever touching accepted work.",
-      "depends_on": ["retain-candidate-refs"],
+      "depends_on": [
+        "retain-candidate-refs"
+      ],
       "acceptance_criteria": [
         "A read-only subcommand lists every retained ref with its run ID, attempt ID, ticket ID, revision, and whether that attempt was accepted, and exits without changing any ref.",
         "The same subcommand deletes the retained refs of one named run when explicitly asked, and reports how many it removed.",
@@ -35,7 +42,12 @@
         "OBSERVED_LIMITS.md section The auditing method",
         "AGENTS.md invariant: do not add unbounded background work or silently enlarge the user's backlog"
       ],
-      "risk": "low"
+      "risk": "low",
+      "execution": {
+        "status": "done",
+        "integrated_sha": "67512f806bda966c485ae2a9341f92c9cf13c094",
+        "reason": "implemented directly, not through an Anvil run"
+      }
     }
   ]
 }

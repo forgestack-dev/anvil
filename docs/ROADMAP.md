@@ -138,7 +138,7 @@ trigger for reopening it, which is Jev leaving early access, and which of the
 objections general availability does and does not settle. The milestone is a
 record of what was measured, not a release.
 
-## 8. Run economics and terminal classification — specified
+## 8. Run economics and terminal classification — three of five slices implemented
 
 - Classify an invocation's terminal reason from its own result event rather than from its process exit code.
 - Record turn exhaustion and budget exhaustion as failure categories the escalation ladder and local history can read.
@@ -152,10 +152,16 @@ graph does not establish. [OBSERVED_LIMITS.md](OBSERVED_LIMITS.md) records the
 same runs from the turn-budget side; the two agree on the mechanism and neither
 is a fix.
 
-This milestone is not eighth in dependency order. Slices 1 to 3 are unblocked.
-Slice 4 needs the tree restoration milestone 11 has since shipped as
-`Repository.create_amended_worktree`, so it is no longer blocked on it, and
-slice 5 extends the serve contract milestone 10 shipped.
+This milestone is not eighth in dependency order, and nothing in it is blocked.
+Slices 1 to 3 are implemented: an invocation's terminal reason is classified
+from its own result event, turn and budget exhaustion are failure categories the
+ledger admits, and a dollar ceiling is enforced only where the cost basis is
+billed. Slice 4 needed the tree restoration milestone 11 has since shipped as
+`Repository.create_amended_worktree`, and slice 5 extends the serve contract
+milestone 10 shipped. Both remaining slices are filed as
+`tickets/run-economics.json`; slice 4 is two tickets, because committing an
+exhausted tree to its own revision and routing exhaustion into a retry are
+separately reviewable and the second is a change to the failure path.
 
 ## 9. The acceptance decision — implemented
 
