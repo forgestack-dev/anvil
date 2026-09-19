@@ -57,7 +57,12 @@ class FakeRunner:
             return {"status": "blocked", "summary": "Need a decision", "acceptance": [],
                     "blockers": ["Clarify the output format"]}
         value = workspace / "value.txt"
-        previous = int(value.read_text()) if value.exists() else 0
+        # The target is a function of the base this attempt was given, not of
+        # whatever the worktree happens to hold. An amend retry restores the
+        # rejected candidate's tree into the worktree, and a fake worker that
+        # counted from there would count its own previous attempt again.
+        committed = git(workspace, "ls-tree", "--name-only", "HEAD", "value.txt")
+        previous = int(git(workspace, "show", "HEAD:value.txt")) if committed else 0
         value.write_text(str(previous + 1))
         if self.mode == "bad-check" or (self.mode == "second-fails" and len(self.workers) == 2):
             value.write_text("invalid")

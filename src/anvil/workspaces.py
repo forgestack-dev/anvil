@@ -169,6 +169,29 @@ class Repository:
         self._managed_worktrees.add(path)
         self.assert_revision(path, base)
 
+    def create_amended_worktree(self, path: Path, base: str, candidate: str) -> None:
+        """Create a worktree at the base holding a candidate's tree as uncommitted work.
+
+        commit_candidate refuses a worktree whose HEAD is not the base and
+        requires one commit with the base as its only parent, so a replacement
+        attempt cannot check the rejected candidate out. Restoring its tree
+        leaves HEAD at the base and presents the candidate as ordinary
+        uncommitted work -- including the files it deleted -- which
+        commit_candidate then squashes into one commit exactly as it does for a
+        fresh attempt.
+
+        The caller decides when this is safe. A candidate's tree is the base it
+        was written against plus its own changes, so restoring one onto a base
+        that has advanced would revert whatever advanced it.
+        docs/AMEND_RETRIES.md
+        """
+        self._assert_owner("create_amended_worktree")
+        self.create_worktree(path, base)
+        path, base = self._managed(path), self._commit(base)
+        self.git("read-tree", "-u", "--reset", self._commit(candidate), cwd=path)
+        if self._commit("HEAD", cwd=path) != base:
+            raise WorkspaceError(f"restoring a candidate tree must leave HEAD at the base: {path}")
+
     def _branch_ref(self, branch: str) -> str:
         if not isinstance(branch, str) or not branch or branch.startswith("refs/"):
             raise WorkspaceError("branch must be a short branch name, without refs/")
