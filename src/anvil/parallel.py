@@ -23,7 +23,8 @@ from .config import RunConfig, WorkerConfig
 from .contracts import ContractError, Task
 from .evidence import (REVIEW_SCHEMA, WORKER_SCHEMA, concedes, format_findings,
                        rejection_reason, undeclared_findings, validate_result)
-from .execution import (VerificationFailure, assert_located, assert_sites,
+from .execution import (UnresolvableLocation, VerificationFailure,
+                        assert_located, assert_sites,
                         _review_prompt, _worker_prompt,
                         orientation_text, verify)
 from .planning import TaskGraph
@@ -601,9 +602,22 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                                                         task=item.task, role="review")
                         else:
                             validate_result(outcome, item.task, review=True)
-                            assert_located(repo, integration.sha, outcome["findings"], cwd=workspace)
+                            # Record before binding. A location that will not
+                            # resolve stops the run, and recording afterwards
+                            # lost the whole review with it: run e497e629's
+                            # verdict survived only in its artifact file, so the
+                            # ledger showed an error string and no review at
+                            # all. The body is already shape-validated here, and
+                            # nothing reads this message -- it is evidence.
                             store.record_message(item.task.id, attempt_id=item.attempt_id,
                                                  kind="review_result", body=outcome)
+                            try:
+                                assert_located(repo, integration.sha, outcome["findings"], cwd=workspace)
+                            except UnresolvableLocation as exc:
+                                raise _Blocked(str(exc), {
+                                    "review": outcome,
+                                    "integration_sha": integration.sha,
+                                    "failure_category": "unresolvable_location"}) from exc
                             if outcome["verdict"] != "approve":
                                 outside = undeclared_findings(item.task, outcome)
                                 reason = rejection_reason(outcome, outside)

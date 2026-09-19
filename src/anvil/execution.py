@@ -20,6 +20,18 @@ from .store import RunStore, StoreError
 from .workspaces import Repository, RepositoryLock, WorkspaceError
 
 
+class UnresolvableLocation(ContractError):
+    """A review finding names a place the reviewed revision does not have.
+
+    Still a ContractError, so every existing handler catches it unchanged. The
+    separate type exists so the coordinator can classify the stop instead of
+    reporting it as a crash: the run is not broken, a review produced something
+    the supervisor cannot act on, which is the same shape as an unlisted
+    requirement or an undeclared site. What it must never become is a retry --
+    refusing the finding is the point. docs/ACCEPTANCE.md stage 2.
+    """
+
+
 class VerificationFailure(RuntimeError):
     def __init__(self, records: list[dict]):
         super().__init__("required verification failed; inspect the recorded command logs")
@@ -82,18 +94,18 @@ def assert_located(repo, sha: str, findings: list[dict], *, cwd: Path | None = N
         try:
             kind = repo.git("cat-file", "-t", f"{sha}:{path}", cwd=cwd)
         except WorkspaceError as exc:
-            raise ContractError(
+            raise UnresolvableLocation(
                 f"review finding for criterion {item['criterion']} names "
                 f"{item['location']}, which does not exist at {sha[:12]}") from exc
         if line is None:
             continue
         if kind != "blob":
-            raise ContractError(
+            raise UnresolvableLocation(
                 f"review finding for criterion {item['criterion']} gives a line "
                 f"for {path}, which is a directory at {sha[:12]}")
         length = len(repo.git("show", f"{sha}:{path}", cwd=cwd).splitlines())
         if line > length:
-            raise ContractError(
+            raise UnresolvableLocation(
                 f"review finding for criterion {item['criterion']} names "
                 f"{item['location']}, but that file has {length} lines at {sha[:12]}")
 
@@ -365,7 +377,18 @@ def run_serial(config: RunConfig, *, runner=None, progress=None) -> dict:
                                             timeout=config.agent_timeout, read_only=True)
                         validate_result(review, task, review=True)
                         repo.assert_revision(integration, integrated)
-                        assert_located(repo, integrated, review["findings"], cwd=integration)
+                        try:
+                            assert_located(repo, integrated, review["findings"], cwd=integration)
+                        except UnresolvableLocation as exc:
+                            # Keep the review: it is the evidence that this
+                            # reviewer cited something the revision lacks, and
+                            # nothing else records it once the stop happens.
+                            store.transition(task.id, "blocked", attempt_id=attempt_id,
+                                             details={"review": review,
+                                                      "integration_sha": integrated,
+                                                      "failure_category": "unresolvable_location"})
+                            store.set_run("blocked", error=str(exc))
+                            break
                         if review["verdict"] != "approve":
                             details = {"review": review, "integration_sha": integrated}
                             outside = undeclared_findings(task, review)

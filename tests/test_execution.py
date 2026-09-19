@@ -673,10 +673,17 @@ class SerialExecutionTests(unittest.TestCase):
                                               "finding": "missing"}])
                 return outcome
         result = run_serial(self.config, runner=Phantom())
-        self.assertEqual(result["status"], "failed")
+        # Blocked, not failed: the run is not broken, a review produced
+        # something the supervisor cannot act on. The finding is still refused.
+        self.assertEqual(result["status"], "blocked")
         self.assertIn("src/invented.py:5", result["error"])
         self.assertIn("does not exist", result["error"])
         self.assertEqual(git(self.repo, "rev-parse", result["branch"]), self.base)
+        blocked = next(task for task in result["tasks"] if task["status"] == "blocked")
+        self.assertEqual(blocked["details"]["failure_category"], "unresolvable_location")
+        # The review survives the stop; it is the evidence of the bad citation.
+        self.assertEqual(blocked["details"]["review"]["findings"][0]["location"],
+                         "src/invented.py:5")
 
     def test_a_finding_may_name_a_line_range_and_resolves_at_its_first_line(self):
         """A reviewer writes a span for a finding covering several lines.
@@ -705,7 +712,7 @@ class SerialExecutionTests(unittest.TestCase):
                                               "finding": "missing"}])
                 return outcome
         result = run_serial(self.config, runner=PastEndRange())
-        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["status"], "blocked")
         # The range resolved, so the refusal is the precise one a bare line
         # gets rather than the blunt "path does not exist" it used to be.
         self.assertIn("value.txt:9999-10000", result["error"])
@@ -723,7 +730,7 @@ class SerialExecutionTests(unittest.TestCase):
                                               "finding": "missing"}])
                 return outcome
         result = run_serial(self.config, runner=PastEnd())
-        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["status"], "blocked")
         self.assertIn("9999", result["error"])
         self.assertIn("lines at", result["error"])
 

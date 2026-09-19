@@ -122,6 +122,18 @@ revision does not contain and a line past the end of a real file. Formatting
 moved into `evidence.format_findings`, so the run error, the published ticket
 reason and any retry prompt all read the same way.
 
+A refused location raises `UnresolvableLocation`, and both coordinators stop
+the ticket as `blocked` with the category `unresolvable_location` rather than
+letting a `ContractError` end the run as a crash. The refusal itself is
+unchanged: the finding is not acted on and no retry is offered for it, because
+a location that does not resolve is not evidence. What changed is that the run
+now says which kind of problem it had. The review is recorded before its
+locations are bound, for the same reason: run `e497e629` stopped here and its
+verdict survived only in the reviewer's artifact file, so the ledger carried an
+error string and no review at all. Nothing reads that message -- it is
+evidence, including evidence that a reviewer cited something the revision
+lacks.
+
 Three decisions the stage description did not settle:
 
 - **A location may name a directory.** A finding about something missing has no

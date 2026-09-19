@@ -179,10 +179,24 @@ class ParallelFailureTests(unittest.TestCase):
                 result = run_parallel(config, runners={"codex-worker": worker,
                                                        "claude-worker": worker},
                                       review_runner=Reviewer("phantom"))
-                self.assertEqual(result["status"], "failed", result["error"])
+                # Blocked, not failed: the run is not broken, a review
+                # produced something the supervisor cannot act on. The finding
+                # is still refused and no retry is offered for it.
+                self.assertEqual(result["status"], "blocked", result["error"])
                 self.assertIn("src/invented.py:5", result["error"])
                 self.assertIn("does not exist", result["error"])
                 self.assertEqual(self.git("rev-parse", result["branch"]), self.base)
+                blocked = next(task for task in result["tasks"] if task["status"] == "blocked")
+                self.assertEqual(blocked["details"]["failure_category"], "unresolvable_location")
+                # The review reaches the ledger even though binding it failed:
+                # recording used to happen after, and run e497e629 lost its
+                # verdict to that ordering.
+                recorded = [event for event in result["events"]
+                            if (event["details"].get("message_kind") == "review_result")]
+                self.assertEqual([item["location"] for body in recorded
+                                  for item in body["details"]["body"]["findings"]],
+                                 ["src/invented.py:5"])
+                self.assertEqual(sum(event["kind"] == "retry" for event in result["events"]), 0)
                 self.assertNotIn("reviewed_sha", result["tasks"][0]["details"])
 
     def test_a_pool_run_retains_its_candidate_and_integration_revisions(self):

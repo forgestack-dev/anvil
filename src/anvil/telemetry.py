@@ -157,7 +157,8 @@ def attempt_record(run_dir, attempt, *, decision=None, review_started=False):
     stored_category = details.get("failure_category")
     if stored_category not in ("review_rejection", "verification_failure",
                                "retryable_rejection", "unlisted_requirement",
-                               "undeclared_site", "turn_exhaustion", "budget_exhaustion"):
+                               "undeclared_site", "turn_exhaustion", "budget_exhaustion",
+                               "unresolvable_location"):
         stored_category = None
     return {"attempt_id": attempt["id"], "task_id": attempt["task_id"],
             "status": attempt["status"], "decision": decision,
