@@ -198,7 +198,8 @@
           "criterion": 1,
           "paths": [
             "src/anvil/parallel.py",
-            "src/anvil/execution.py"
+            "src/anvil/execution.py",
+            "src/anvil/store.py"
           ]
         },
         {
@@ -230,7 +231,8 @@
         {
           "criterion": 7,
           "paths": [
-            "tests/test_adaptive.py"
+            "tests/test_adaptive.py",
+            "tests/test_store.py"
           ]
         }
       ],
@@ -239,7 +241,14 @@
         "AMEND_RETRIES.md sections 3 and 4, the mechanism and the base-unchanged guard",
         "OBSERVED_LIMITS.md, what a raised ceiling does not establish"
       ],
-      "risk": "high"
+      "risk": "high",
+      "execution": {
+        "status": "done",
+        "run_id": "e497e6291c7a4f4d90e76a79cd042418",
+        "integrated_sha": "da15398bf359d8f6aab8f9035523355fb2483701",
+        "evidence": "/Users/christian/.local/state/anvil/e497e6291c7a4f4d90e76a79cd042418",
+        "reason": "Review found the change reached src/anvil/store.py and tests/test_store.py, outside criterion 1's declared sites. In scope: an exhausted attempt is 'running', never 'candidate', so the store's status gate had to admit it. The sites declaration was incomplete and is corrected here."
+      }
     },
     {
       "id": "surface-invocation-usage",

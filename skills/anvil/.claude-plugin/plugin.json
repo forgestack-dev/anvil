@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "anvil-plugin",
+  "description": "Cross-platform development assistant running on unified agent standards.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Christian Carollo"
+    "email": "christian@forgestack.dev"
+  }
+}
+

@@ -678,6 +678,40 @@ class SerialExecutionTests(unittest.TestCase):
         self.assertIn("does not exist", result["error"])
         self.assertEqual(git(self.repo, "rev-parse", result["branch"]), self.base)
 
+    def test_a_finding_may_name_a_line_range_and_resolves_at_its_first_line(self):
+        """A reviewer writes a span for a finding covering several lines.
+
+        Refusing the notation ends the run before the rejection can even be
+        classified: run e497e629 was lost that way, on a finding that was
+        correct. One line is all the supervisor needs to prove the location
+        exists at the reviewed revision.
+        """
+        from anvil.evidence import _location
+        self.assertEqual(_location("src/anvil/store.py:413-418"), ("src/anvil/store.py", 413))
+        self.assertEqual(_location("src/anvil/store.py:413"), ("src/anvil/store.py", 413))
+        # A hyphen that is part of a name, and a range that is not one, are
+        # unchanged: they stay whole paths for assert_located to resolve.
+        for value in ("docs/a-b.md", "src/x.py:0-5", "src/x.py:9-3", "src/x.py:a-b"):
+            self.assertEqual(_location(value), (value, None))
+
+    def test_a_line_range_past_the_end_of_a_real_file_is_still_refused(self):
+        class PastEndRange(FakeRunner):
+            def run(self, **kwargs):
+                outcome = super().run(**kwargs)
+                if kwargs.get("read_only"):
+                    outcome.update(verdict="request_changes",
+                                   acceptance=[{"criterion": 1, "satisfied": False, "evidence": "e"}],
+                                   findings=[{"criterion": 1, "location": "value.txt:9999-10000",
+                                              "finding": "missing"}])
+                return outcome
+        result = run_serial(self.config, runner=PastEndRange())
+        self.assertEqual(result["status"], "failed")
+        # The range resolved, so the refusal is the precise one a bare line
+        # gets rather than the blunt "path does not exist" it used to be.
+        self.assertIn("value.txt:9999-10000", result["error"])
+        self.assertIn("that file has 1 lines", result["error"])
+        self.assertEqual(git(self.repo, "rev-parse", result["branch"]), self.base)
+
     def test_a_line_past_the_end_of_a_real_file_is_refused(self):
         class PastEnd(FakeRunner):
             def run(self, **kwargs):

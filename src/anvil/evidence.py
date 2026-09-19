@@ -26,7 +26,7 @@ REVIEW_SCHEMA = _schema({
     "findings": {"type": "array", "items": _schema({
         "criterion": {"type": "integer", "minimum": 1},
         "finding": _TEXT,
-        "location": {**_TEXT, "description": "A path in the reviewed revision, optionally path:line. Name the directory when the change is an addition that has no line yet."},
+        "location": {**_TEXT, "description": "A path in the reviewed revision, optionally path:line or path:first-last. Name the directory when the change is an addition that has no line yet."},
     }), "description": "Actionable changes only, each naming the criterion it fails and where. Must be [] when verdict is approve; do not include no-findings statements or optional style notes."},
 })
 
@@ -44,6 +44,14 @@ def _location(value: str) -> tuple[str, int | None]:
     if not _text(value) or "\0" in value:
         raise ContractError("a finding location must be nonempty text without NUL")
     path, _, line = value.rpartition(":")
+    # A reviewer naturally writes a span for a finding that covers several
+    # lines. Resolve it at its first line: the supervisor only needs one line
+    # to prove the location exists at the reviewed revision, and refusing the
+    # notation outright ends the run before the rejection can even be
+    # classified, which is how run e497e629 was lost.
+    start, _, end = line.partition("-")
+    if end and start.isdigit() and end.isdigit() and int(end) >= int(start) >= 1:
+        line = start
     if not path or not line.isdigit():
         path, number = value, None
     else:
