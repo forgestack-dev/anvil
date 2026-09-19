@@ -63,7 +63,18 @@
         "OBSERVED_LIMITS.md tickets that must prove a negative",
         "tests/test_invariants.py, every subcommand appears in README.md and skills/anvil/SKILL.md"
       ],
-      "risk": "medium"
+      "risk": "medium",
+      "execution": {
+        "status": "done",
+        "run_id": "76359ba1647443eba7d24a3fab701f98",
+        "event_id": 18,
+        "updated_at": "2026-09-19T02:38:16.786822+00:00",
+        "evidence": "/Users/christian/.local/state/anvil/76359ba1647443eba7d24a3fab701f98",
+        "attempt_id": "c14afb41-f29d-4f9d-9216-6306b7b6456f",
+        "candidate_sha": "f10ee00c5d4cc16de69742bfaba7764a1ac612c6",
+        "integrated_sha": "f10ee00c5d4cc16de69742bfaba7764a1ac612c6",
+        "worker": "serial"
+      }
     }
   ]
 }
