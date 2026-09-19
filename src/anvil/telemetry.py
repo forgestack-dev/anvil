@@ -186,6 +186,10 @@ def rollup(records):
             "cost_kind": COST_KIND_NOTE, "evaluation_note": EVALUATION_NOTE}
 
 
+#: Ledger messages that prove a review invocation ran. review_started is
+#: conditional on a publisher or an adaptive configuration; review_result is
+#: not, so a plain pool run has only the second.
+REVIEW_EVIDENCE = ("review_started", "review_result")
 TOKEN_FIELDS = ("input_tokens", "cached_input_tokens", "cache_write_tokens", "output_tokens")
 COST_BASES = ("list", "billed")
 
@@ -240,8 +244,12 @@ def usage_report(result):
     The per-invocation figures come from the records MeasuredRunner saved, the
     same source the telemetry route reads; no agent stream is parsed again.
     """
+    # Either message is evidence that a review ran. review_started is recorded
+    # only when a publisher or an adaptive configuration exists, so keying off
+    # it alone marks every review in a plain pool run "not_started" and drops
+    # it from the aggregate -- an undercount that looks like a measurement.
     reviewed = {event["attempt_id"] for event in result["events"]
-                if event["details"].get("message_kind") == "review_started"}
+                if event["details"].get("message_kind") in REVIEW_EVIDENCE}
     records = [attempt_record(result["run_dir"], attempt, review_started=attempt["id"] in reviewed)
                for attempt in result["attempts"]]
     result["usage"] = usage_aggregate(records)
@@ -256,7 +264,8 @@ def run_usage(run_dir):
     reviewed = set()
     for start in range(0, len(identifiers), MAX_PAGE_SIZE):
         chunk = identifiers[start:start + MAX_PAGE_SIZE]
-        reviewed.update(attempt_messages(run_dir, "review_started", chunk))
+        for kind in REVIEW_EVIDENCE:
+            reviewed.update(attempt_messages(run_dir, kind, chunk))
     records = [attempt_record(run_dir, attempt, review_started=attempt["id"] in reviewed)
                for attempt in attempts]
     return usage_aggregate(records)
