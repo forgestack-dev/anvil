@@ -87,13 +87,16 @@ class MeasuredRunner:
 
     def run(self, **kwargs):
         started = time.time()
-        outcome, error = "failed", None
+        outcome, error, terminal_reason = "failed", None, None
         try:
             value = self.runner.run(**kwargs)
-            outcome = "returned"
+            outcome, terminal_reason = "returned", "completed"
             return value
         except BaseException as exc:
             error = str(exc) or type(exc).__name__
+            # InvocationExhausted carries the ceiling it hit; anything else is
+            # an unclassified stop rather than a re-parse of the raw stream.
+            terminal_reason = getattr(exc, "category", None) or "error"
             raise
         finally:
             directory = kwargs["artifact_dir"]
@@ -101,7 +104,7 @@ class MeasuredRunner:
                       "requested_effort": self.profile["effort"], "cli_version": self.version,
                       "decision": self.decision, "role": "review" if kwargs.get("read_only") else "worker",
                       "started_at": started, "duration_seconds": time.time()-started,
-                      "outcome": outcome, "error": error}
+                      "outcome": outcome, "error": error, "terminal_reason": terminal_reason}
             record.update(usage(directory / "events.jsonl", self.agent, self.profile))
             # Telemetry must not mask the original error or change acceptance.
             try:
@@ -125,7 +128,8 @@ def attempt_invocations(run_dir, attempt_id, *, review_started=False):
         except (OSError, ValueError):
             started = role == "worker" or review_started
             invocations.append({"role": role, "cost_usd": None if started else 0,
-                                "cost_kind": "unknown" if started else "not_started"})
+                                "cost_kind": "unknown" if started else "not_started",
+                                "terminal_reason": "unknown" if started else "not_started"})
     return invocations
 
 
@@ -180,6 +184,82 @@ def rollup(records):
     return {"known_cost_usd": sum(known),
             "cost_complete": all(r["cost_usd"] is not None for r in records),
             "cost_kind": COST_KIND_NOTE, "evaluation_note": EVALUATION_NOTE}
+
+
+TOKEN_FIELDS = ("input_tokens", "cached_input_tokens", "cache_write_tokens", "output_tokens")
+COST_BASES = ("list", "billed")
+
+
+def usage_aggregate(records):
+    """Sum recorded per-invocation usage; nothing here is inferred or re-derived.
+
+    A token component an invocation did not report is omitted rather than
+    counted as zero, mirroring rollup's treatment of cost. Cost stays split by
+    cost_basis (slice 3) so a list-price estimate is never summed together with
+    billed spend into one figure. An invocation that never started
+    (cost_kind "not_started") is a real zero and contributes nothing to either
+    total or to the phase/terminal-reason breakdown, which counts only
+    invocations that actually ran.
+    """
+    tokens = {field: {"total": 0, "complete": True} for field in TOKEN_FIELDS}
+    cost = {basis: {"cost_usd": 0.0, "complete": True} for basis in (*COST_BASES, "unknown")}
+    counts: dict[tuple, int] = {}
+    for record in records:
+        for invocation in record["invocations"]:
+            if invocation.get("cost_kind") == "not_started":
+                continue
+            for field in TOKEN_FIELDS:
+                # number() rather than the raw value: a component a saved record
+                # does not hold as a finite count is absent, exactly as a missing
+                # one is, and never an error raised while assembling a report.
+                value = number(invocation.get(field))
+                if value is None:
+                    tokens[field]["complete"] = False
+                else:
+                    tokens[field]["total"] += value
+            basis = invocation.get("cost_basis")
+            basis = basis if basis in COST_BASES else "unknown"
+            spent = number(invocation.get("cost_usd"))
+            if spent is None:
+                cost[basis]["complete"] = False
+            else:
+                cost[basis]["cost_usd"] += spent
+            reason = invocation.get("terminal_reason")
+            key = (invocation.get("role"), reason if isinstance(reason, str) and reason else "unknown")
+            counts[key] = counts.get(key, 0) + 1
+    breakdown = [{"phase": phase, "terminal_reason": reason, "invocations": count}
+                for (phase, reason), count in sorted(counts.items(), key=lambda kv: (kv[0][0] or "", kv[0][1]))]
+    return {"tokens": tokens, "cost_by_basis": cost, "cost_kind": COST_KIND_NOTE, "breakdown": breakdown}
+
+
+def usage_report(result):
+    """Embed a whole-run usage aggregate in a report dict.
+
+    result["attempts"] and result["events"] already hold every attempt and
+    event the ledger recorded, so this opens no page and runs no second query.
+    The per-invocation figures come from the records MeasuredRunner saved, the
+    same source the telemetry route reads; no agent stream is parsed again.
+    """
+    reviewed = {event["attempt_id"] for event in result["events"]
+                if event["details"].get("message_kind") == "review_started"}
+    records = [attempt_record(result["run_dir"], attempt, review_started=attempt["id"] in reviewed)
+               for attempt in result["attempts"]]
+    result["usage"] = usage_aggregate(records)
+
+
+def run_usage(run_dir):
+    """The whole run's usage aggregate, over every attempt rather than one page."""
+    from .queries import MAX_PAGE_SIZE, attempt_messages, run_attempts_all
+
+    attempts = run_attempts_all(run_dir)
+    identifiers = [attempt["id"] for attempt in attempts]
+    reviewed = set()
+    for start in range(0, len(identifiers), MAX_PAGE_SIZE):
+        chunk = identifiers[start:start + MAX_PAGE_SIZE]
+        reviewed.update(attempt_messages(run_dir, "review_started", chunk))
+    records = [attempt_record(run_dir, attempt, review_started=attempt["id"] in reviewed)
+               for attempt in attempts]
+    return usage_aggregate(records)
 
 
 def run_telemetry(run_dir, *, after=None, limit=None):

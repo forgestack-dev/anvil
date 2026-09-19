@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sqlite3
 import tempfile
 import threading
 import unittest
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+import anvil
 from anvil.contracts import ContractError, Task
 import anvil.serve
 from anvil.serve import API_VERSION, create
@@ -26,6 +28,66 @@ def invocation(role: str, cost: float | None, **extra) -> dict:
     return {"role": role, "cost_usd": cost, "duration_seconds": 1.5,
             "cost_kind": "provider_reported_estimate" if cost is not None else "unknown",
             **extra}
+
+
+def legacy_ledger(run_dir: Path, run_id: str, *, attempt_id: str | None = None) -> None:
+    """A ledger written exactly as store.py wrote one before anvil_version existed.
+
+    The runs table has no anvil_version column at all, so every read of it here
+    exercises a genuinely pre-change ledger rather than a null column.
+    """
+    connection = sqlite3.connect(run_dir / "state.sqlite")
+    connection.execute("""
+        CREATE TABLE runs (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            run_id TEXT NOT NULL UNIQUE, repo TEXT NOT NULL,
+            branch TEXT NOT NULL, base_sha TEXT NOT NULL,
+            status TEXT NOT NULL, error TEXT, config TEXT NOT NULL,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        )
+    """)
+    connection.execute("""
+        CREATE TABLE tasks (
+            id TEXT PRIMARY KEY, position INTEGER NOT NULL UNIQUE,
+            input TEXT NOT NULL, status TEXT NOT NULL,
+            attempt_id TEXT, details TEXT NOT NULL,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        )
+    """)
+    connection.execute("""
+        CREATE TABLE attempts (
+            id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id),
+            base_sha TEXT NOT NULL, workspace TEXT NOT NULL,
+            status TEXT NOT NULL, details TEXT NOT NULL,
+            started_at TEXT NOT NULL, updated_at TEXT NOT NULL, finished_at TEXT
+        )
+    """)
+    connection.execute("""
+        CREATE TABLE events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL, kind TEXT NOT NULL,
+            task_id TEXT REFERENCES tasks(id),
+            attempt_id TEXT REFERENCES attempts(id),
+            from_status TEXT, to_status TEXT NOT NULL, details TEXT NOT NULL
+        )
+    """)
+    stamp = "2024-01-01T00:00:00+00:00"
+    connection.execute(
+        "INSERT INTO runs VALUES (1, ?, ?, ?, ?, 'running', NULL, '{}', ?, ?)",
+        (run_id, "/repo", f"anvil/{run_id}", "base", stamp, stamp),
+    )
+    connection.execute(
+        "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, '{}', ?, ?)",
+        ("a", 0, json.dumps(ticket("a").to_dict()),
+         "running" if attempt_id else "pending", attempt_id, stamp, stamp),
+    )
+    if attempt_id is not None:
+        connection.execute(
+            "INSERT INTO attempts VALUES (?, ?, ?, ?, 'running', '{}', ?, ?, NULL)",
+            (attempt_id, "a", "base", "/workspace/a", stamp, stamp),
+        )
+    connection.commit()
+    connection.close()
 
 
 class ServeTestCase(unittest.TestCase):
@@ -108,6 +170,28 @@ class RouteTests(ServeTestCase):
         summary = self.get(base, "/api/runs/run-one")
         self.assertEqual(summary["run_dir"], str(run_dir.resolve()))
         self.assertEqual(summary["status"], "created")
+
+    def test_run_summary_carries_the_recording_supervisor_version(self):
+        self.make_run("run-one")
+        _, base = self.start()
+        summary = self.get(base, "/api/runs/run-one")
+        self.assertEqual(summary["anvil_version"], anvil.__version__)
+        # Additive under the existing read contract: same api_version, and the
+        # version travels beside the base_sha it supplements rather than replaces.
+        self.assertEqual(summary["api_version"], API_VERSION)
+        self.assertEqual(summary["base_sha"], "base")
+
+    def test_a_pre_change_ledger_serves_no_supervisor_version(self):
+        # A ledger written before anvil_version existed has no such column;
+        # the served summary reports it as absent rather than guessing.
+        run_dir = self.state_dir / "run-legacy"
+        run_dir.mkdir()
+        legacy_ledger(run_dir, "run-legacy")
+        _, base = self.start()
+        summary = self.get(base, "/api/runs/run-legacy")
+        self.assertIsNone(summary["anvil_version"])
+        listing = self.get(base, "/api/runs")["items"]
+        self.assertIsNone(next(item for item in listing if item["run_id"] == "run-legacy")["anvil_version"])
 
     def test_rejected_cursors_and_limits_are_client_errors(self):
         self.make_run("run-one")
@@ -225,6 +309,100 @@ class TelemetryRouteTests(ServeTestCase):
         self.assertEqual(first["next_after"], attempts["next_after"])
         second = self.get(base, f"/api/runs/run-one/telemetry?after={first['next_after']}")
         self.assertEqual([item["task_id"] for item in second["items"]], ["b"])
+
+
+class UsageRouteTests(ServeTestCase):
+    def test_usage_aggregates_a_recorded_fixture_by_phase_and_terminal_reason(self):
+        run_dir = self.make_run("run-one", ticket("a"))
+        with RunStore(run_dir / "state.sqlite") as store:
+            store.set_run("running")
+            attempt = store.start_attempt("a", "base", "/workspace/a")
+        self.record_invocation(run_dir, attempt, "worker", invocation(
+            "worker", 0.25, input_tokens=100, cached_input_tokens=20, cache_write_tokens=5,
+            output_tokens=30, cost_basis="list", terminal_reason="completed"))
+        self.record_invocation(run_dir, attempt, "review", invocation(
+            "review", 0.10, input_tokens=40, cached_input_tokens=0, cache_write_tokens=0,
+            output_tokens=10, cost_basis="list", terminal_reason="completed"))
+        _, base = self.start()
+        usage = self.get(base, "/api/runs/run-one/usage")
+        self.assertEqual(usage["tokens"]["input_tokens"], {"total": 140, "complete": True})
+        self.assertEqual(usage["tokens"]["output_tokens"], {"total": 40, "complete": True})
+        self.assertAlmostEqual(usage["cost_by_basis"]["list"]["cost_usd"], 0.35)
+        self.assertTrue(usage["cost_by_basis"]["list"]["complete"])
+        self.assertEqual(usage["cost_by_basis"]["billed"], {"cost_usd": 0.0, "complete": True})
+        self.assertIn({"phase": "worker", "terminal_reason": "completed", "invocations": 1}, usage["breakdown"])
+        self.assertIn({"phase": "review", "terminal_reason": "completed", "invocations": 1}, usage["breakdown"])
+        # No cost is served without its basis and without saying what it is.
+        self.assertEqual(usage["cost_kind"], "estimated; not a subscription invoice")
+        self.assertEqual(set(usage["cost_by_basis"]), {"list", "billed", "unknown"})
+
+    def test_usage_keeps_a_mixed_cost_basis_run_distinct(self):
+        run_dir = self.make_run("run-one", ticket("a"), ticket("b"))
+        with RunStore(run_dir / "state.sqlite") as store:
+            store.set_run("running")
+            first = store.start_attempt("a", "base", "/workspace/a")
+            second = store.start_attempt("b", "base", "/workspace/b")
+        self.record_invocation(run_dir, first, "worker", invocation(
+            "worker", 0.5, cost_basis="list", terminal_reason="completed"))
+        self.record_invocation(run_dir, second, "worker", invocation(
+            "worker", 2.0, cost_basis="billed", terminal_reason="completed"))
+        _, base = self.start()
+        usage = self.get(base, "/api/runs/run-one/usage")
+        self.assertAlmostEqual(usage["cost_by_basis"]["list"]["cost_usd"], 0.5)
+        self.assertAlmostEqual(usage["cost_by_basis"]["billed"]["cost_usd"], 2.0)
+
+    def test_usage_reads_a_pre_change_invocation_record_without_terminal_reason(self):
+        # An invocation.json written before this ticket has no terminal_reason
+        # and no cost_basis field at all; the aggregate must not error and
+        # must not guess a classification it was never given.
+        run_dir = self.make_run("run-one", ticket("a"))
+        with RunStore(run_dir / "state.sqlite") as store:
+            store.set_run("running")
+            attempt = store.start_attempt("a", "base", "/workspace/a")
+        self.record_invocation(run_dir, attempt, "worker", {
+            "role": "worker", "cost_usd": 0.3, "cost_kind": "provider_reported_estimate",
+            "duration_seconds": 1.0, "input_tokens": 50, "output_tokens": 20,
+        })
+        _, base = self.start()
+        usage = self.get(base, "/api/runs/run-one/usage")
+        self.assertEqual(usage["tokens"]["input_tokens"], {"total": 50, "complete": True})
+        self.assertAlmostEqual(usage["cost_by_basis"]["unknown"]["cost_usd"], 0.3)
+        self.assertIn({"phase": "worker", "terminal_reason": "unknown", "invocations": 1}, usage["breakdown"])
+
+    def test_usage_aggregates_a_ledger_written_before_this_change(self):
+        # The ledger itself predates the change: its runs table has no
+        # anvil_version column. The aggregate is still what the run recorded,
+        # not an error and not a zero standing in for an unread run.
+        run_dir = self.state_dir / "run-legacy"
+        run_dir.mkdir()
+        legacy_ledger(run_dir, "run-legacy", attempt_id="legacy-attempt")
+        self.record_invocation(run_dir, "legacy-attempt", "worker", invocation(
+            "worker", 0.4, input_tokens=70, cached_input_tokens=10, cache_write_tokens=0,
+            output_tokens=25, cost_basis="billed", terminal_reason="completed"))
+        _, base = self.start()
+        usage = self.get(base, "/api/runs/run-legacy/usage")
+        self.assertEqual(usage["api_version"], API_VERSION)
+        self.assertEqual(usage["tokens"]["input_tokens"], {"total": 70, "complete": True})
+        self.assertEqual(usage["tokens"]["output_tokens"], {"total": 25, "complete": True})
+        self.assertAlmostEqual(usage["cost_by_basis"]["billed"]["cost_usd"], 0.4)
+        self.assertEqual(usage["cost_by_basis"]["list"], {"cost_usd": 0.0, "complete": True})
+        # The review never started on this attempt, so it is not an invocation
+        # that ran and contributes nothing to the breakdown.
+        self.assertEqual(usage["breakdown"],
+                         [{"phase": "worker", "terminal_reason": "completed", "invocations": 1}])
+        self.assertIsNone(self.get(base, "/api/runs/run-legacy")["anvil_version"])
+
+    def test_usage_treats_a_missing_usage_invocation_as_absent_not_zero(self):
+        run_dir = self.make_run("run-one", ticket("a"))
+        with RunStore(run_dir / "state.sqlite") as store:
+            store.set_run("running")
+            store.start_attempt("a", "base", "/workspace/a")
+        # No invocation.json is ever written for this attempt's worker turn.
+        _, base = self.start()
+        usage = self.get(base, "/api/runs/run-one/usage")
+        self.assertEqual(usage["tokens"]["input_tokens"], {"total": 0, "complete": False})
+        self.assertFalse(usage["cost_by_basis"]["unknown"]["complete"])
+        self.assertIn({"phase": "worker", "terminal_reason": "unknown", "invocations": 1}, usage["breakdown"])
 
 
 class ActivityRouteTests(ServeTestCase):
@@ -437,7 +615,7 @@ class ContractVersionTests(ServeTestCase):
         _, base = self.start()
         for path in ("/health", "/api/runs", "/api/runs/run-one", "/api/runs/run-one/tasks",
                      "/api/runs/run-one/attempts", "/api/runs/run-one/events",
-                     "/api/runs/run-one/telemetry"):
+                     "/api/runs/run-one/telemetry", "/api/runs/run-one/usage"):
             self.assertEqual(self.get(base, path)["api_version"], API_VERSION, path)
 
     def test_errors_carry_the_api_version_too(self):
@@ -475,6 +653,20 @@ class PageTests(ServeTestCase):
         self.assertNotIn("innerHTML", source)
         self.assertNotIn("insertAdjacentHTML", source)
         self.assertNotIn("document.write", source)
+
+    def test_the_page_reads_the_usage_route_for_the_selected_run(self):
+        # The decomposition is part of the spend view of whichever run is
+        # selected, built from the same element()/textContent helpers as every
+        # other view, with its figures in the .num columns the spend table uses.
+        source = (Path(anvil.serve.__file__).parent / "assets" / "app.js").read_text()
+        self.assertIn("/usage`", source)
+        self.assertIn("usageNodes(usage)", source)
+        for label in ("Recorded token totals", "Recorded cost by basis",
+                      "Invocations by phase and terminal reason", "List price", "Billed"):
+            self.assertIn(label, source)
+        self.assertIn('element("th", "Tokens", { class: "num" })', source)
+        self.assertIn('element("th", "Cost", { class: "num" })', source)
+        self.assertIn('element("th", "Invocations", { class: "num" })', source)
 
 
 if __name__ == "__main__":

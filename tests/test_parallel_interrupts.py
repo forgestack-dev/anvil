@@ -212,7 +212,10 @@ class ParallelInterruptTests(unittest.TestCase):
         self.assertTrue(all(item["status"] == "interrupted" and item["finished_at"] for item in result["attempts"]))
         run_dir = Path(result["run_dir"])
         saved = RunStore.read(run_dir / "state.sqlite")
-        self.assertEqual(saved, {key: value for key, value in result.items() if key != "run_dir"})
+        # run_dir and usage are derived when the report is assembled, not
+        # persisted in the ledger snapshot itself.
+        self.assertEqual(saved, {key: value for key, value in result.items()
+                                 if key not in ("run_dir", "usage")})
         self.assertEqual(json.loads((run_dir / "report.json").read_text()), result)
         self.assertEqual(self.git("rev-parse", "HEAD"), self.base)
         self.assertEqual(self.git("rev-parse", result["branch"]), self.base)

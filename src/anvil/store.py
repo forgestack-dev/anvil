@@ -12,6 +12,7 @@ import threading
 from typing import Any
 from uuid import uuid4
 
+from . import __version__ as _ANVIL_VERSION
 from .contracts import ContractError, Task
 from .planning import TaskGraph
 
@@ -141,11 +142,18 @@ class RunStore:
 
     def initialize(
         self, *, run_id: str, repo: str, branch: str, base_sha: str,
-        tasks: Sequence[Task], config: dict,
+        tasks: Sequence[Task], config: dict, anvil_version: str = _ANVIL_VERSION,
     ) -> None:
-        """Create a new immutable input snapshot, refusing any existing schema."""
-        for name, value in (("run_id", run_id), ("repo", repo),
-                            ("branch", branch), ("base_sha", base_sha)):
+        """Create a new immutable input snapshot, refusing any existing schema.
+
+        anvil_version records which supervisor produced this run, alongside
+        base_sha: unlike base_sha, it says something for a run against any
+        repository, not only Anvil's own. A ledger written before this field
+        existed has no column for it; _snapshot fills the gap with None
+        rather than a guess.
+        """
+        for name, value in (("run_id", run_id), ("repo", repo), ("branch", branch),
+                            ("base_sha", base_sha), ("anvil_version", anvil_version)):
             _text(value, name)
         if not isinstance(config, dict):
             raise StoreError("config must be an object")
@@ -160,12 +168,13 @@ class RunStore:
         with self._transaction() as connection:
             if connection.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone():
                 raise StoreError("run ledger already exists; initialize never overwrites it")
-            connection.execute("PRAGMA user_version = 2")
+            connection.execute("PRAGMA user_version = 3")
             connection.execute("""
                 CREATE TABLE runs (
                     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
                     run_id TEXT NOT NULL UNIQUE, repo TEXT NOT NULL,
                     branch TEXT NOT NULL, base_sha TEXT NOT NULL,
+                    anvil_version TEXT NOT NULL,
                     status TEXT NOT NULL, error TEXT, config TEXT NOT NULL,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
                 )
@@ -196,8 +205,8 @@ class RunStore:
                 )
             """)
             connection.execute(
-                "INSERT INTO runs VALUES (1, ?, ?, ?, ?, 'created', NULL, ?, ?, ?)",
-                (run_id, repo, branch, base_sha, config_json, timestamp, timestamp),
+                "INSERT INTO runs VALUES (1, ?, ?, ?, ?, ?, 'created', NULL, ?, ?, ?)",
+                (run_id, repo, branch, base_sha, anvil_version, config_json, timestamp, timestamp),
             )
             connection.executemany(
                 "INSERT INTO tasks VALUES (?, ?, ?, 'pending', NULL, '{}', ?, ?)",
@@ -493,6 +502,9 @@ class RunStore:
     def _snapshot(connection: sqlite3.Connection) -> dict:
         run = dict(RunStore._run(connection))
         del run["singleton"]
+        # A ledger written before anvil_version existed has no such column at
+        # all; report the version as absent rather than guessing at one.
+        run.setdefault("anvil_version", None)
         run["config"] = json.loads(run["config"])
         tasks = []
         for row in connection.execute("SELECT * FROM tasks ORDER BY position"):

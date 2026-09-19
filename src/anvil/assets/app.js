@@ -457,9 +457,110 @@ async function loadTasks(runId) {
 const SPEND_COLUMNS = ["Ticket", "State", "Model", "In", "Out", "Cost", "Duration", "Outcome"];
 const SPEND_NUMERIC = new Set(["In", "Out", "Cost", "Duration"]);
 
+// -- recorded usage decomposition --------------------------------------------
+//
+// Rolled up from what MeasuredRunner already recorded per invocation: nothing
+// here is inferred, estimated, or re-derived from a raw agent stream.
+
+const USAGE_TOKEN_LABELS = [
+  ["input_tokens", "Input"],
+  ["cached_input_tokens", "Cache read"],
+  ["cache_write_tokens", "Cache write"],
+  ["output_tokens", "Output"],
+];
+const USAGE_BASIS_LABELS = [["list", "List price"], ["billed", "Billed"], ["unknown", "Unknown basis"]];
+
+// A sum over invocations where one reported nothing is the known part, marked
+// as such: the same separation of known total from completeness the per-attempt
+// total below already makes. Dropping the figure would hide spend the ledger
+// does hold; printing it bare would present a partial sum as the whole.
+function partial(cell, complete) {
+  if (complete === false) {
+    cell.append(document.createTextNode(" "),
+                element("span", "+ unknown", { class: "unknown" }));
+  }
+  return cell;
+}
+
+function usageTokensTable(componentTotals) {
+  const table = element("table");
+  table.append(element("caption", "Recorded token totals"));
+  const head = document.createElement("tr");
+  head.append(element("th", "Component"), element("th", "Tokens", { class: "num" }));
+  table.append(element("thead").appendChild(head).parentNode);
+  const body = element("tbody");
+  for (const [field, label] of USAGE_TOKEN_LABELS) {
+    const entry = componentTotals[field] || {};
+    const row = document.createElement("tr");
+    row.append(element("td", label));
+    const cell = element("td", null, { class: "num" });
+    cell.append(tokens(entry.total === undefined ? null : entry.total));
+    row.append(partial(cell, entry.complete));
+    body.append(row);
+  }
+  table.append(body);
+  return table;
+}
+
+function usageCostTable(costByBasis) {
+  const table = element("table");
+  table.append(element("caption", "Recorded cost by basis"));
+  const head = document.createElement("tr");
+  head.append(element("th", "Basis"), element("th", "Cost", { class: "num" }));
+  table.append(element("thead").appendChild(head).parentNode);
+  const body = element("tbody");
+  for (const [basis, label] of USAGE_BASIS_LABELS) {
+    const entry = costByBasis[basis] || {};
+    const row = document.createElement("tr");
+    row.append(element("td", label));
+    const cell = element("td", null, { class: "num" });
+    cell.append(money(entry.cost_usd === undefined ? null : entry.cost_usd, null));
+    row.append(partial(cell, entry.complete));
+    body.append(row);
+  }
+  table.append(body);
+  return table;
+}
+
+function usageBreakdownTable(breakdown) {
+  const table = element("table");
+  table.append(element("caption", "Invocations by phase and terminal reason"));
+  const head = document.createElement("tr");
+  head.append(element("th", "Phase"), element("th", "Terminal reason"), element("th", "Invocations", { class: "num" }));
+  table.append(element("thead").appendChild(head).parentNode);
+  const body = element("tbody");
+  for (const entry of breakdown) {
+    const row = document.createElement("tr");
+    row.append(element("td", entry.phase || "unknown"));
+    row.append(element("td", entry.terminal_reason));
+    row.append(element("td", entry.invocations, { class: "num" }));
+    body.append(row);
+  }
+  table.append(body);
+  return table;
+}
+
+function usageNodes(usage) {
+  const nodes = [element("h3", "Recorded usage")];
+  nodes.push(usageTokensTable(usage.tokens), usageCostTable(usage.cost_by_basis));
+  if (usage.breakdown.length) {
+    nodes.push(usageBreakdownTable(usage.breakdown));
+  } else {
+    nodes.push(element("p", "No recorded invocations.", { class: "empty" }));
+  }
+  nodes.push(element("p", `Figures are ${usage.cost_kind}. A list-price row is priced at ` +
+    "published rates and is not billed spend; the two are never added together. " +
+    '"+ unknown" marks a total some invocation reported nothing for, which is ' +
+    "omitted rather than counted as zero.", { class: "note" }));
+  return nodes;
+}
+
 async function loadSpend(runId) {
-  const page = await api(`/api/runs/${encodeURIComponent(runId)}/telemetry?limit=500`);
-  if (!page.items.length) return replace(panels.spend, [element("p", "No attempts yet.", { class: "empty" })]);
+  const [page, usage] = await Promise.all([
+    api(`/api/runs/${encodeURIComponent(runId)}/telemetry?limit=500`),
+    api(`/api/runs/${encodeURIComponent(runId)}/usage`),
+  ]);
+  if (!page.items.length) return replace(panels.spend, [element("p", "No attempts yet.", { class: "empty" }), ...usageNodes(usage)]);
   const table = element("table");
   table.append(element("caption", "Per attempt, worker and review combined"));
   const head = document.createElement("tr");
@@ -502,7 +603,7 @@ async function loadSpend(runId) {
     `. ${page.cost_complete ? "Accounting complete for every attempt" :
       "Accounting incomplete: some attempts report unknown cost, which is excluded above"}. ` +
     `Figures are ${page.cost_kind}. ${page.evaluation_note}`));
-  replace(panels.spend, [table, total]);
+  replace(panels.spend, [table, total, ...usageNodes(usage)]);
 }
 
 async function loadEvents(runId) {

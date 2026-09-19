@@ -30,6 +30,7 @@ from .execution import (UnresolvableLocation, VerificationFailure,
 from .planning import TaskGraph
 from .processes import InvocationExhausted, ProcessCancelled, ProcessScope, _defer_sigint
 from .store import RunStore, StoreError
+from .telemetry import usage_report
 from .workspaces import Repository, RepositoryLock
 
 
@@ -791,6 +792,7 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                         result["run_dir"] = str(run_dir)
                         if publisher is not None:
                             result["ticket_publication"] = publisher.report()
+                        usage_report(result)
                         routing_report(result)
                         if adaptive:
                             from .adaptive_runtime import learn

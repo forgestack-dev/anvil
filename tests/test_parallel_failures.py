@@ -117,7 +117,8 @@ class ParallelFailureTests(unittest.TestCase):
         self.assertEqual(self.git("status", "--porcelain"), "")
         run_dir = Path(result["run_dir"])
         self.assertEqual(RunStore.read(run_dir / "state.sqlite"),
-                         {key: value for key, value in result.items() if key != "run_dir"})
+                         {key: value for key, value in result.items()
+                          if key not in ("run_dir", "usage")})
         self.assertEqual(json.loads((run_dir / "report.json").read_text()), result)
 
     def staggered_workers(self, first_file, second_file):

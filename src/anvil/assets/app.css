@@ -165,6 +165,10 @@ table.grouping { table-layout: fixed; }
 .risk[data-risk="medium"] { color: var(--warn); }
 .risk[data-risk="high"] { color: var(--bad); }
 
+/* The spend panel stacks the per-attempt table above the usage decomposition's
+   own tables; without this they share an edge and read as one table. */
+#panel-spend table + table { margin-top: 20px; }
+
 /* A numeric column takes only the width its digits need, so the text columns
    absorb the slack instead of the numbers drifting away from their headings.
    Tabular figures keep the digits in a column under each other. */

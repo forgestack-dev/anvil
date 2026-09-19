@@ -27,7 +27,7 @@ from .contracts import ContractError
 from .queries import (DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, attempt_exists, list_runs,
                       run_attempts, run_events, run_summary, run_tasks)
 from .store import TERMINAL_RUN_STATUSES, StoreError
-from .telemetry import run_telemetry
+from .telemetry import run_telemetry, run_usage
 
 API_VERSION = 1
 """The read contract's version, independent of the ledger's storage version.
@@ -323,6 +323,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if parts[3] == "telemetry":
             return self._send(HTTPStatus.OK, run_telemetry(
                 run_dir, after=self._after(parameters, numeric=True), limit=limit))
+        if parts[3] == "usage":
+            return self._send(HTTPStatus.OK, run_usage(run_dir))
         if parts[3] == "stream":
             return self._stream(run_dir, parameters)
         return self._send(HTTPStatus.NOT_FOUND, {"error": "no such route"})
