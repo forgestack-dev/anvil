@@ -231,6 +231,38 @@ class Repository:
         self.assert_revision(path, candidate)
         return candidate
 
+    def commit_exhausted(self, worktree: Path, base: str, message: str) -> str | None:
+        """Commit an exhausted attempt's partial tree onto its base, or record nothing.
+
+        A turn- or budget-exhausted invocation stops before producing any
+        WORKER_SCHEMA result, so its worktree holds no candidate: no
+        acceptance claims name what it did, and nothing downstream may treat
+        this commit as one. This gives the tree its own immutable revision,
+        under its own retained kind, so a later slice can restore it and an
+        auditor can replay it -- mirroring commit_candidate except that an
+        unchanged tree records nothing rather than an empty commit.
+        """
+        self._assert_owner("commit_exhausted")
+        path, base = self._managed(worktree), self._commit(base)
+        if self._commit("HEAD", cwd=path) != base:
+            raise WorkspaceError("worker moved HEAD; Anvil must own exhausted commits")
+        if not isinstance(message, str) or not message.strip():
+            raise WorkspaceError("exhausted commit message must be nonempty")
+        if self.control_ticket and self.git("status", "--porcelain=v1", "--",
+                                            self.control_ticket, cwd=path):
+            raise WorkspaceError("worker changed the protected ticket control file")
+        self.git("add", "--all", "--", ".", cwd=path)
+        tree = self.git("write-tree", cwd=path)
+        if tree == self.git("rev-parse", f"{base}^{{tree}}"):
+            return None
+        self.git("commit", "--no-gpg-sign", "-m", message, cwd=path)
+        revision = self._commit("HEAD", cwd=path)
+        self._single_parent(revision, base)
+        if self.git("rev-parse", f"{revision}^{{tree}}") != tree:
+            raise WorkspaceError("exhausted tree changed during commit")
+        self.assert_revision(path, revision)
+        return revision
+
     def prepare_integration(self, path: Path, expected_base: str, candidate: str) -> str:
         """Create a detached integration candidate without advancing any branch."""
         self._assert_owner("prepare_integration")
@@ -245,7 +277,7 @@ class Repository:
         self.assert_revision(path, integrated)
         return integrated
 
-    RETAINED = ("candidate", "integration")
+    RETAINED = ("candidate", "integration", "exhausted")
 
     def retain(self, kind: str, run_id: str, attempt_id: str, sha: str) -> str:
         """Name a revision under refs/anvil/ so it survives an ordinary prune.

@@ -98,6 +98,39 @@ class WorkspaceTests(unittest.TestCase):
         with self.assertRaisesRegex(WorkspaceError, "worker moved HEAD"):
             self.repo.commit_candidate(worker, self.base, "Candidate")
 
+    def test_exhausted_worktree_commits_a_single_commit_on_its_base(self):
+        worker = self.worktree()
+        (worker / "partial.txt").write_text("interrupted mid-turn\n", encoding="utf-8")
+        revision = self.repo.commit_exhausted(worker, self.base, "Anvil: exhausted attempt")
+        self.assertEqual(self.repo.git("show", "-s", "--format=%P", revision), self.base)
+        self.assertEqual(self.repo.git("show", f"{revision}:partial.txt"), "interrupted mid-turn")
+        # Unlike a candidate, an exhausted revision names no ticket claim and
+        # is never checked out as a base for review or verification.
+        self.assertNotEqual(revision, self.base)
+
+    def test_exhausted_worktree_with_nothing_changed_records_no_revision(self):
+        worker = self.worktree()
+        self.assertIsNone(self.repo.commit_exhausted(worker, self.base, "Anvil: exhausted attempt"))
+        self.assertEqual(self.repo.git("rev-parse", "HEAD", cwd=worker), self.base)
+
+    def test_exhausted_commit_rejects_a_moved_head(self):
+        worker = self.worktree()
+        self.repo.git("commit", "--allow-empty", "-m", "Worker-owned commit", cwd=worker)
+        with self.assertRaisesRegex(WorkspaceError, "worker moved HEAD"):
+            self.repo.commit_exhausted(worker, self.base, "Anvil: exhausted attempt")
+
+    def test_exhausted_revision_survives_a_prune_after_its_worktree_is_gone(self):
+        """The case retention exists for: nothing but the ref reaches it once
+        the worktree that held it is cleaned up."""
+        worker = self.worktree()
+        (worker / "partial.txt").write_text("interrupted mid-turn\n", encoding="utf-8")
+        revision = self.repo.commit_exhausted(worker, self.base, "Anvil: exhausted attempt")
+        self.repo.retain("exhausted", "run-1", "attempt-1", revision)
+        self.repo.git("reset", "--hard", self.base, cwd=worker)
+        self.repo.remove_worktree(worker)
+        self.raw_git("gc", "--prune=now")
+        self.assertEqual(self.repo.git("cat-file", "-t", revision), "commit")
+
     def test_an_amend_worktree_holds_a_candidate_tree_at_the_base(self):
         """The mechanism docs/AMEND_RETRIES.md section 3 prototyped.
 
@@ -413,5 +446,5 @@ class RepositoryOwnership(unittest.TestCase):
         owned = {name for name, member in inspect.getmembers(Repository, inspect.isfunction)
                  if 'self._assert_owner("' in inspect.getsource(member)}
         self.assertEqual(owned, {"create_worktree", "create_amended_worktree", "create_branch",
-                                 "commit_candidate", "prepare_integration", "retain",
+                                 "commit_candidate", "commit_exhausted", "prepare_integration", "retain",
                                  "advance_branch", "remove_worktree"})

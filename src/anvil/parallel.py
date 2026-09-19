@@ -321,7 +321,13 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                         with failure_lock:
                             if not observed_failures:
                                 observed_failures.append((task.id, exc))
-                        scope.cancel()
+                        # A worker's exhausted invocation leaves an uncommitted
+                        # partial tree only the coordinator may commit, and
+                        # every Git call raises ProcessCancelled once the
+                        # scope is cancelled. Leave that to the coordinator,
+                        # once its commit is done, rather than cancel here.
+                        if not (role == "worker" and isinstance(exc, InvocationExhausted)):
+                            scope.cancel()
                     raise
             return pool.submit(scoped)
 
@@ -329,6 +335,7 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
         with RunStore(run_dir / "state.sqlite") as store:
             failure = None
             result = None
+            exhausted_sha = None
             recovery_ready = resume_dir is None
             try:
                 if resume_dir is None:
@@ -449,6 +456,23 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                         observed = observed_failures[0] if observed_failures else None
                     if observed is not None:
                         current, error = observed
+                        if isinstance(error, InvocationExhausted):
+                            # The failing worker's own thread deferred
+                            # cancellation so this commit, the one Git write
+                            # this attempt's partial tree ever gets, can still
+                            # run. An item still holding its worker future is
+                            # a worker attempt; a review reads the shared
+                            # integration worktree instead and is never this.
+                            item = next((value for value in active.values()
+                                        if value.task.id == current and value.future is not None), None)
+                            if item is not None:
+                                revision = repo.commit_exhausted(
+                                    item.workspace, item.base,
+                                    f"Anvil: {item.task.id} — exhausted attempt")
+                                if revision is not None:
+                                    repo.retain("exhausted", run_id, item.attempt_id, revision)
+                                    exhausted_sha = revision
+                            scope.cancel()
                         raise error
                     # Inspect every completed worker before accepting or dispatching
                     # more work, so a known failure stops the whole pool.
@@ -675,6 +699,8 @@ def run_parallel(config: RunConfig, *, runners: dict | None = None,
                                 details.update(failure.details)
                             if isinstance(failure, InvocationExhausted):
                                 details["failure_category"] = failure.category
+                                if exhausted_sha is not None:
+                                    details["exhausted_sha"] = exhausted_sha
                             if not _stop(store, status, error, current, details):
                                 raise failure
                         result = store.snapshot()

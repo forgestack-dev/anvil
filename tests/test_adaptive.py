@@ -240,6 +240,28 @@ class AdaptiveTests(unittest.TestCase):
                 self.assertEqual(result['status'], 'failed')
                 failed_task = next(task for task in result['tasks'] if task['status'] == 'failed')
                 self.assertEqual(failed_task['details']['failure_category'], category)
+                # Nothing was written before exhausting, so no revision names it.
+                self.assertNotIn('exhausted_sha', failed_task['details'])
+
+    def test_parallel_pool_retains_an_exhausted_workers_partial_tree(self):
+        """The worker thread that observes InvocationExhausted defers scope
+        cancellation so the coordinator can still run Git; the run still
+        stops the same way, with the revision as the only new thing."""
+        cfg = replace(self.config, workers=(WorkerConfig('one'),))
+        result = run_parallel(cfg, runners={'one': FakeRunner('turn-exhaustion-partial')},
+                              review_runner=FakeRunner())
+        self.assertEqual(result['status'], 'failed')
+        failed_task = next(task for task in result['tasks'] if task['status'] == 'failed')
+        self.assertEqual(failed_task['details']['failure_category'], 'turn_exhaustion')
+        revision = failed_task['details']['exhausted_sha']
+        self.assertEqual(git(self.repo, 'show', '-s', '--format=%P', revision), self.base)
+        self.assertEqual(git(self.repo, 'show', f'{revision}:partial.txt'), 'interrupted mid-turn')
+        attempt = result['attempts'][0]['id']
+        ref = f"refs/anvil/exhausted/{result['run_id']}/{attempt}"
+        self.assertEqual(git(self.repo, 'rev-parse', ref), revision)
+        # Never a candidate: the task's own status history never held one.
+        self.assertNotIn('candidate_sha', failed_task['details'])
+        self.assertEqual(git(self.repo, 'rev-parse', result['branch']), self.base)
 
     def test_parallel_status_and_affinity(self):
         cfg=replace(self.config,ticket_status=True,adaptive=config_options(),workers=(WorkerConfig('one'),WorkerConfig('two')),max_processes=2)
