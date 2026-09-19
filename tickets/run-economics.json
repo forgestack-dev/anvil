@@ -169,7 +169,13 @@
         "AGENTS.md, the supervisor owns Git and old worktrees are never adopted",
         "workspaces.Repository.retain, retained revisions are evidence and never input"
       ],
-      "risk": "medium"
+      "risk": "medium",
+      "execution": {
+        "status": "done",
+        "run_id": "ee9e783788fc4a9ca20866fa7ebfd83f",
+        "integrated_sha": "3d5eec03ea4c707e29942d97b0ad2046b2e4a05f",
+        "evidence": "/Users/christian/.local/state/anvil/ee9e783788fc4a9ca20866fa7ebfd83f"
+      }
     },
     {
       "id": "resume-exhausted-attempt",
