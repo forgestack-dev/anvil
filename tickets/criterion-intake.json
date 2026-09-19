@@ -14,10 +14,54 @@
         "Questions are reported and the exit code distinguishes a clean gate from one with open questions; neither outcome edits the document, and reporting is the default with any blocking behavior explicitly requested.",
         "Tests cover a clean document, a document with open questions, refusal of the authoring adapter, and a document whose bytes changed between two gate runs, using a fake adapter and never a live model."
       ],
+      "sites": [
+        {
+          "criterion": 1,
+          "paths": [
+            "src/anvil/preparation.py",
+            "src/anvil/cli.py",
+            "README.md",
+            "skills/anvil/SKILL.md"
+          ]
+        },
+        {
+          "criterion": 2,
+          "paths": [
+            "src/anvil/preparation.py"
+          ]
+        },
+        {
+          "criterion": 3,
+          "paths": [
+            "src/anvil/preparation.py",
+            "src/anvil/cli.py"
+          ]
+        },
+        {
+          "criterion": 4,
+          "paths": [
+            "src/anvil/preparation.py"
+          ]
+        },
+        {
+          "criterion": 5,
+          "paths": [
+            "src/anvil/preparation.py",
+            "src/anvil/cli.py"
+          ]
+        },
+        {
+          "criterion": 6,
+          "paths": [
+            "tests/test_preparation.py"
+          ]
+        }
+      ],
       "source_refs": [
         "CRITERIA.md the prepare readiness gate, and why prepare rather than run",
         "JUDGMENT.md section 7.1 where the intake gate sits",
-        "OBSERVED_LIMITS.md tickets that must prove a negative"
+        "OBSERVED_LIMITS.md tickets that must prove a negative",
+        "tests/test_invariants.py, every subcommand appears in README.md and skills/anvil/SKILL.md"
       ],
       "risk": "medium"
     }
