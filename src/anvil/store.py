@@ -31,6 +31,12 @@ _RUN_TRANSITIONS = {"created": {"running", *_STOPPED}, "running": {"success", *_
 # before producing any candidate, distinct from a candidate that was rejected.
 _FAILURE_CATEGORIES = {"review_rejection", "verification_failure",
                        "turn_exhaustion", "budget_exhaustion"}
+# An exhausted invocation never reaches "candidate": it stops mid-worker-turn,
+# before commit_candidate runs, so its task is still "running" when the
+# coordinator offers it a retry. A review or check rejection always follows a
+# committed candidate. record_rejection/retry_attempt admit "running" only
+# for the two exhaustion categories, never widening the gate for the others.
+_EXHAUSTION_CATEGORIES = {"turn_exhaustion", "budget_exhaustion"}
 TERMINAL_RUN_STATUSES = frozenset({"success", *_STOPPED})
 
 
@@ -387,13 +393,16 @@ class RunStore:
             self._event(connection, timestamp, "task", task_id, attempt_id, old, status, merged)
 
     def record_rejection(self, task_id, *, attempt_id, reason, failure_category):
-        """Record a review/check rejection on the current attempt.
+        """Record a review/check rejection, or an exhaustion, on the current attempt.
 
         The rejection is stored on both the attempt and the task before any
         retry reservation is made, so the structured failure cause survives
         even when the invocation or cost budget rejects the next attempt.
         Recording is idempotent with retry_attempt(): a later successful
-        retry merges the same reason and category again.
+        retry merges the same reason and category again. A turn- or
+        budget-exhausted attempt never produced a candidate, so its task is
+        still "running" rather than "candidate"/"verified"; only those two
+        categories may be recorded from "running".
         """
         _text(reason, "reason")
         if failure_category not in _FAILURE_CATEGORIES:
@@ -401,8 +410,12 @@ class RunStore:
                 "failure_category must be one of: " + ", ".join(sorted(_FAILURE_CATEGORIES)))
         with self._transaction() as connection:
             task = self._active_task(connection, task_id, attempt_id)
-            if task["status"] not in {"candidate", "verified"}:
-                raise StoreError("only rejected review/check attempts can record a rejection")
+            allowed = {"candidate", "verified"}
+            if failure_category in _EXHAUSTION_CATEGORIES:
+                allowed.add("running")
+            if task["status"] not in allowed:
+                raise StoreError("only a rejected review/check attempt, or a turn- or "
+                                 "budget-exhausted running attempt, can record a rejection")
             timestamp = _now()
             details = json.loads(task["details"]) | {"retry_reason": reason,
                                                      "failure_category": failure_category}
@@ -416,13 +429,15 @@ class RunStore:
 
     def retry_attempt(self, task_id, *, attempt_id, reason, failure_category, new_attempt_id,
                       base_sha, workspace, worker_id=None, agent=None):
-        """Retire a rejected attempt and claim its replacement atomically.
+        """Retire a rejected or exhausted attempt and claim its replacement atomically.
 
         The task moves straight from the rejected phase to running under the
         new attempt: it never becomes visibly pending, so ticket publication
         cannot observe an unowned retry and a crash cannot strand the task as
         pending. The retired attempt keeps the structured failure cause
         alongside the formatted reason for diagnostics and learning evidence.
+        A turn- or budget-exhausted attempt retires from "running" rather
+        than "candidate"/"verified", since it never produced a candidate.
         """
         _text(reason, "reason")
         if failure_category not in _FAILURE_CATEGORIES:
@@ -443,8 +458,12 @@ class RunStore:
             count = 1 + connection.execute("SELECT COUNT(*) FROM events WHERE task_id=? AND kind='retry'", (task_id,)).fetchone()[0]
             if count >= min(maximum, 2):
                 raise StoreError("configured attempt limit exhausted")
-            if task["status"] not in {"candidate", "verified"}:
-                raise StoreError("only rejected review/check attempts can retry")
+            allowed = {"candidate", "verified"}
+            if failure_category in _EXHAUSTION_CATEGORIES:
+                allowed.add("running")
+            if task["status"] not in allowed:
+                raise StoreError("only a rejected review/check attempt, or a turn- or "
+                                 "budget-exhausted running attempt, can retry")
             timestamp = _now()
             details = json.loads(task["details"]) | {"retry_reason": reason,
                                                      "failure_category": failure_category}
