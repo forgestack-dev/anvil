@@ -313,7 +313,14 @@
         "AGENTS.md, cost estimates are not invoices",
         "ROADMAP.md milestone 8, and the supervisor-version gap found on 2026-09-18"
       ],
-      "risk": "medium"
+      "risk": "medium",
+      "execution": {
+        "status": "done",
+        "run_id": "d932b0f4fb71453f9933f3d38fd8a031",
+        "integrated_sha": "9bb66ed0dd14d433963d35ccd58d75f8fc0d8495",
+        "evidence": "/Users/christian/.local/state/anvil/d932b0f4fb71453f9933f3d38fd8a031",
+        "reason": "The run failed verification on one assertion with no retry left. The candidate was merged with that defect fixed by hand: the usage aggregate counted a review only from review_started, which a plain pool run never records."
+      }
     }
   ]
 }
