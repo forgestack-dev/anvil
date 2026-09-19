@@ -238,7 +238,7 @@
     {
       "id": "surface-invocation-usage",
       "title": "Aggregate recorded per-invocation usage into the report and the dashboard",
-      "objective": "telemetry.py already parses cache creation, cache read, output and thinking tokens for every invocation, and nothing aggregates them: every number in RUN_ECONOMICS.md came from re-reading saved event streams by hand. Roll up what is already recorded so a run's cost decomposition and terminal reasons are readable without that.",
+      "objective": "telemetry.py already parses cache creation, cache read, output and thinking tokens for every invocation, and nothing aggregates them: every number in RUN_ECONOMICS.md came from re-reading saved event streams by hand. Roll up what is already recorded so a run's cost decomposition and terminal reasons are readable without that. While the report and the ledger are open, also record which supervisor produced the run: this milestone's own measurements compare runs across days in which Anvil changed, and no saved run says which version it had.",
       "depends_on": [],
       "acceptance_criteria": [
         "A run's report carries a usage aggregate over its invocations: the token components telemetry already parses, the cost with its basis kept distinct as slice 3 records it, and a breakdown by phase and terminal reason. Every value is summed from what the ledger holds; nothing is inferred, estimated, or re-derived from a raw stream.",
@@ -246,7 +246,8 @@
         "A list-price estimate is never presented as spend. Wherever a cost appears its basis appears with it, because AGENTS.md says a cost estimate is not an invoice.",
         "A run recorded before this change, and an invocation whose usage the adapter did not report, each aggregate to what is present rather than to an error or a zero presented as a measurement.",
         "The page shows the decomposition for a selected run and reaches the document through textContent like every other view, with numbers aligned as the existing spend table aligns them.",
-        "Tests cover the aggregate over a recorded fixture, a mixed-basis run keeping the two bases distinct, a pre-change ledger, and a missing-usage invocation, using recorded fixtures and never a live model."
+        "Tests cover the aggregate over a recorded fixture, a mixed-basis run keeping the two bases distinct, a pre-change ledger, and a missing-usage invocation, using recorded fixtures and never a live model.",
+        "A run records the version of the supervisor that produced it, in the ledger at initialization and in the report and the served run summary alongside base_sha. Today nothing does: base_sha stands in for it only because assert_clean forces the working tree to equal HEAD, which says nothing about the supervisor for a run against any repository other than Anvil's own. The ledger's user_version is bumped for the added column, and a ledger written before this change still reads, reporting the version as absent rather than failing or presenting a guess as a recorded value. Tests cover a new run recording it, a pre-change ledger reading without it, and the served summary carrying it under the existing api_version."
       ],
       "sites": [
         {
@@ -277,13 +278,22 @@
             "tests/test_routing_components.py",
             "tests/test_serve.py"
           ]
+        },
+        {
+          "criterion": 7,
+          "paths": [
+            "src/anvil/store.py",
+            "src/anvil/queries.py",
+            "src/anvil/serve.py"
+          ]
         }
       ],
       "source_refs": [
         "RUN_ECONOMICS.md slice 5, surfacing usage, and its measured decomposition",
         "CLOUD_SYNC.md section 3, how the read contract version changes",
         "SERVE.md, the routes and the page",
-        "AGENTS.md, cost estimates are not invoices"
+        "AGENTS.md, cost estimates are not invoices",
+        "ROADMAP.md milestone 8, and the supervisor-version gap found on 2026-09-18"
       ],
       "risk": "medium"
     }

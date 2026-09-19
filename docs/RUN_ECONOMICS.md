@@ -132,6 +132,16 @@ the terminal reason today. Slice 1 has since made the terminal reason something
 the ledger holds rather than something a reader recovers from a raw stream, so
 this slice aggregates recorded values and infers none.
 
+It also records the supervisor's own version, which nothing does today. The
+measurements in this section compare runs across days in which Anvil itself
+gained turn classification, cost-basis gating and configurable turns — the very
+variables they are about — and no saved run states which of them it had.
+`base_sha` stands in for the supervisor's revision only because `assert_clean`
+forces the working tree to equal `HEAD`, and only while Anvil is run against its
+own checkout; against any other repository it says nothing. The field belongs
+here rather than in its own slice because this is the slice that opens the
+ledger and the report.
+
 ### What this does not establish
 
 That reducing any component completes a ticket. The shares order the components
