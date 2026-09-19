@@ -719,6 +719,36 @@ class SerialExecutionTests(unittest.TestCase):
         self.assertIn("that file has 1 lines", result["error"])
         self.assertEqual(git(self.repo, "rev-parse", result["branch"]), self.base)
 
+    def test_a_malformed_line_range_is_read_as_a_path_and_blocks(self):
+        """The decided behaviour for a range that is not one.
+
+        A reversed, zero-based or non-numeric range stays a whole path rather
+        than being refused on its shape, because a path may legitimately
+        contain a colon. It then fails to resolve like any other location the
+        revision does not have, and blocks: the finding is not evidence, and
+        the run says which kind of problem it had instead of crashing.
+        """
+        for location in ("value.txt:9-3", "value.txt:0-5", "value.txt:a-b"):
+            with self.subTest(location=location):
+                class Malformed(FakeRunner):
+                    def run(self, **kwargs):
+                        outcome = super().run(**kwargs)
+                        if kwargs.get("read_only"):
+                            outcome.update(
+                                verdict="request_changes",
+                                acceptance=[{"criterion": 1, "satisfied": False, "evidence": "e"}],
+                                findings=[{"criterion": 1, "location": location,
+                                           "finding": "missing"}])
+                        return outcome
+                self.setUp()
+                result = run_serial(self.config, runner=Malformed())
+                self.assertEqual(result["status"], "blocked")
+                self.assertIn(location, result["error"])
+                self.assertIn("does not exist", result["error"])
+                blocked = next(task for task in result["tasks"] if task["status"] == "blocked")
+                self.assertEqual(blocked["details"]["failure_category"], "unresolvable_location")
+                self.assertEqual(git(self.repo, "rev-parse", result["branch"]), self.base)
+
     def test_a_line_past_the_end_of_a_real_file_is_refused(self):
         class PastEnd(FakeRunner):
             def run(self, **kwargs):
