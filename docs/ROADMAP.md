@@ -153,8 +153,9 @@ same runs from the turn-budget side; the two agree on the mechanism and neither
 is a fix.
 
 This milestone is not eighth in dependency order. Slices 1 to 3 are unblocked.
-Slice 4 needs the tree restoration that milestone 11 prototypes and so cannot
-precede it, and slice 5 extends the serve contract milestone 10 shipped.
+Slice 4 needs the tree restoration milestone 11 has since shipped as
+`Repository.create_amended_worktree`, so it is no longer blocked on it, and
+slice 5 extends the serve contract milestone 10 shipped.
 
 ## 9. The acceptance decision — implemented
 
@@ -174,13 +175,13 @@ See [the acceptance decision](ACCEPTANCE.md) for the four stages, all implemente
 
 See [the serve contract](SERVE.md) for the routes, the loopback-only binding, and the page. Retention is `tickets/candidate-retention.json`, both tickets implemented: before it, a rejected candidate was reachable from no ref and an ordinary `git gc` destroyed the evidence a ledger pointed at. A ref's lifetime is tied to its ledger's, so the pair is reclaimed together rather than becoming a second thing to remember.
 
-## 11. Amend retries — specified
+## 11. Amend retries — implemented
 
 - Start a replacement attempt from the rejected candidate's tree rather than from an empty worktree, addressing the bound findings instead of implementing the ticket again.
 - Keep the profile that produced the candidate, leaving the escalation allowance for the attempt after it.
 - Permit an amend only while the accepted base is unchanged, because restoring a stale tree onto an advanced base would silently revert a peer's integrated work.
 
-See [amend retries](AMEND_RETRIES.md). The mechanism is prototyped rather than proposed: `commit_candidate` refuses a worktree whose `HEAD` is not the base, so an amend restores the candidate's tree into a worktree left at the base and squashes it into one commit as usual. The saving is unmeasured — orientation is roughly 80% of an invocation by the same measurements, and an amend pays it too — and that document names the live exercise that would settle it. This milestone is not implemented.
+See [amend retries](AMEND_RETRIES.md). The mechanism was prototyped rather than proposed and shipped as prototyped: `commit_candidate` refuses a worktree whose `HEAD` is not the base, so an amend restores the candidate's tree into a worktree left at the base and squashes it into one commit as usual. `commit_candidate`, `prepare_integration` and the phase machine are untouched. The saving is unmeasured — orientation is roughly 80% of an invocation by the same measurements, and an amend pays it too — and that document names the live exercise that would settle it, so this milestone ships a mechanism rather than a demonstrated economy.
 
 ## 12. Reaching a run from another device — specified
 

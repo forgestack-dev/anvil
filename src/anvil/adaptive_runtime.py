@@ -128,10 +128,29 @@ class Session:
             exclude=self.config.credential_exclusion)
         return MeasuredRunner(runner, agent, profile, self.versions[key], decision | {"invocation_profile": name})
 
+    def _attempts_remain(self, item):
+        return self.attempt_counts.get(item.task.id, 1) < self.policy.config.get("max_attempts", 1)
+
     def next_profile(self, item):
-        if self.attempt_counts.get(item.task.id, 1) >= self.policy.config.get("max_attempts", 1):
+        if not self._attempts_remain(item):
             return None
         return self.policy.escalation(self.decisions[item.attempt_id]["profile"])
+
+    def amend_profile(self, item):
+        """The profile a replacement attempt keeps when it amends this candidate.
+
+        A retry escalates because the attempt's failure is read as evidence
+        that the profile was insufficient. An amend contradicts that reading:
+        the profile produced a candidate, and the work left is smaller than the
+        work already done. So it keeps the profile and spends no escalation --
+        next_profile still offers the next rank to the attempt after it, which
+        is where capability is genuinely in question. The attempt cap is the
+        one next_profile applies, so an amend consumes the retry a run has and
+        adds none. docs/AMEND_RETRIES.md section 6.
+        """
+        if not self._attempts_remain(item):
+            return None
+        return self.decisions[item.attempt_id]["profile"]
 
     def settle(self, item, *, reviewed=True):
         """Commit an attempt's actual cost, releasing its reservation.

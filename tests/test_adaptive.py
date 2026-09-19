@@ -1,7 +1,9 @@
 """Public execution regressions for source status, routing, and bounded escalation."""
+from contextlib import nullcontext
 from dataclasses import replace
 import json
 from pathlib import Path
+import threading
 import unittest
 from unittest.mock import patch
 import test_execution
@@ -22,6 +24,107 @@ def config_options(mode="off", attempts=1):
                          "strong":{"agent":"codex","model":"test-strong","effort":"high","rank":2}},
             "defaults":{"codex":"standard"}, "review_profile":"strong", "mode":mode,
             "max_attempts":attempts, "max_invocations":20}
+
+
+def contents(workspace):
+    """What a worker turn was handed, ignoring the worktree's own .git file."""
+    return sorted(path.name for path in Path(workspace).iterdir() if path.name != '.git')
+
+
+def worker_result(evidence):
+    return {'status': 'completed', 'summary': 'Wrote the work', 'blockers': [],
+            'acceptance': [{'criterion': 1, 'evidence': evidence}]}
+
+
+def approval(evidence):
+    return {'verdict': 'approve', 'summary': 'Inspected the candidate', 'findings': [],
+            'acceptance': [{'criterion': 1, 'satisfied': True, 'evidence': evidence}]}
+
+
+def rejection(location, finding):
+    return {'verdict': 'request_changes', 'summary': 'One bounded change remains',
+            'acceptance': [{'criterion': 1, 'satisfied': False, 'evidence': 'the tree was read'}],
+            'findings': [{'criterion': 1, 'location': location, 'finding': finding}]}
+
+
+class AmendingWorker:
+    """A worker that records the worktree it was handed and adds one file per attempt.
+
+    Its reviewer rejects the first `rejections` candidates on one bound,
+    located finding, which is the shape docs/ACCEPTANCE.md stage 2 requires.
+    """
+
+    def __init__(self, rejections=1):
+        self.rejections = rejections
+        self.workers, self.reviews, self.seen, self.heads = [], [], [], []
+
+    def run(self, **kwargs):
+        workspace = kwargs['repo']
+        kwargs['artifact_dir'].mkdir(parents=True)
+        if kwargs.get('read_only'):
+            self.reviews.append(kwargs['prompt'])
+            if len(self.reviews) <= self.rejections:
+                return rejection('first.txt:1', 'also record the amendment in second.txt')
+            return approval('first.txt and second.txt inspected')
+        self.workers.append(kwargs['prompt'])
+        self.heads.append(git(workspace, 'rev-parse', 'HEAD'))
+        self.seen.append(contents(workspace))
+        if len(self.workers) == 1:
+            (workspace / 'first.txt').write_text('original work')
+            (workspace / 'README.md').unlink()  # the candidate deletes a file too
+        else:
+            (workspace / 'second.txt').write_text('the amendment')
+        return worker_result('the files are written')
+
+
+class CheckFailingWorker:
+    """A worker whose first candidate is red against the configured check."""
+
+    def __init__(self):
+        self.workers, self.seen = [], []
+
+    def run(self, **kwargs):
+        workspace = kwargs['repo']
+        kwargs['artifact_dir'].mkdir(parents=True)
+        if kwargs.get('read_only'):
+            return approval('the tree was inspected')
+        self.workers.append(kwargs['prompt'])
+        self.seen.append(contents(workspace))
+        (workspace / 'first.txt').write_text('original work')
+        (workspace / 'value.txt').write_text('invalid' if len(self.workers) == 1 else '1')
+        return worker_result('the files are written')
+
+
+class RacingWorker:
+    """Writes one file per attempt; optionally waits for a peer to integrate."""
+
+    def __init__(self, task_id, wait_for=None):
+        self.task_id, self.wait_for = task_id, wait_for
+        self.seen = []
+
+    def run(self, **kwargs):
+        workspace = kwargs['repo']
+        kwargs['artifact_dir'].mkdir(parents=True)
+        if self.wait_for is not None and not self.wait_for.wait(60):
+            raise AssertionError('the peer never integrated, so no base ever advanced')
+        self.seen.append(contents(workspace))
+        (workspace / f'{self.task_id}.txt').write_text(self.task_id)
+        return worker_result(f'{self.task_id}.txt is written')
+
+
+class RejectingReviewer:
+    """Rejects one ticket's first candidate and approves everything else."""
+
+    def __init__(self, reject_for):
+        self.reject_for, self.rejected = reject_for, 0
+
+    def run(self, **kwargs):
+        kwargs['artifact_dir'].mkdir(parents=True)
+        task = json.JSONDecoder().raw_decode(kwargs['prompt'].split('Ticket:\n', 1)[1])[0]
+        if task['id'] == self.reject_for and not self.rejected:
+            self.rejected += 1
+            return rejection(f"{task['id']}.txt", 'record the change the ticket asks for')
+        return approval(f"{task['id']} inspected")
 
 
 class AdaptiveTests(unittest.TestCase):
@@ -617,6 +720,159 @@ prompt = sys.stdin.read()''')
         self.assertTrue(sample['eligible'])
         self.assertFalse(sample['accepted'])
         self.assertEqual(sample['catalog'], learning_catalog(result['config']))
+
+    # -- Amend retries (docs/AMEND_RETRIES.md) ------------------------------
+
+    def amend_ticket(self):
+        """One ticket with one criterion; the fixture's check ignores its files."""
+        self.tickets.write_text(json.dumps({'version': 1, 'tasks': [
+            {'id': 't1', 'title': 'Write the work', 'objective': 'Write the work',
+             'depends_on': [], 'acceptance_criteria': ['The work is in the tree']}]}))
+
+    def amend_run(self, runner=None, rejections=1):
+        self.amend_ticket()
+        runner = AmendingWorker(rejections) if runner is None else runner
+        cfg = replace(self.config, adaptive=config_options(attempts=2))
+        return run_serial(cfg, runner=runner), runner
+
+    def decisions_for(self, result, task_id=None):
+        return [event['details']['body'] for event in result['events']
+                if event['details'].get('message_kind') == 'routing_decision'
+                and task_id in (None, event['task_id'])]
+
+    def test_an_amend_retry_starts_from_the_rejected_candidates_tree(self):
+        """Criterion 1: the replacement attempt opens the candidate, not an empty
+        worktree, while HEAD stays at the accepted base and the deletion holds."""
+        result, runner = self.amend_run()
+        self.assertEqual(result['status'], 'success', result.get('error'))
+        self.assertEqual(len(runner.workers), 2)
+        self.assertEqual(runner.seen, [['README.md'], ['first.txt']])
+        self.assertEqual(runner.heads, [self.base, self.base])
+        integrated = result['tasks'][0]['details']['integrated_sha']
+        self.assertEqual(sorted(git(self.repo, 'ls-tree', '-r', '--name-only', integrated).split()),
+                         ['first.txt', 'second.txt'])
+        self.assertEqual(git(self.repo, 'show', f'{integrated}:first.txt'), 'original work')
+        self.assertEqual(git(self.repo, 'show', f'{integrated}:second.txt'), 'the amendment')
+
+    def test_the_amended_candidate_is_one_commit_on_the_base(self):
+        """Criterion 1: commit_candidate, prepare_integration and the phase
+        machine are unchanged, so the accepted commit is still a squash."""
+        result, _ = self.amend_run()
+        details = result['tasks'][0]['details']
+        integrated = details['integrated_sha']
+        self.assertEqual(git(self.repo, 'rev-list', '--parents', '-n', '1', integrated).split(),
+                         [integrated, self.base])
+        self.assertEqual(git(self.repo, 'rev-parse', result['branch']), integrated)
+        self.assertEqual(details['verified_sha'], integrated)
+        self.assertEqual(details['reviewed_sha'], integrated)
+
+    def test_a_verification_failure_amends_from_the_candidate_the_checks_rejected(self):
+        """Criterion 1: the better of the two cases, bounded by check output."""
+        result, runner = self.amend_run(runner=CheckFailingWorker())
+        self.assertEqual(result['status'], 'success', result.get('error'))
+        self.assertEqual(runner.seen, [['README.md'], ['README.md', 'first.txt', 'value.txt']])
+        self.assertIn('required verification failed', runner.workers[1])
+        self.assertIn('output of the configured checks', runner.workers[1])
+        self.assertIn('amended_candidate', self.decisions_for(result)[1])
+
+    def test_an_amend_is_refused_once_a_peer_has_advanced_the_base(self):
+        """Criterion 2, and the failure the guard exists to prevent.
+
+        The second case replaces _amend_source with one that ignores the base:
+        that is a version which always amends, and it runs here. Under it the
+        peer's integrated file is deleted from the accepted tree by a commit
+        whose single parent is the new base and whose diff no review would read
+        as a mistake, which is what the case asserts. The two cases assert
+        opposite outcomes for the same scenario, so an implementation that
+        always amends fails the first case: it would lose peer.txt there too.
+        """
+        always = lambda item, base, failure_category: item.candidate
+        for amends_always in (False, True):
+            with self.subTest(amends_always=amends_always):
+                self.tickets.write_text(json.dumps({'version': 1, 'tasks': [
+                    {'id': 'peer', 'title': 'Peer work', 'objective': 'Integrate first',
+                     'depends_on': [], 'acceptance_criteria': ['peer.txt exists'],
+                     'worker': 'quick'},
+                    {'id': 'alpha', 'title': 'Slower work', 'objective': 'Finish after the peer',
+                     'depends_on': [], 'acceptance_criteria': ['alpha.txt exists'],
+                     'worker': 'slow'}]}))
+                integrated = threading.Event()
+                workers = {'quick': RacingWorker('peer'),
+                           'slow': RacingWorker('alpha', wait_for=integrated)}
+                cfg = replace(self.config, adaptive=config_options(attempts=2),
+                              workers=(WorkerConfig('quick'), WorkerConfig('slow')),
+                              max_processes=3)
+                with (patch('anvil.parallel._amend_source', always) if amends_always
+                      else nullcontext()):
+                    result = run_parallel(
+                        cfg, runners=workers, review_runner=RejectingReviewer('alpha'),
+                        progress=lambda m: integrated.set() if m == 'peer: done' else None)
+                self.assertEqual(result['status'], 'success', result.get('error'))
+                tree = git(self.repo, 'ls-tree', '-r', '--name-only', result['branch']).split()
+                self.assertIn('alpha.txt', tree)
+                if amends_always:
+                    self.assertNotIn('peer.txt', tree)
+                    continue
+                # The peer's integrated work survives the replacement attempt.
+                self.assertIn('peer.txt', tree)
+                self.assertEqual(git(self.repo, 'show', f"{result['branch']}:peer.txt"), 'peer')
+                # The fallback is today's fresh worktree on the advanced base,
+                # and a fresh-worktree retry escalates exactly as it did before.
+                self.assertIn('peer.txt', workers['slow'].seen[1])
+                decisions = self.decisions_for(result, 'alpha')
+                self.assertEqual([d['profile'] for d in decisions], ['standard', 'strong'])
+                self.assertNotIn('amended_candidate', decisions[1])
+
+    def test_an_amend_keeps_its_profile_and_spends_no_escalation(self):
+        """Criterion 3: the profile produced a candidate, so it is kept, and the
+        allowance stays for the attempt after it. The cap is unchanged."""
+        result, _ = self.amend_run()
+        self.assertEqual(result['status'], 'success', result.get('error'))
+        decisions = self.decisions_for(result)
+        self.assertEqual([d['profile'] for d in decisions], ['standard', 'standard'])
+        self.assertIn('amendment of candidate', decisions[1]['reason'])
+        # Had the amend escalated, the attempt after it would have had nothing
+        # left: strong is the top rank. Keeping the profile leaves the rank.
+        cfg = replace(self.config, adaptive=config_options(attempts=2),
+                      workers=(WorkerConfig('serial'),))
+        policy = Policy(cfg, TaskGraph.load(self.tickets), Repository(self.repo))
+        self.assertEqual(policy.escalation(decisions[1]['profile']), 'strong')
+        self.assertIsNone(policy.escalation('strong'))
+        self.assertEqual(sum(e['kind'] == 'retry' for e in result['events']), 1)
+        self.assertEqual(len(result['attempts']), 2)
+
+    def test_the_amended_attempt_names_a_candidate_that_resolves(self):
+        """Criterion 5: provenance that resolves through the retained ref."""
+        result, _ = self.amend_run()
+        rejected = next(a for a in result['attempts'] if a['status'] == 'failed')
+        amended = next(a for a in result['attempts'] if a['status'] == 'done')
+        decision = next(event['details']['body'] for event in result['events']
+                        if event['details'].get('message_kind') == 'routing_decision'
+                        and event['attempt_id'] == amended['id'])
+        self.assertEqual(decision['amended_candidate'], rejected['details']['candidate_sha'])
+        reference = f"refs/anvil/candidate/{result['run_id']}/{rejected['id']}"
+        self.assertEqual(git(self.repo, 'rev-parse', reference), decision['amended_candidate'])
+        self.assertEqual(git(self.repo, 'cat-file', '-t', decision['amended_candidate']), 'commit')
+
+    def test_a_rejected_amend_is_an_ordinary_review_rejection(self):
+        """Criterion 5: no new failure category enters the evidence."""
+        result, runner = self.amend_run(rejections=2)
+        self.assertEqual(result['status'], 'blocked')
+        self.assertEqual(len(runner.workers), 2)
+        self.assertEqual([a['failure_category'] for a in result['routing']['attempts']],
+                         ['review_rejection', 'review_rejection'])
+        self.assertEqual(git(self.repo, 'rev-parse', result['branch']), self.base)
+
+    def test_the_amend_prompt_states_the_tree_the_findings_and_the_criteria(self):
+        """Criterion 4: the three things the fresh prompt does not say."""
+        _, runner = self.amend_run()
+        fresh, amend = runner.workers
+        self.assertIn('already holds the candidate', amend)
+        self.assertIn('independent review', amend)
+        self.assertIn('acceptance criteria are unchanged and all of them still apply', amend)
+        # Bound and located, as the review produced them, not a paragraph.
+        self.assertIn('criterion 1 (first.txt:1): also record the amendment in second.txt', amend)
+        self.assertNotIn('already holds the candidate', fresh)
 
 
 class AdaptiveRunLevelSettings(unittest.TestCase):

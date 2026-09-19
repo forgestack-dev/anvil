@@ -98,6 +98,39 @@ class WorkspaceTests(unittest.TestCase):
         with self.assertRaisesRegex(WorkspaceError, "worker moved HEAD"):
             self.repo.commit_candidate(worker, self.base, "Candidate")
 
+    def test_an_amend_worktree_holds_a_candidate_tree_at_the_base(self):
+        """The mechanism docs/AMEND_RETRIES.md section 3 prototyped.
+
+        A replacement attempt cannot check the rejected candidate out, because
+        commit_candidate requires HEAD to be the base and the result to be one
+        commit on it. Restoring the tree keeps both properties.
+        """
+        (self.path / "gone.txt").write_text("doomed\n", encoding="utf-8")
+        self.raw_git("add", ".")
+        self.raw_git("-c", "commit.gpgSign=false", "commit", "-m", "Add a file to delete")
+        base = self.repo.head()
+        worker = self.root / "first"
+        self.repo.create_worktree(worker, base)
+        (worker / "tracked.txt").write_text("implemented\n", encoding="utf-8")
+        (worker / "new.txt").write_text("acceptance evidence\n", encoding="utf-8")
+        (worker / "gone.txt").unlink()
+        candidate = self.repo.commit_candidate(worker, base, "Rejected candidate")
+
+        amend = self.root / "amend"
+        self.repo.create_amended_worktree(amend, base, candidate)
+        self.assertEqual(self.repo.git("rev-parse", "HEAD", cwd=amend), base)
+        self.assertEqual((amend / "tracked.txt").read_text(), "implemented\n")
+        self.assertEqual((amend / "new.txt").read_text(), "acceptance evidence\n")
+        self.assertFalse((amend / "gone.txt").exists())
+
+        (amend / "amended.txt").write_text("the requested change\n", encoding="utf-8")
+        amended = self.repo.commit_candidate(amend, base, "Amended candidate")
+        self.assertEqual(self.repo.git("show", "-s", "--format=%P", amended), base)
+        changes = dict(line.split("\t")[::-1] for line
+                       in self.repo.git("diff", "--name-status", base, amended).splitlines())
+        self.assertEqual(changes, {"gone.txt": "D", "tracked.txt": "M",
+                                   "new.txt": "A", "amended.txt": "A"})
+
     def test_managed_commit_disables_signing_and_hooks(self):
         hooks = self.root / "hooks"
         hooks.mkdir()
@@ -379,6 +412,6 @@ class RepositoryOwnership(unittest.TestCase):
         import inspect
         owned = {name for name, member in inspect.getmembers(Repository, inspect.isfunction)
                  if 'self._assert_owner("' in inspect.getsource(member)}
-        self.assertEqual(owned, {"create_worktree", "create_branch", "commit_candidate",
-                                 "prepare_integration", "retain", "advance_branch",
-                                 "remove_worktree"})
+        self.assertEqual(owned, {"create_worktree", "create_amended_worktree", "create_branch",
+                                 "commit_candidate", "prepare_integration", "retain",
+                                 "advance_branch", "remove_worktree"})
