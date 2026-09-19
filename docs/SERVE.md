@@ -87,6 +87,7 @@ wire format is the server's concern, not theirs.
 | `/api/runs/{id}/attempts` | `queries.run_attempts` | attempt rowid |
 | `/api/runs/{id}/events` | `queries.run_events` | event ID |
 | `/api/runs/{id}/telemetry` | `telemetry.run_telemetry` | attempt rowid |
+| `/api/runs/{id}/usage` | `telemetry.run_usage` | — (whole run) |
 | `/api/runs/{id}/stream` | `queries.run_events` | event ID |
 | `/api/runs/{id}/attempts/{attempt_id}/activity` | the attempt's own `events.jsonl` | byte offset |
 
@@ -96,6 +97,19 @@ carries `attempt_id`, `task_id`, `status`, `decision`, `failure_category`,
 `evaluation`, `invocations`, `cost_usd`, and `duration_seconds`. The page carries
 `known_cost_usd`, `cost_complete`, `cost_kind`, and `evaluation_note`: a total
 that omits unknown costs, and the labels that stop it reading as an invoice.
+
+`/usage` is the whole run's decomposition rather than a page, so it carries no
+cursor: `tokens` per component (`{"total": N, "complete": bool}`),
+`cost_by_basis` keyed by `list`, `billed` and `unknown` (each
+`{"cost_usd": N, "complete": bool}`), `breakdown` counting invocations by phase
+and terminal reason, and the same `cost_kind` label. It sums only what the
+per-invocation records hold: a component an invocation did not report lowers
+`complete` rather than counting as zero, a list-price estimate is never summed
+into billed spend, and an invocation that never started contributes nothing.
+Adding it is additive under the rule in `docs/CLOUD_SYNC.md` section 3: a new
+route within the same `api_version`, with no existing cursor or field changed.
+The run summary is additive the same way, carrying `anvil_version` alongside
+`base_sha`; a ledger written before that column exists reports it as `null`.
 
 Status codes split by origin rather than by message text. The HTTP layer bounds
 `limit` and `after` itself, before any query opens a database, and rejects what

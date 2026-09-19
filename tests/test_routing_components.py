@@ -12,7 +12,7 @@ from anvil.contracts import ContractError
 from anvil.routing import validate_config, Policy, fingerprint, learning_catalog, resolve_cost_basis
 from anvil.planning import TaskGraph
 from anvil.workspaces import Repository
-from anvil.telemetry import usage
+from anvil.telemetry import usage, usage_aggregate
 from anvil.learning import train, promote, load_policy, history, rollback
 
 
@@ -104,6 +104,76 @@ class RoutingComponents(unittest.TestCase):
         self.assertAlmostEqual(data['cost_usd'],123/1_000_000)
         path.write_text('{}');data=usage(path,'codex',profile)
         self.assertIsNone(data['cost_usd']);self.assertIsNotNone(data['usage_error'])
+
+    def test_usage_aggregate_sums_a_recorded_fixture_by_phase_and_reason(self):
+        record = {'invocations': [
+            {'role': 'worker', 'cost_usd': 0.25, 'cost_kind': 'provider_reported_estimate',
+             'cost_basis': 'list', 'terminal_reason': 'completed',
+             'input_tokens': 100, 'cached_input_tokens': 20, 'cache_write_tokens': 5, 'output_tokens': 30},
+            {'role': 'review', 'cost_usd': 0.10, 'cost_kind': 'provider_reported_estimate',
+             'cost_basis': 'list', 'terminal_reason': 'completed',
+             'input_tokens': 40, 'cached_input_tokens': 0, 'cache_write_tokens': 0, 'output_tokens': 10},
+        ]}
+        aggregate = usage_aggregate([record])
+        self.assertEqual(aggregate['tokens']['input_tokens'], {'total': 140, 'complete': True})
+        self.assertEqual(aggregate['tokens']['output_tokens'], {'total': 40, 'complete': True})
+        self.assertAlmostEqual(aggregate['cost_by_basis']['list']['cost_usd'], 0.35)
+        self.assertEqual(aggregate['breakdown'],
+                         [{'phase': 'review', 'terminal_reason': 'completed', 'invocations': 1},
+                          {'phase': 'worker', 'terminal_reason': 'completed', 'invocations': 1}])
+
+    def test_usage_aggregate_keeps_a_mixed_cost_basis_run_distinct(self):
+        records = [{'invocations': [{'role': 'worker', 'cost_usd': 0.5, 'cost_basis': 'list',
+                                      'terminal_reason': 'completed'}]},
+                   {'invocations': [{'role': 'worker', 'cost_usd': 2.0, 'cost_basis': 'billed',
+                                      'terminal_reason': 'completed'}]}]
+        aggregate = usage_aggregate(records)
+        self.assertAlmostEqual(aggregate['cost_by_basis']['list']['cost_usd'], 0.5)
+        self.assertAlmostEqual(aggregate['cost_by_basis']['billed']['cost_usd'], 2.0)
+        self.assertTrue(aggregate['cost_by_basis']['list']['complete'])
+        self.assertTrue(aggregate['cost_by_basis']['billed']['complete'])
+
+    def test_usage_aggregate_reads_a_pre_change_record_without_terminal_reason(self):
+        # A record saved before this ticket carries no terminal_reason and no
+        # cost_basis at all; the aggregate falls back to "unknown" for each
+        # rather than raising or guessing a classification.
+        record = {'invocations': [{'role': 'worker', 'cost_usd': 0.3,
+                                   'cost_kind': 'provider_reported_estimate',
+                                   'input_tokens': 50, 'output_tokens': 20}]}
+        aggregate = usage_aggregate([record])
+        self.assertEqual(aggregate['tokens']['input_tokens'], {'total': 50, 'complete': True})
+        self.assertAlmostEqual(aggregate['cost_by_basis']['unknown']['cost_usd'], 0.3)
+        self.assertEqual(aggregate['breakdown'],
+                         [{'phase': 'worker', 'terminal_reason': 'unknown', 'invocations': 1}])
+
+    def test_usage_aggregate_treats_a_missing_usage_invocation_as_absent_not_zero(self):
+        # The adapter's usage() failed for this invocation: every field is
+        # None. It must reduce completeness rather than count as free or as
+        # an error, and a never-started invocation must not appear at all.
+        record = {'invocations': [
+            {'role': 'worker', 'cost_usd': None, 'cost_kind': 'unknown', 'terminal_reason': 'unknown'},
+            {'role': 'review', 'cost_usd': 0, 'cost_kind': 'not_started', 'terminal_reason': 'not_started'},
+        ]}
+        aggregate = usage_aggregate([record])
+        self.assertEqual(aggregate['tokens']['input_tokens'], {'total': 0, 'complete': False})
+        self.assertFalse(aggregate['cost_by_basis']['unknown']['complete'])
+        self.assertEqual(aggregate['breakdown'],
+                         [{'phase': 'worker', 'terminal_reason': 'unknown', 'invocations': 1}])
+
+    def test_usage_aggregate_treats_an_unusable_recorded_value_as_absent(self):
+        # A saved record whose counts are not finite nonnegative numbers is as
+        # absent as one that omits them: assembling a report must not raise on
+        # evidence it cannot read, and must not sum a value it cannot trust.
+        record = {'invocations': [{'role': 'worker', 'cost_usd': 0.2, 'cost_basis': 'billed',
+                                   'terminal_reason': 'completed',
+                                   'input_tokens': 'many', 'output_tokens': -5,
+                                   'cached_input_tokens': float('inf'), 'cache_write_tokens': 7}]}
+        aggregate = usage_aggregate([record])
+        self.assertEqual(aggregate['tokens']['input_tokens'], {'total': 0, 'complete': False})
+        self.assertEqual(aggregate['tokens']['output_tokens'], {'total': 0, 'complete': False})
+        self.assertEqual(aggregate['tokens']['cached_input_tokens'], {'total': 0, 'complete': False})
+        self.assertEqual(aggregate['tokens']['cache_write_tokens'], {'total': 7, 'complete': True})
+        self.assertAlmostEqual(aggregate['cost_by_basis']['billed']['cost_usd'], 0.2)
 
     def populate(self, *, candidate_success=True, samples=100, attempts=1, options=None):
         options = options if options is not None else config_options(attempts=attempts)

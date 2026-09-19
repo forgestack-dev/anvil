@@ -9,8 +9,59 @@ import threading
 import tempfile
 import unittest
 
+import anvil
 from anvil.contracts import Task
 from anvil.store import RunStore, StoreError
+
+
+def make_legacy_ledger(path: Path) -> None:
+    """A ledger built exactly as store.py created one before anvil_version existed."""
+    connection = sqlite3.connect(path)
+    connection.execute("""
+        CREATE TABLE runs (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            run_id TEXT NOT NULL UNIQUE, repo TEXT NOT NULL,
+            branch TEXT NOT NULL, base_sha TEXT NOT NULL,
+            status TEXT NOT NULL, error TEXT, config TEXT NOT NULL,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        )
+    """)
+    connection.execute("""
+        CREATE TABLE tasks (
+            id TEXT PRIMARY KEY, position INTEGER NOT NULL UNIQUE,
+            input TEXT NOT NULL, status TEXT NOT NULL,
+            attempt_id TEXT, details TEXT NOT NULL,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        )
+    """)
+    connection.execute("""
+        CREATE TABLE attempts (
+            id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id),
+            base_sha TEXT NOT NULL, workspace TEXT NOT NULL,
+            status TEXT NOT NULL, details TEXT NOT NULL,
+            started_at TEXT NOT NULL, updated_at TEXT NOT NULL, finished_at TEXT
+        )
+    """)
+    connection.execute("""
+        CREATE TABLE events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL, kind TEXT NOT NULL,
+            task_id TEXT REFERENCES tasks(id),
+            attempt_id TEXT REFERENCES attempts(id),
+            from_status TEXT, to_status TEXT NOT NULL, details TEXT NOT NULL
+        )
+    """)
+    stamp = "2024-01-01T00:00:00+00:00"
+    connection.execute(
+        "INSERT INTO runs VALUES (1, ?, ?, ?, ?, 'running', NULL, ?, ?, ?)",
+        ("legacy", "/repo", "anvil/legacy", "base", "{}", stamp, stamp),
+    )
+    connection.execute(
+        "INSERT INTO tasks VALUES (?, ?, ?, 'pending', NULL, '{}', ?, ?)",
+        ("a", 0, json.dumps(ticket("a").to_dict()), stamp, stamp),
+    )
+    connection.commit()
+    connection.close()
 
 
 def ticket(task_id: str, dependencies: tuple[str, ...] = ()) -> Task:
@@ -295,6 +346,36 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(snapshot["tasks"][0]["details"]["artifacts"], ["/output.json"])
             self.assertEqual(snapshot["tasks"][0]["acceptance_criteria"], ["a works"])
             self.assertTrue(json.dumps(snapshot, allow_nan=False))
+
+    def test_initialize_records_the_running_supervisor_version_by_default(self):
+        with RunStore(self.path) as store:
+            self.initialize(store)
+            self.assertEqual(store.snapshot()["anvil_version"], anvil.__version__)
+        self.assertEqual(RunStore.read(self.path)["anvil_version"], anvil.__version__)
+
+    def test_initialize_accepts_an_explicit_supervisor_version(self):
+        path = self.path.parent / "explicit.sqlite3"
+        with RunStore(path) as store:
+            store.initialize(run_id="r", repo="/repo", branch="anvil/r", base_sha="base",
+                             tasks=(ticket("a"),), config={}, anvil_version="9.9.9-test")
+            self.assertEqual(store.snapshot()["anvil_version"], "9.9.9-test")
+
+    def test_the_added_column_bumps_the_ledger_storage_version(self):
+        # anvil_version is a new column, so the storage version moves with it.
+        # It is not the read contract: docs/CLOUD_SYNC.md versions that
+        # separately, and a reader must not gate on this number.
+        with RunStore(self.path) as store:
+            self.initialize(store)
+        connection = sqlite3.connect(self.path)
+        self.addCleanup(connection.close)
+        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 3)
+
+    def test_a_pre_change_ledger_reads_with_no_supervisor_version(self):
+        path = self.path.parent / "legacy.sqlite3"
+        make_legacy_ledger(path)
+        snapshot = RunStore.read(path)
+        self.assertIsNone(snapshot["anvil_version"])
+        self.assertEqual(snapshot["run_id"], "legacy")
 
     def test_missing_read_does_not_create_database_or_parent(self):
         missing = self.path.parent / "absent" / "run.sqlite3"

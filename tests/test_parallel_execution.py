@@ -11,6 +11,7 @@ import threading
 import time
 import unittest
 
+import anvil
 from anvil.config import RunConfig, WorkerConfig
 from anvil.parallel import run_parallel
 from anvil.store import RunStore
@@ -254,7 +255,28 @@ class ParallelExecutionTests(unittest.TestCase):
         self.assertEqual(beta_integration["worker_base"], self.base)
         self.assertEqual(beta_integration["accepted_base"], tasks["alpha"]["details"]["integrated_sha"])
         self.assertEqual(RunStore.read(Path(result["run_dir"]) / "state.sqlite"),
-                         {key: value for key, value in result.items() if key != "run_dir"})
+                         {key: value for key, value in result.items()
+                          if key not in ("run_dir", "usage")})
+        # The supervisor that produced the run is recorded beside the base it
+        # ran against, and reaches the report through the ledger snapshot.
+        self.assertEqual(result["anvil_version"], anvil.__version__)
+        self.assertEqual(result["base_sha"], self.base)
+        # This run is not adaptive, so no MeasuredRunner recorded per-invocation
+        # usage: every component aggregates to absent rather than to a zero
+        # presented as a measurement, and the six invocations that did run are
+        # still counted by phase and terminal reason.
+        usage = result["usage"]
+        self.assertEqual(usage["cost_kind"], "estimated; not a subscription invoice")
+        self.assertEqual(usage["tokens"], {field: {"total": 0, "complete": False} for field in
+                                           ("input_tokens", "cached_input_tokens",
+                                            "cache_write_tokens", "output_tokens")})
+        self.assertEqual(usage["cost_by_basis"],
+                         {"list": {"cost_usd": 0.0, "complete": True},
+                          "billed": {"cost_usd": 0.0, "complete": True},
+                          "unknown": {"cost_usd": 0.0, "complete": False}})
+        self.assertEqual(usage["breakdown"],
+                         [{"phase": "review", "terminal_reason": "unknown", "invocations": 3},
+                          {"phase": "worker", "terminal_reason": "unknown", "invocations": 3}])
         self.assertEqual(json.loads((Path(result["run_dir"]) / "report.json").read_text()), result)
         self.assert_clean_original()
 

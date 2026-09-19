@@ -60,6 +60,9 @@ def run_summary(run_dir: Path) -> dict:
             raise StoreError(f"run ledger is not initialized: {path}")
         summary = dict(row)
         del summary["singleton"]
+        # A ledger written before anvil_version existed has no such column;
+        # report the version as absent rather than guessing at one.
+        summary.setdefault("anvil_version", None)
         # Where this run's saved state lives, so a reader can go straight to the
         # artifacts, worktrees and event streams the ledger only points at.
         summary["run_dir"] = str(Path(run_dir).resolve())
@@ -155,6 +158,18 @@ def run_attempts(run_dir: Path, *, after: int | None = None,
             items.append(item)
         next_after = page[-1]["_cursor"] if len(rows) > limit else None
         return {"items": items, "next_after": next_after}
+
+
+def run_attempts_all(run_dir: Path) -> list[dict]:
+    """Every attempt across every page, for a whole-run total rather than one page."""
+    items: list[dict] = []
+    after = None
+    while True:
+        page = run_attempts(run_dir, after=after, limit=MAX_PAGE_SIZE)
+        items.extend(page["items"])
+        after = page["next_after"]
+        if after is None:
+            return items
 
 
 def run_events(run_dir: Path, *, after: int = 0,

@@ -107,7 +107,7 @@ configuration field and an existing API, not an extension system.
 ## 8. The coupling risk is the schema, not the repositories
 
 If `anvil-cloud` consumes the ledger, the schema becomes a contract that cannot
-change casually, and `PRAGMA user_version` is currently 2. Version the read API
+change casually, and `PRAGMA user_version` is currently 3. Version the read API
 deliberately so that adding an event kind to the open CLI does not break the paid
 product. This is the integration problem worth designing before either product
 ships; repository layout is not. The contract is specified in
